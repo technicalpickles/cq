@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use cq::claude_provider::ClaudeProvider;
-use cq::commands::{messages, schema, sessions, sql, tools};
+use cq::commands::{messages, projects, schema, sessions, sql, tools};
 use cq::db;
 use cq::output::OutputFormat;
 use cq::scope::QueryScope;
@@ -76,6 +76,12 @@ enum Command {
         #[arg(long)]
         grep: Option<String>,
     },
+    /// Summarize projects by session, message, and tool counts
+    Projects {
+        /// Show skill names used per project
+        #[arg(long)]
+        skills: bool,
+    },
     /// Run a raw SQL query
     Sql {
         /// SQL query to execute
@@ -144,6 +150,9 @@ fn main() -> Result<()> {
         }
         Command::Messages { msg_type, grep } => {
             messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), &format, cli.limit)?;
+        }
+        Command::Projects { skills } => {
+            projects::run(&conn, &scope, skills, &format, cli.limit)?;
         }
         Command::Sql { query } => {
             sql::run(&conn, &query, &format)?;

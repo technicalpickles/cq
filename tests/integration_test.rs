@@ -216,3 +216,82 @@ fn no_color_flag() {
         "Expected no ANSI escape codes in output, got: {stdout}"
     );
 }
+
+#[test]
+fn projects_default_oneline() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    cq_cmd(&env)
+        .arg("projects")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("myproject"))
+        .stdout(predicate::str::contains("msgs"))
+        .stdout(predicate::str::contains("tools"));
+}
+
+#[test]
+fn projects_table() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    cq_cmd(&env)
+        .args(["--table", "projects"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("project"))
+        .stdout(predicate::str::contains("sessions"))
+        .stdout(predicate::str::contains("\u{2500}"));
+}
+
+#[test]
+fn projects_json() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "projects"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert!(!parsed.is_empty());
+    let first = &parsed[0];
+    assert!(first.get("project").is_some());
+    assert!(first.get("sessions").is_some());
+    assert!(first.get("messages").is_some());
+    assert!(first.get("tools").is_some());
+    assert!(first.get("skills").is_some());
+    assert!(first.get("skill_count").is_some());
+}
+
+#[test]
+fn projects_skills_flag() {
+    let env = setup_env(&["multi_tool_session.jsonl"]);
+    cq_cmd(&env)
+        .args(["projects", "--skills"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sanitation")) // skill from fixture
+        .stdout(predicate::str::contains("\u{2514}")); // └ prefix for skill line
+}
+
+#[test]
+fn projects_json_includes_skill_names() {
+    let env = setup_env(&["multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "projects"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let first = &parsed[0];
+    let skills = first["skills"].as_array().unwrap();
+    assert!(skills.iter().any(|s| s.as_str() == Some("sanitation")));
+}
+
+#[test]
+fn help_shows_projects_command() {
+    Command::cargo_bin("cq").unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("projects"));
+}
