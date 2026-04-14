@@ -31,6 +31,7 @@ fn cq_cmd(env: &TestEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
     cmd.env("CQ_CACHE_DIR", env.cache.path());
+    cmd.env("NO_COLOR", "1");
     cmd
 }
 
@@ -66,13 +67,26 @@ fn schema_examples_shows_sql() {
 }
 
 #[test]
-fn tools_summary() {
+fn tools_summary_bar_chart() {
     let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
     cq_cmd(&env)
         .arg("tools")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Bash"));
+        .stdout(predicate::str::contains("Bash"))
+        .stdout(predicate::str::contains("\u{2588}")); // bar chart block char
+}
+
+#[test]
+fn tools_summary_table() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    cq_cmd(&env)
+        .args(["--table", "tools"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("name"))
+        .stdout(predicate::str::contains("count"))
+        .stdout(predicate::str::contains("\u{2500}")); // header separator
 }
 
 #[test]
@@ -86,12 +100,25 @@ fn sessions_list() {
 }
 
 #[test]
+fn sessions_table() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
+        .args(["--table", "sessions"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("session_id"))
+        .stdout(predicate::str::contains("\u{2500}")); // header separator
+}
+
+#[test]
 fn sql_raw_query() {
     let env = setup_env(&["simple_session.jsonl"]);
     cq_cmd(&env)
         .args(["sql", "SELECT count(*) AS n FROM tool_calls"])
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("n"))
+        .stdout(predicate::str::contains("\u{2500}")); // light table format separator
 }
 
 #[test]
@@ -165,4 +192,27 @@ fn project_filter() {
         .assert()
         .success()
         .stdout(predicate::str::contains("sess-001"));
+}
+
+#[test]
+fn no_color_flag() {
+    // Use a fresh Command WITHOUT NO_COLOR env var, then pass --no-color flag
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let mut cmd = Command::cargo_bin("cq").unwrap();
+    cmd.env("CQ_PROJECTS_DIR", env.projects.path());
+    cmd.env("CQ_CACHE_DIR", env.cache.path());
+    // Explicitly unset NO_COLOR so we're testing the flag, not the env var
+    cmd.env_remove("NO_COLOR");
+
+    let output = cmd
+        .args(["--no-color", "tools"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("\x1b["),
+        "Expected no ANSI escape codes in output, got: {stdout}"
+    );
 }
