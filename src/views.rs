@@ -2,6 +2,12 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::PathBuf;
 
+/// SQL expression to extract and decode the project path from a filename.
+/// Input: filename column from read_json (e.g. "/path/to/-Users-josh-pickleton/sess.jsonl")
+/// Output: decoded path (e.g. "/Users/josh/pickleton")
+const PROJECT_EXPR: &str =
+    "'/' || replace(regexp_extract(filename, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')";
+
 /// Register all queryable views against the given JSONL transcript files.
 ///
 /// Creates four views:
@@ -62,11 +68,11 @@ fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
 /// to evaluate CAST(content AS JSON[]) even inside a CASE WHEN branch where
 /// content is a string.
 fn register_messages_view(conn: &Connection) -> Result<()> {
-    let sql = "CREATE VIEW messages AS
+    let sql = format!("CREATE VIEW messages AS
         WITH string_msgs AS (
             SELECT
                 json.sessionId AS session_id,
-                regexp_extract(filename, '.*/([^/]+)/[^/]+$', 1) AS project,
+                {PROJECT_EXPR} AS project,
                 json.uuid AS uuid,
                 json.parentUuid AS parent_uuid,
                 json.type AS type,
@@ -81,7 +87,7 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
         array_msgs AS (
             SELECT
                 json.sessionId AS session_id,
-                regexp_extract(filename, '.*/([^/]+)/[^/]+$', 1) AS project,
+                {PROJECT_EXPR} AS project,
                 json.uuid AS uuid,
                 json.parentUuid AS parent_uuid,
                 json.type AS type,
@@ -103,8 +109,8 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
         )
         SELECT * FROM string_msgs
         UNION ALL
-        SELECT * FROM array_msgs";
-    conn.execute_batch(sql)
+        SELECT * FROM array_msgs");
+    conn.execute_batch(&sql)
         .context("Failed to create messages view")?;
     Ok(())
 }
@@ -114,10 +120,10 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
 /// Extracts one row per tool_use content block from assistant messages.
 /// Uses LATERAL UNNEST to flatten the content array, then filters for tool_use type.
 fn register_tool_calls_view(conn: &Connection) -> Result<()> {
-    let sql = "CREATE VIEW tool_calls AS
+    let sql = format!("CREATE VIEW tool_calls AS
         SELECT
             json.sessionId AS session_id,
-            regexp_extract(filename, '.*/([^/]+)/[^/]+$', 1) AS project,
+            {PROJECT_EXPR} AS project,
             json.uuid AS message_uuid,
             json_extract_string(item, '$.id') AS tool_use_id,
             json_extract_string(item, '$.name') AS name,
@@ -129,8 +135,8 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
         )
         WHERE json.type = 'assistant'
         AND json_type(json.message.content) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_use'";
-    conn.execute_batch(sql)
+        AND json_extract_string(item, '$.type') = 'tool_use'");
+    conn.execute_batch(&sql)
         .context("Failed to create tool_calls view")?;
     Ok(())
 }
@@ -140,10 +146,10 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
 /// Extracts one row per tool_result content block from user messages that have
 /// array content (i.e. messages carrying tool results back from tool execution).
 fn register_tool_results_view(conn: &Connection) -> Result<()> {
-    let sql = "CREATE VIEW tool_results AS
+    let sql = format!("CREATE VIEW tool_results AS
         SELECT
             json.sessionId AS session_id,
-            regexp_extract(filename, '.*/([^/]+)/[^/]+$', 1) AS project,
+            {PROJECT_EXPR} AS project,
             json_extract_string(item, '$.tool_use_id') AS tool_use_id,
             COALESCE(CAST(json_extract(item, '$.is_error') AS BOOLEAN), false) AS is_error,
             json_extract_string(item, '$.content') AS content
@@ -153,8 +159,8 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
         )
         WHERE json.type = 'user'
         AND json_type(json.message.content) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_result'";
-    conn.execute_batch(sql)
+        AND json_extract_string(item, '$.type') = 'tool_result'");
+    conn.execute_batch(&sql)
         .context("Failed to create tool_results view")?;
     Ok(())
 }

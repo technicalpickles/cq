@@ -16,7 +16,7 @@ pub fn run(
 
     if let Some(project) = &scope.project {
         let escaped = project.replace('\'', "''");
-        conditions.push(format!("project = '{escaped}'"));
+        conditions.push(format!("project ILIKE '%{escaped}%'"));
     }
 
     if let Some(session) = &scope.session {

@@ -22,7 +22,7 @@ pub fn run(
 
     if let Some(project) = &scope.project {
         let escaped = project.replace('\'', "''");
-        conditions.push(format!("tc.project = '{escaped}'"));
+        conditions.push(format!("tc.project ILIKE '%{escaped}%'"));
     }
 
     if let Some(session) = &scope.session {
@@ -76,7 +76,7 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> 
 
     if let Some(project) = &scope.project {
         let escaped = project.replace('\'', "''");
-        conditions.push(format!("project = '{escaped}'"));
+        conditions.push(format!("project ILIKE '%{escaped}%'"));
     }
 
     if let Some(session) = &scope.session {
