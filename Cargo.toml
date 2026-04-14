@@ -7,7 +7,7 @@ description = "Query AI agent session transcripts with SQL"
 [dependencies]
 duckdb = { version = "1", features = ["bundled", "json"] }
 clap = { version = "4", features = ["derive"] }
-comfy-table = "7"
+owo-colors = { version = "4", features = ["supports-colors"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"

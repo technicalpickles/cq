@@ -1,9 +1,9 @@
 use anyhow::Result;
-use comfy_table::{ContentArrangement, Table};
 use duckdb::types::Value;
 use serde_json;
 
 pub enum OutputFormat {
+    Default,
     Table,
     Json,
 }
@@ -34,7 +34,7 @@ pub fn print_results(
     }
 
     match format {
-        OutputFormat::Table => print_table(&column_names, &rows),
+        OutputFormat::Table | OutputFormat::Default => print_table(&column_names, &rows),
         OutputFormat::Json => print_json(&column_names, &rows),
     }
 }
@@ -84,17 +84,12 @@ fn print_table(column_names: &[String], rows: &[Vec<Value>]) -> Result<()> {
         eprintln!("No results.");
         return Ok(());
     }
-
-    let mut table = Table::new();
-    table.set_content_arrangement(ContentArrangement::Dynamic);
-    table.set_header(column_names);
-
+    // Temporary basic table output (replaced properly in Task 3)
+    println!("{}", column_names.join("\t"));
     for row in rows {
         let cells: Vec<String> = row.iter().map(value_to_string).collect();
-        table.add_row(cells);
+        println!("{}", cells.join("\t"));
     }
-
-    println!("{table}");
     Ok(())
 }
 

@@ -29,6 +29,14 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Output as aligned table with header
+    #[arg(long, global = true)]
+    table: bool,
+
+    /// Disable colored output
+    #[arg(long, global = true)]
+    no_color: bool,
+
     /// Maximum number of results
     #[arg(long, global = true, default_value_t = 50)]
     limit: usize,
@@ -87,10 +95,18 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Disable color if --no-color or NO_COLOR env var
+    if cli.no_color || std::env::var("NO_COLOR").is_ok() {
+        owo_colors::set_override(false);
+    }
+
+    // --json wins over --table
     let format = if cli.json {
         OutputFormat::Json
-    } else {
+    } else if cli.table {
         OutputFormat::Table
+    } else {
+        OutputFormat::Default
     };
 
     let scope = QueryScope::new(cli.project, cli.session, cli.since);
