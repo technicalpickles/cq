@@ -24,13 +24,20 @@ pub fn register_views(conn: &Connection, files: &[PathBuf]) -> Result<()> {
     }
 
     let file_list = build_file_list(files);
-
     register_raw_view(conn, &file_list)?;
+    register_derived_views(conn)?;
+
+    Ok(())
+}
+
+/// Register only the derived views (messages, tool_calls, tool_results, sessions).
+/// Assumes raw_records already exists (either as a view from read_json or as a
+/// persistent table from the cache).
+pub fn register_derived_views(conn: &Connection) -> Result<()> {
     register_messages_view(conn)?;
     register_tool_calls_view(conn)?;
     register_tool_results_view(conn)?;
     register_sessions_view(conn)?;
-
     Ok(())
 }
 
