@@ -8,8 +8,12 @@ pub enum OutputFormat {
     Json,
 }
 
-pub fn print_results(stmt: &mut duckdb::Statement, format: &OutputFormat) -> Result<()> {
-    let mut rows_iter = stmt.query([])?;
+pub fn print_results(
+    stmt: &mut duckdb::Statement,
+    params: &[&dyn duckdb::types::ToSql],
+    format: &OutputFormat,
+) -> Result<()> {
+    let mut rows_iter = stmt.query(params)?;
 
     // Get column names from the executed result set
     let column_names: Vec<String> = rows_iter

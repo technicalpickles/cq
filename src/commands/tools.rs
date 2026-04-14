@@ -19,15 +19,16 @@ pub fn run(
     }
 
     let mut conditions = vec!["1=1".to_string()];
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
 
     if let Some(project) = &scope.project {
-        let escaped = project.replace('\'', "''");
-        conditions.push(format!("tc.project ILIKE '%{escaped}%'"));
+        conditions.push("tc.project ILIKE ?".to_string());
+        params.push(Box::new(format!("%{project}%")));
     }
 
     if let Some(session) = &scope.session {
-        let escaped = session.replace('\'', "''");
-        conditions.push(format!("tc.session_id = '{escaped}'"));
+        conditions.push("tc.session_id = ?".to_string());
+        params.push(Box::new(session.clone()));
     }
 
     if let Some(ts) = scope.since_timestamp()? {
@@ -36,13 +37,13 @@ pub fn run(
     }
 
     if let Some(name) = tool_name {
-        let escaped = name.replace('\'', "''");
-        conditions.push(format!("tc.name = '{escaped}'"));
+        conditions.push("tc.name = ?".to_string());
+        params.push(Box::new(name.to_string()));
     }
 
     if let Some(pattern) = grep {
-        let escaped = pattern.replace('\'', "''");
-        conditions.push(format!("CAST(tc.input AS VARCHAR) ILIKE '%{escaped}%'"));
+        conditions.push("CAST(tc.input AS VARCHAR) ILIKE ?".to_string());
+        params.push(Box::new(format!("%{pattern}%")));
     }
 
     let where_clause = conditions.join(" AND ");
@@ -67,21 +68,23 @@ pub fn run(
         )
     };
 
+    let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
-    output::print_results(&mut stmt, format)
+    output::print_results(&mut stmt, &param_refs, format)
 }
 
 fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
 
     if let Some(project) = &scope.project {
-        let escaped = project.replace('\'', "''");
-        conditions.push(format!("project ILIKE '%{escaped}%'"));
+        conditions.push("project ILIKE ?".to_string());
+        params.push(Box::new(format!("%{project}%")));
     }
 
     if let Some(session) = &scope.session {
-        let escaped = session.replace('\'', "''");
-        conditions.push(format!("session_id = '{escaped}'"));
+        conditions.push("session_id = ?".to_string());
+        params.push(Box::new(session.clone()));
     }
 
     if let Some(ts) = scope.since_timestamp()? {
@@ -99,6 +102,7 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> 
          ORDER BY count DESC"
     );
 
+    let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
-    output::print_results(&mut stmt, format)
+    output::print_results(&mut stmt, &param_refs, format)
 }
