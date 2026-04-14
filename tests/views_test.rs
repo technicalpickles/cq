@@ -10,6 +10,18 @@ fn fixture_path(name: &str) -> PathBuf {
 fn setup_db(fixture: &str) -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     let path = fixture_path(fixture);
+
+    // Create file_registry for PROJECT_EXPR cwd lookup (empty = uses fallback decode)
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )"
+    ).unwrap();
+
     cq::views::register_views(&conn, &[path]).unwrap();
     conn
 }
@@ -17,6 +29,17 @@ fn setup_db(fixture: &str) -> Connection {
 fn setup_db_multi(fixtures: &[&str]) -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     let paths: Vec<PathBuf> = fixtures.iter().map(|f| fixture_path(f)).collect();
+
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )"
+    ).unwrap();
+
     cq::views::register_views(&conn, &paths).unwrap();
     conn
 }

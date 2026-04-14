@@ -28,7 +28,7 @@ fn setup_projects(fixtures: &[&str]) -> TempDir {
 fn index_new_files() {
     let cache = cache_dir();
     let projects = setup_projects(&["simple_session.jsonl"]);
-    let conn = cq::cache::open(cache.path()).unwrap();
+    let conn = cq::cache::open(cache.path(), false).unwrap();
 
     let stats = cq::indexer::sync(&conn, projects.path()).unwrap();
     assert_eq!(stats.added, 1);
@@ -50,7 +50,7 @@ fn index_new_files() {
 fn no_changes_is_noop() {
     let cache = cache_dir();
     let projects = setup_projects(&["simple_session.jsonl"]);
-    let conn = cq::cache::open(cache.path()).unwrap();
+    let conn = cq::cache::open(cache.path(), false).unwrap();
 
     cq::indexer::sync(&conn, projects.path()).unwrap();
     let stats = cq::indexer::sync(&conn, projects.path()).unwrap();
@@ -63,7 +63,7 @@ fn no_changes_is_noop() {
 fn detects_deleted_files() {
     let cache = cache_dir();
     let projects = setup_projects(&["simple_session.jsonl", "error_session.jsonl"]);
-    let conn = cq::cache::open(cache.path()).unwrap();
+    let conn = cq::cache::open(cache.path(), false).unwrap();
 
     cq::indexer::sync(&conn, projects.path()).unwrap();
 
@@ -83,7 +83,7 @@ fn detects_deleted_files() {
 fn detects_changed_files() {
     let cache = cache_dir();
     let projects = setup_projects(&["simple_session.jsonl"]);
-    let conn = cq::cache::open(cache.path()).unwrap();
+    let conn = cq::cache::open(cache.path(), false).unwrap();
 
     cq::indexer::sync(&conn, projects.path()).unwrap();
 
@@ -100,7 +100,7 @@ fn detects_changed_files() {
 #[test]
 fn creates_tables_on_first_open() {
     let dir = cache_dir();
-    let conn = cq::cache::open(dir.path()).unwrap();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
 
     // Verify tables exist
     let count: i64 = conn
@@ -116,11 +116,11 @@ fn creates_tables_on_first_open() {
 #[test]
 fn version_check_passes_on_current() {
     let dir = cache_dir();
-    let conn = cq::cache::open(dir.path()).unwrap();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
     drop(conn);
 
     // Second open should succeed without rebuilding
-    let conn = cq::cache::open(dir.path()).unwrap();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
     let version: i32 = conn
         .query_row("SELECT version FROM cache_meta", [], |r| r.get(0))
         .unwrap();
@@ -130,7 +130,7 @@ fn version_check_passes_on_current() {
 #[test]
 fn version_mismatch_triggers_rebuild() {
     let dir = cache_dir();
-    let conn = cq::cache::open(dir.path()).unwrap();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
 
     // Tamper with version
     conn.execute("UPDATE cache_meta SET version = 0", []).unwrap();
@@ -142,7 +142,7 @@ fn version_mismatch_triggers_rebuild() {
     ).unwrap();
     drop(conn);
 
-    let conn = cq::cache::open(dir.path()).unwrap();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM file_registry", [], |r| r.get(0))
         .unwrap();

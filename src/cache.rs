@@ -6,8 +6,8 @@ use duckdb::OptionalExt;
 pub const SCHEMA_VERSION: i32 = 1;
 
 /// Open or create the cache database. Creates tables if missing,
-/// rebuilds if schema version mismatches.
-pub fn open(cache_dir: &Path) -> Result<Connection> {
+/// rebuilds if schema version mismatches or force_rebuild is true.
+pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     std::fs::create_dir_all(cache_dir)
         .context("Failed to create cache directory")?;
 
@@ -15,7 +15,7 @@ pub fn open(cache_dir: &Path) -> Result<Connection> {
     let conn = Connection::open(&db_path)
         .context("Failed to open cache database")?;
 
-    if needs_rebuild(&conn)? {
+    if force_rebuild || needs_rebuild(&conn)? {
         rebuild(&conn)?;
     }
 

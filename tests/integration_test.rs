@@ -9,25 +9,28 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Set up a temp directory that mimics the Claude projects structure.
-/// Copies fixture files into a project subdirectory.
-fn setup_fake_projects(fixtures: &[&str]) -> TempDir {
-    let tmp = TempDir::new().unwrap();
-    let project_dir = tmp.path().join("-Users-test-myproject");
-    std::fs::create_dir_all(&project_dir).unwrap();
+struct TestEnv {
+    projects: TempDir,
+    cache: TempDir,
+}
 
+fn setup_env(fixtures: &[&str]) -> TestEnv {
+    let projects = TempDir::new().unwrap();
+    let project_dir = projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
     for fixture in fixtures {
         let src = fixture_path(fixture);
         let dest = project_dir.join(fixture);
         std::fs::copy(&src, &dest).unwrap();
     }
-
-    tmp
+    let cache = TempDir::new().unwrap();
+    TestEnv { projects, cache }
 }
 
-fn cq_cmd(tmp: &TempDir) -> Command {
+fn cq_cmd(env: &TestEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
-    cmd.env("CQ_PROJECTS_DIR", tmp.path());
+    cmd.env("CQ_PROJECTS_DIR", env.projects.path());
+    cmd.env("CQ_CACHE_DIR", env.cache.path());
     cmd
 }
 
@@ -64,8 +67,8 @@ fn schema_examples_shows_sql() {
 
 #[test]
 fn tools_summary() {
-    let tmp = setup_fake_projects(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
-    cq_cmd(&tmp)
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    cq_cmd(&env)
         .arg("tools")
         .assert()
         .success()
@@ -74,8 +77,8 @@ fn tools_summary() {
 
 #[test]
 fn sessions_list() {
-    let tmp = setup_fake_projects(&["simple_session.jsonl"]);
-    cq_cmd(&tmp)
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
         .arg("sessions")
         .assert()
         .success()
@@ -84,8 +87,8 @@ fn sessions_list() {
 
 #[test]
 fn sql_raw_query() {
-    let tmp = setup_fake_projects(&["simple_session.jsonl"]);
-    cq_cmd(&tmp)
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
         .args(["sql", "SELECT count(*) AS n FROM tool_calls"])
         .assert()
         .success();
@@ -93,8 +96,8 @@ fn sql_raw_query() {
 
 #[test]
 fn json_output() {
-    let tmp = setup_fake_projects(&["simple_session.jsonl"]);
-    cq_cmd(&tmp)
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
         .args(["--json", "tools"])
         .assert()
         .success()
@@ -103,17 +106,22 @@ fn json_output() {
 
 #[test]
 fn no_files_no_error() {
-    let tmp = TempDir::new().unwrap();
-    let output = cq_cmd(&tmp).arg("tools").output().unwrap();
+    let projects = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+    let env = TestEnv { projects, cache };
+    let output = cq_cmd(&env).arg("tools").output().unwrap();
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("Scanned"), "should not print scan message with 0 files");
+    assert!(
+        stderr.contains("Cache up to date"),
+        "Expected 'Cache up to date' on stderr, got: {stderr}"
+    );
 }
 
 #[test]
 fn tools_filter_by_name() {
-    let tmp = setup_fake_projects(&["multi_tool_session.jsonl"]);
-    cq_cmd(&tmp)
+    let env = setup_env(&["multi_tool_session.jsonl"]);
+    cq_cmd(&env)
         .args(["tools", "Skill"])
         .assert()
         .success()
@@ -122,23 +130,27 @@ fn tools_filter_by_name() {
 
 #[test]
 fn progress_on_stderr_not_stdout() {
-    let tmp = setup_fake_projects(&["simple_session.jsonl"]);
-    let output = cq_cmd(&tmp)
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
         .arg("sessions")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Progress messages go to stderr
-    assert!(stderr.contains("Scanned"), "Expected 'Scanned' on stderr, got: {stderr}");
+    assert!(
+        stderr.contains("Indexed") || stderr.contains("Cache up to date"),
+        "Expected progress on stderr, got: {stderr}"
+    );
     // stdout should not have progress messages
-    assert!(!stdout.contains("Scanned"), "Progress message leaked to stdout: {stdout}");
+    assert!(!stdout.contains("Indexed"), "Progress message leaked to stdout: {stdout}");
+    assert!(!stdout.contains("Cache up to date"), "Progress message leaked to stdout: {stdout}");
 }
 
 #[test]
 fn messages_command() {
-    let tmp = setup_fake_projects(&["simple_session.jsonl"]);
-    cq_cmd(&tmp)
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
         .arg("messages")
         .assert()
         .success()
@@ -147,8 +159,8 @@ fn messages_command() {
 
 #[test]
 fn project_filter() {
-    let tmp = setup_fake_projects(&["simple_session.jsonl"]);
-    cq_cmd(&tmp)
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
         .args(["--project", "myproject", "sessions"])
         .assert()
         .success()

@@ -21,6 +21,10 @@ struct Cli {
     #[arg(long, global = true)]
     since: Option<String>,
 
+    /// Force full reindex of session files
+    #[arg(long, global = true)]
+    reindex: bool,
+
     /// Output as JSON
     #[arg(long, global = true)]
     json: bool,
@@ -99,11 +103,18 @@ fn main() -> Result<()> {
 
     let provider = ClaudeProvider::new()?;
 
+    let options = db::DbOptions {
+        reindex: cli.reindex,
+        ..Default::default()
+    };
+
     let start = std::time::Instant::now();
-    let db_setup = db::setup_connection(&provider, &scope)?;
+    let db_setup = db::setup_connection(provider.base_dir(), &options)?;
     let elapsed = start.elapsed();
     if db_setup.file_count > 0 {
-        eprintln!("Scanned {} files in {:.1}s", db_setup.file_count, elapsed.as_secs_f64());
+        eprintln!("Indexed {} files in {:.1}s", db_setup.file_count, elapsed.as_secs_f64());
+    } else {
+        eprintln!("Cache up to date ({:.1}s)", elapsed.as_secs_f64());
     }
 
     let conn = db_setup.conn;

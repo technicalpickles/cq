@@ -1,22 +1,35 @@
 use anyhow::Result;
 use duckdb::Connection;
-use crate::provider::TranscriptProvider;
-use crate::scope::QueryScope;
+use crate::cache;
+use crate::indexer;
+use crate::views;
 
 pub struct DbSetup {
     pub conn: Connection,
     pub file_count: usize,
 }
 
-/// Set up an in-memory DuckDB connection with views registered against
-/// discovered transcript files.
+pub struct DbOptions {
+    pub reindex: bool,
+}
+
+impl Default for DbOptions {
+    fn default() -> Self {
+        Self { reindex: false }
+    }
+}
+
+/// Set up a DuckDB connection with views registered.
 ///
-/// Uses the provider to discover files matching the scope, then registers
-/// all queryable views (messages, tool_calls, tool_results, sessions).
-pub fn setup_connection(provider: &dyn TranscriptProvider, scope: &QueryScope) -> Result<DbSetup> {
-    let files = provider.discover_files(scope)?;
-    let file_count = files.len();
-    let conn = Connection::open_in_memory()?;
-    provider.register_views(&conn, &files)?;
+/// Uses the persistent cache for fast incremental startup.
+pub fn setup_connection(projects_dir: &std::path::Path, options: &DbOptions) -> Result<DbSetup> {
+    let cache_dir = cache::cache_dir()?;
+    let conn = cache::open(&cache_dir, options.reindex)?;
+
+    let stats = indexer::sync(&conn, projects_dir)?;
+    let file_count = stats.added + stats.changed;
+
+    views::register_derived_views(&conn)?;
+
     Ok(DbSetup { conn, file_count })
 }

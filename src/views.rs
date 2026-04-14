@@ -2,11 +2,13 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::PathBuf;
 
-/// SQL expression to extract and decode the project path from source_file.
-/// Input: source_file column (e.g. "/path/to/-Users-josh-pickleton/sess.jsonl")
-/// Output: decoded path (e.g. "/Users/josh/pickleton")
+/// SQL expression to get the project path. Uses cwd from file_registry if
+/// available, falls back to decoding the directory name from source_file.
 const PROJECT_EXPR: &str =
-    "'/' || replace(regexp_extract(source_file, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')";
+    "COALESCE(
+        (SELECT fr.cwd FROM file_registry fr WHERE fr.file_path = source_file),
+        '/' || replace(regexp_extract(source_file, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')
+    )";
 
 /// Register all queryable views against the given JSONL transcript files.
 ///
