@@ -215,7 +215,7 @@ fn render_table(rows: &[SessionRow]) {
         let started = if r.started_at.is_empty() {
             style::null_display().to_string()
         } else {
-            r.started_at.clone()
+            style::relative_time(&r.started_at)
         };
 
         let project = if r.project.is_empty() {
