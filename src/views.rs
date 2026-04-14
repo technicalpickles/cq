@@ -2,11 +2,11 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::PathBuf;
 
-/// SQL expression to extract and decode the project path from a filename.
-/// Input: filename column from read_json (e.g. "/path/to/-Users-josh-pickleton/sess.jsonl")
+/// SQL expression to extract and decode the project path from source_file.
+/// Input: source_file column (e.g. "/path/to/-Users-josh-pickleton/sess.jsonl")
 /// Output: decoded path (e.g. "/Users/josh/pickleton")
 const PROJECT_EXPR: &str =
-    "'/' || replace(regexp_extract(filename, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')";
+    "'/' || replace(regexp_extract(source_file, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')";
 
 /// Register all queryable views against the given JSONL transcript files.
 ///
@@ -46,12 +46,12 @@ fn build_file_list(files: &[PathBuf]) -> String {
 /// Create the raw view that reads JSONL files with DuckDB's auto-schema inference.
 ///
 /// DuckDB with `records=false` produces a `json` column typed as a STRUCT
-/// (with auto-inferred nested fields) plus a `filename` column for the source file.
+/// (with auto-inferred nested fields) plus a `filename` column (aliased to `source_file`).
 /// The JSON extension must be bundled (via the `json` cargo feature on duckdb).
 fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
     let sql = format!(
         "CREATE VIEW raw_records AS
-        SELECT json, filename
+        SELECT json, filename AS source_file
         FROM read_json({file_list}, format='newline_delimited', records=false, filename=true, union_by_name=true, ignore_errors=true)"
     );
     conn.execute_batch(&sql)
@@ -71,41 +71,41 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
     let sql = format!("CREATE VIEW messages AS
         WITH string_msgs AS (
             SELECT
-                json.sessionId AS session_id,
+                json_extract_string(json, '$.sessionId') AS session_id,
                 {PROJECT_EXPR} AS project,
-                json.uuid AS uuid,
-                json.parentUuid AS parent_uuid,
-                json.type AS type,
-                json.timestamp AS timestamp,
-                json_extract_string(json.message, '$.content') AS text,
+                json_extract_string(json, '$.uuid') AS uuid,
+                json_extract_string(json, '$.parentUuid') AS parent_uuid,
+                json_extract_string(json, '$.type') AS type,
+                json_extract_string(json, '$.timestamp') AS timestamp,
+                json_extract_string(json, '$.message.content') AS text,
                 CAST(0 AS BIGINT) AS tool_count,
-                CAST(json.message.model AS VARCHAR) AS model
+                json_extract_string(json, '$.message.model') AS model
             FROM raw_records
-            WHERE json.type IN ('user', 'assistant')
-            AND json_type(json.message.content) = 'VARCHAR'
+            WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
+            AND json_type(json_extract(json, '$.message.content')) = 'VARCHAR'
         ),
         array_msgs AS (
             SELECT
-                json.sessionId AS session_id,
+                json_extract_string(json, '$.sessionId') AS session_id,
                 {PROJECT_EXPR} AS project,
-                json.uuid AS uuid,
-                json.parentUuid AS parent_uuid,
-                json.type AS type,
-                json.timestamp AS timestamp,
+                json_extract_string(json, '$.uuid') AS uuid,
+                json_extract_string(json, '$.parentUuid') AS parent_uuid,
+                json_extract_string(json, '$.type') AS type,
+                json_extract_string(json, '$.timestamp') AS timestamp,
                 (SELECT json_extract_string(item, '$.text')
-                 FROM (SELECT UNNEST(CAST(json.message.content AS JSON[])) AS item)
+                 FROM (SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item)
                  WHERE json_extract_string(item, '$.type') = 'text'
                  LIMIT 1) AS text,
-                CASE WHEN json.type = 'assistant' THEN
+                CASE WHEN json_extract_string(json, '$.type') = 'assistant' THEN
                     (SELECT COUNT(*)
-                     FROM (SELECT UNNEST(CAST(json.message.content AS JSON[])) AS item)
+                     FROM (SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item)
                      WHERE json_extract_string(item, '$.type') = 'tool_use')
                 ELSE CAST(0 AS BIGINT)
                 END AS tool_count,
-                CAST(json.message.model AS VARCHAR) AS model
+                json_extract_string(json, '$.message.model') AS model
             FROM raw_records
-            WHERE json.type IN ('user', 'assistant')
-            AND json_type(json.message.content) = 'ARRAY'
+            WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
+            AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
         )
         SELECT * FROM string_msgs
         UNION ALL
@@ -122,19 +122,19 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
 fn register_tool_calls_view(conn: &Connection) -> Result<()> {
     let sql = format!("CREATE VIEW tool_calls AS
         SELECT
-            json.sessionId AS session_id,
+            json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
-            json.uuid AS message_uuid,
+            json_extract_string(json, '$.uuid') AS message_uuid,
             json_extract_string(item, '$.id') AS tool_use_id,
             json_extract_string(item, '$.name') AS name,
             json_extract(item, '$.input') AS input,
-            json.timestamp AS timestamp
+            json_extract_string(json, '$.timestamp') AS timestamp
         FROM raw_records,
         LATERAL (
-            SELECT UNNEST(CAST(json.message.content AS JSON[])) AS item
+            SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
         )
-        WHERE json.type = 'assistant'
-        AND json_type(json.message.content) = 'ARRAY'
+        WHERE json_extract_string(json, '$.type') = 'assistant'
+        AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
         AND json_extract_string(item, '$.type') = 'tool_use'");
     conn.execute_batch(&sql)
         .context("Failed to create tool_calls view")?;
@@ -148,17 +148,17 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
 fn register_tool_results_view(conn: &Connection) -> Result<()> {
     let sql = format!("CREATE VIEW tool_results AS
         SELECT
-            json.sessionId AS session_id,
+            json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
             json_extract_string(item, '$.tool_use_id') AS tool_use_id,
             COALESCE(CAST(json_extract(item, '$.is_error') AS BOOLEAN), false) AS is_error,
             json_extract_string(item, '$.content') AS content
         FROM raw_records,
         LATERAL (
-            SELECT UNNEST(CAST(json.message.content AS JSON[])) AS item
+            SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
         )
-        WHERE json.type = 'user'
-        AND json_type(json.message.content) = 'ARRAY'
+        WHERE json_extract_string(json, '$.type') = 'user'
+        AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
         AND json_extract_string(item, '$.type') = 'tool_result'");
     conn.execute_batch(&sql)
         .context("Failed to create tool_results view")?;
