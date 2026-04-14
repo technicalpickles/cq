@@ -98,7 +98,15 @@ fn main() -> Result<()> {
     }
 
     let provider = ClaudeProvider::new()?;
-    let conn = db::setup_connection(&provider, &scope)?;
+
+    let start = std::time::Instant::now();
+    let db_setup = db::setup_connection(&provider, &scope)?;
+    let elapsed = start.elapsed();
+    if db_setup.file_count > 0 {
+        eprintln!("Scanned {} files in {:.1}s", db_setup.file_count, elapsed.as_secs_f64());
+    }
+
+    let conn = db_setup.conn;
 
     match cli.command {
         Command::Sessions { grep } => {
