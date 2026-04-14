@@ -10,23 +10,23 @@ use cq::scope::QueryScope;
 #[command(name = "cq", about = "Query AI agent session transcripts with SQL")]
 struct Cli {
     /// Scope to a project (substring match)
-    #[arg(short = 'p', long)]
+    #[arg(short = 'p', long, global = true)]
     project: Option<String>,
 
     /// Scope to a session (prefix match)
-    #[arg(short = 's', long)]
+    #[arg(short = 's', long, global = true)]
     session: Option<String>,
 
     /// Time filter (e.g. 7d, 24h, 30m)
-    #[arg(long)]
+    #[arg(long, global = true)]
     since: Option<String>,
 
     /// Output as JSON
-    #[arg(long)]
+    #[arg(long, global = true)]
     json: bool,
 
     /// Maximum number of results
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, global = true, default_value_t = 50)]
     limit: usize,
 
     #[command(subcommand)]

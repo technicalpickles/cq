@@ -9,16 +9,25 @@ pub enum OutputFormat {
 }
 
 pub fn print_results(stmt: &mut duckdb::Statement, format: &OutputFormat) -> Result<()> {
-    let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let mut rows_iter = stmt.query([])?;
 
-    let rows: Vec<Vec<Value>> = stmt
-        .query_map([], |row| {
-            let values: Vec<Value> = (0..column_names.len())
-                .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
-                .collect();
-            Ok(values)
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    // Get column names from the executed result set
+    let column_names: Vec<String> = rows_iter
+        .as_ref()
+        .expect("query returned no result set")
+        .column_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let column_count = column_names.len();
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    while let Some(row) = rows_iter.next()? {
+        let values: Vec<Value> = (0..column_count)
+            .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
+            .collect();
+        rows.push(values);
+    }
 
     match format {
         OutputFormat::Table => print_table(&column_names, &rows),

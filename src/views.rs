@@ -46,7 +46,7 @@ fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
     let sql = format!(
         "CREATE VIEW raw_records AS
         SELECT json, filename
-        FROM read_json({file_list}, format='newline_delimited', records=false, filename=true)"
+        FROM read_json({file_list}, format='newline_delimited', records=false, filename=true, union_by_name=true, ignore_errors=true)"
     );
     conn.execute_batch(&sql)
         .context("Failed to create raw_records view")?;
