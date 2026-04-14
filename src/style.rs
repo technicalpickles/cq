@@ -128,6 +128,10 @@ pub fn align_columns(rows: &[Vec<String>]) -> Vec<String> {
 }
 
 pub fn print_light_table(headers: &[&str], rows: &[Vec<String>]) {
+    if rows.is_empty() {
+        eprintln!("No results.");
+        return;
+    }
     if headers.is_empty() {
         return;
     }
