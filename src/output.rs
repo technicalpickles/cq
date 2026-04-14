@@ -2,6 +2,8 @@ use anyhow::Result;
 use duckdb::types::Value;
 use serde_json;
 
+use crate::style;
+
 pub enum OutputFormat {
     Default,
     Table,
@@ -34,14 +36,14 @@ pub fn print_results(
     }
 
     match format {
-        OutputFormat::Table | OutputFormat::Default => print_table(&column_names, &rows),
         OutputFormat::Json => print_json(&column_names, &rows),
+        _ => print_light_table_output(&column_names, &rows),
     }
 }
 
-fn value_to_string(v: &Value) -> String {
+pub fn value_to_string(v: &Value) -> String {
     let s = match v {
-        Value::Null => "NULL".to_string(),
+        Value::Null => return style::null_display().to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::TinyInt(n) => n.to_string(),
         Value::SmallInt(n) => n.to_string(),
@@ -52,12 +54,7 @@ fn value_to_string(v: &Value) -> String {
         Value::Text(s) => s.clone(),
         other => format!("{:?}", other),
     };
-
-    if s.len() > 120 {
-        format!("{}...", &s[..120])
-    } else {
-        s
-    }
+    style::truncate(&s, 120)
 }
 
 fn value_to_json(v: &Value) -> serde_json::Value {
@@ -79,17 +76,13 @@ fn value_to_json(v: &Value) -> serde_json::Value {
     }
 }
 
-fn print_table(column_names: &[String], rows: &[Vec<Value>]) -> Result<()> {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return Ok(());
-    }
-    // Temporary basic table output (replaced properly in Task 3)
-    println!("{}", column_names.join("\t"));
-    for row in rows {
-        let cells: Vec<String> = row.iter().map(value_to_string).collect();
-        println!("{}", cells.join("\t"));
-    }
+fn print_light_table_output(column_names: &[String], rows: &[Vec<Value>]) -> Result<()> {
+    let headers: Vec<&str> = column_names.iter().map(|s| s.as_str()).collect();
+    let string_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| row.iter().map(value_to_string).collect())
+        .collect();
+    style::print_light_table(&headers, &string_rows);
     Ok(())
 }
 
