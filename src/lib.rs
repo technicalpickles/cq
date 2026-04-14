@@ -4,3 +4,4 @@ pub mod claude_provider;
 pub mod views;
 pub mod db;
 pub mod output;
+pub mod commands;
