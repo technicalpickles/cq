@@ -49,9 +49,16 @@ pub fn value_to_string(v: &Value) -> String {
         Value::SmallInt(n) => n.to_string(),
         Value::Int(n) => n.to_string(),
         Value::BigInt(n) => n.to_string(),
+        Value::HugeInt(n) => n.to_string(),
+        Value::UTinyInt(n) => n.to_string(),
+        Value::USmallInt(n) => n.to_string(),
+        Value::UInt(n) => n.to_string(),
+        Value::UBigInt(n) => n.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Double(d) => d.to_string(),
+        Value::Decimal(d) => d.to_string(),
         Value::Text(s) => s.clone(),
+        Value::Enum(s) => s.clone(),
         other => format!("{:?}", other),
     };
     style::truncate(&s, 120)
@@ -65,13 +72,27 @@ fn value_to_json(v: &Value) -> serde_json::Value {
         Value::SmallInt(n) => serde_json::Value::Number((*n).into()),
         Value::Int(n) => serde_json::Value::Number((*n).into()),
         Value::BigInt(n) => serde_json::Value::Number((*n).into()),
+        Value::HugeInt(n) => {
+            // i128 doesn't impl Into<serde_json::Number>, try i64 first
+            if let Ok(n64) = i64::try_from(*n) {
+                serde_json::Value::Number(n64.into())
+            } else {
+                serde_json::Value::String(n.to_string())
+            }
+        }
+        Value::UTinyInt(n) => serde_json::Value::Number((*n).into()),
+        Value::USmallInt(n) => serde_json::Value::Number((*n).into()),
+        Value::UInt(n) => serde_json::Value::Number((*n).into()),
+        Value::UBigInt(n) => serde_json::Value::Number((*n).into()),
         Value::Float(f) => serde_json::Number::from_f64(*f as f64)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         Value::Double(d) => serde_json::Number::from_f64(*d)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
+        Value::Decimal(d) => serde_json::Value::String(d.to_string()),
         Value::Text(s) => serde_json::Value::String(s.clone()),
+        Value::Enum(s) => serde_json::Value::String(s.clone()),
         other => serde_json::Value::String(format!("{:?}", other)),
     }
 }
