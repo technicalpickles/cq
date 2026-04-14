@@ -77,7 +77,7 @@ fn value_to_json(v: &Value) -> serde_json::Value {
 
 fn print_table(column_names: &[String], rows: &[Vec<Value>]) -> Result<()> {
     if rows.is_empty() {
-        println!("No results.");
+        eprintln!("No results.");
         return Ok(());
     }
 
