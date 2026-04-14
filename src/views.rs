@@ -180,7 +180,12 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
             COUNT(CASE WHEN type = 'user' THEN 1 END) AS user_message_count,
             (SELECT text FROM messages m2
              WHERE m2.session_id = m1.session_id
-             AND m2.type = 'user' AND m2.text IS NOT NULL
+             AND m2.type = 'user'
+             AND m2.text IS NOT NULL
+             AND m2.text != ''
+             AND m2.text NOT LIKE '<%'
+             AND m2.text NOT LIKE 'Base directory for this skill%'
+             AND m2.text NOT LIKE '#%'
              ORDER BY m2.timestamp LIMIT 1) AS first_user_message
         FROM messages m1
         GROUP BY session_id, project";
