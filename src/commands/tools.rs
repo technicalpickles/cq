@@ -79,6 +79,33 @@ pub fn run(
 
     let where_clause = conditions.join(" AND ");
 
+    let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    // JSON gets full column set for scripting; display gets only what's shown
+    if matches!(format, OutputFormat::Json) {
+        let sql = if errors_only {
+            format!(
+                "SELECT tc.session_id, tc.project, tc.name, tc.tool_use_id, tc.timestamp, CAST(tc.input AS VARCHAR) AS input
+                 FROM tool_calls tc
+                 JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
+                 WHERE {where_clause}
+                 AND tr.is_error = true
+                 ORDER BY tc.timestamp DESC
+                 LIMIT {limit}"
+            )
+        } else {
+            format!(
+                "SELECT tc.session_id, tc.project, tc.name, tc.tool_use_id, tc.timestamp, CAST(tc.input AS VARCHAR) AS input
+                 FROM tool_calls tc
+                 WHERE {where_clause}
+                 ORDER BY tc.timestamp DESC
+                 LIMIT {limit}"
+            )
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        return output::print_results(&mut stmt, &param_refs, format);
+    }
+
     let sql = if errors_only {
         format!(
             "SELECT tc.session_id, tc.name, CAST(tc.input AS VARCHAR) AS input
@@ -99,33 +126,32 @@ pub fn run(
         )
     };
 
-    let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
 
-    match format {
-        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format),
-        _ => {
-            let mut rows_iter = stmt.query(&param_refs[..])?;
-            let mut detail_rows: Vec<ToolDetailRow> = Vec::new();
-            while let Some(row) = rows_iter.next()? {
-                let values: Vec<Value> = (0..3)
-                    .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
-                    .collect();
-                detail_rows.push(ToolDetailRow {
-                    session_id: val_str(&values[0]),
-                    name: val_str(&values[1]),
-                    input: val_str(&values[2]),
-                });
-            }
-
-            match format {
-                OutputFormat::Table => render_detail_table(&detail_rows),
-                _ => render_detail_oneline(&detail_rows),
-            }
-
-            Ok(())
-        }
+    let mut rows_iter = stmt.query(&param_refs[..])?;
+    let mut detail_rows: Vec<ToolDetailRow> = Vec::new();
+    while let Some(row) = rows_iter.next()? {
+        let values: Vec<Value> = (0..3)
+            .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
+            .collect();
+        detail_rows.push(ToolDetailRow {
+            session_id: val_str(&values[0]),
+            name: val_str(&values[1]),
+            input: val_str(&values[2]),
+        });
     }
+
+    if detail_rows.is_empty() {
+        eprintln!("No results.");
+        return Ok(());
+    }
+
+    match format {
+        OutputFormat::Table => render_detail_table(&detail_rows),
+        _ => render_detail_oneline(&detail_rows),
+    }
+
+    Ok(())
 }
 
 fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> Result<()> {
