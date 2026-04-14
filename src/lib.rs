@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod scope;
 pub mod provider;
 pub mod claude_provider;
