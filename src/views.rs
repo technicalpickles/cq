@@ -59,7 +59,7 @@ fn build_file_list(files: &[PathBuf]) -> String {
 /// The JSON extension must be bundled (via the `json` cargo feature on duckdb).
 fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
     let sql = format!(
-        "CREATE VIEW raw_records AS
+        "CREATE OR REPLACE VIEW raw_records AS
         SELECT json, filename AS source_file
         FROM read_json({file_list}, format='newline_delimited', records=false, filename=true, union_by_name=true, ignore_errors=true)"
     );
@@ -77,7 +77,7 @@ fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
 /// to evaluate CAST(content AS JSON[]) even inside a CASE WHEN branch where
 /// content is a string.
 fn register_messages_view(conn: &Connection) -> Result<()> {
-    let sql = format!("CREATE VIEW messages AS
+    let sql = format!("CREATE OR REPLACE VIEW messages AS
         WITH string_msgs AS (
             SELECT
                 json_extract_string(json, '$.sessionId') AS session_id,
@@ -129,7 +129,7 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
 /// Extracts one row per tool_use content block from assistant messages.
 /// Uses LATERAL UNNEST to flatten the content array, then filters for tool_use type.
 fn register_tool_calls_view(conn: &Connection) -> Result<()> {
-    let sql = format!("CREATE VIEW tool_calls AS
+    let sql = format!("CREATE OR REPLACE VIEW tool_calls AS
         SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
@@ -155,7 +155,7 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
 /// Extracts one row per tool_result content block from user messages that have
 /// array content (i.e. messages carrying tool results back from tool execution).
 fn register_tool_results_view(conn: &Connection) -> Result<()> {
-    let sql = format!("CREATE VIEW tool_results AS
+    let sql = format!("CREATE OR REPLACE VIEW tool_results AS
         SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
@@ -178,7 +178,7 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
 ///
 /// Aggregates from the messages view to provide session-level metrics.
 fn register_sessions_view(conn: &Connection) -> Result<()> {
-    let sql = "CREATE VIEW sessions AS
+    let sql = "CREATE OR REPLACE VIEW sessions AS
         SELECT
             session_id,
             project,
@@ -208,7 +208,7 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
 /// without erroring on missing tables.
 fn register_empty_views(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "CREATE VIEW messages AS
+        "CREATE OR REPLACE VIEW messages AS
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
@@ -223,7 +223,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
     ).context("Failed to create empty messages view")?;
 
     conn.execute_batch(
-        "CREATE VIEW tool_calls AS
+        "CREATE OR REPLACE VIEW tool_calls AS
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
@@ -236,7 +236,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
     ).context("Failed to create empty tool_calls view")?;
 
     conn.execute_batch(
-        "CREATE VIEW tool_results AS
+        "CREATE OR REPLACE VIEW tool_results AS
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
@@ -247,7 +247,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
     ).context("Failed to create empty tool_results view")?;
 
     conn.execute_batch(
-        "CREATE VIEW sessions AS
+        "CREATE OR REPLACE VIEW sessions AS
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
