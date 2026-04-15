@@ -477,6 +477,32 @@ fn session_not_found_errors() {
 }
 
 #[test]
+fn projects_always_unscoped() {
+    let projects = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+
+    let project_a = projects.path().join("-Users-test-myproject");
+    let project_b = projects.path().join("-Users-test-webapp");
+    std::fs::create_dir_all(&project_a).unwrap();
+    std::fs::create_dir_all(&project_b).unwrap();
+    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
+    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+
+    let env = TestEnv { projects, cache };
+
+    // Run from "myproject" dir. projects should still show BOTH projects.
+    let output = cq_cmd(&env)
+        .env("PWD", "/Users/test/myproject")
+        .arg("projects")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("myproject"), "Should show myproject, got: {stdout}");
+    assert!(stdout.contains("webapp"), "Should show webapp even when auto-scoped elsewhere, got: {stdout}");
+}
+
+#[test]
 fn all_flag_overrides_auto_scope() {
     let projects = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();

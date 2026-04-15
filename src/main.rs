@@ -140,9 +140,11 @@ fn main() -> Result<()> {
     let provider = ClaudeProvider::new()?;
 
     // Auto-scope to current project if no explicit --project and not --all
+    let is_projects_cmd = matches!(cli.command, Command::Projects { .. });
+
     let (project, auto_scoped) = if cli.project.is_some() {
         (cli.project, false)
-    } else if cli.all || cli.json {
+    } else if cli.all || cli.json || is_projects_cmd {
         (None, false)
     } else {
         match std::env::var("PWD").ok() {
