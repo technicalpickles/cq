@@ -295,3 +295,52 @@ fn help_shows_projects_command() {
         .success()
         .stdout(predicate::str::contains("projects"));
 }
+
+#[test]
+fn tools_fields_extracts_command() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "Bash", "--fields", "command"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should show the extracted command, not raw JSON
+    assert!(stdout.contains("ls"), "Expected extracted command in output, got: {stdout}");
+    assert!(!stdout.contains("{\"command\""), "Should not contain raw JSON, got: {stdout}");
+}
+
+#[test]
+fn tools_fields_multiple() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
+        .args(["tools", "Bash", "--fields", "command,description"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("List files"));
+}
+
+#[test]
+fn tools_fields_table_format() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    cq_cmd(&env)
+        .args(["--table", "tools", "Bash", "--fields", "command"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("command")) // header
+        .stdout(predicate::str::contains("\u{2500}")); // separator
+}
+
+#[test]
+fn tools_fields_json_format() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "tools", "Bash", "--fields", "command"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert!(!parsed.is_empty());
+    assert!(parsed[0].get("command").is_some(), "JSON should have 'command' field");
+}

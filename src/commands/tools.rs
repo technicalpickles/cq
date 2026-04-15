@@ -17,6 +17,12 @@ struct ToolDetailRow {
     input: String,
 }
 
+struct ToolFieldsRow {
+    session_id: String,
+    name: String,
+    fields: Vec<String>,
+}
+
 fn val_str(v: &Value) -> String {
     match v {
         Value::Text(s) => s.clone(),
@@ -41,11 +47,12 @@ pub fn run(
     tool_name: Option<&str>,
     grep: Option<&str>,
     errors_only: bool,
+    fields: Option<&[&str]>,
     format: &OutputFormat,
     limit: usize,
 ) -> Result<()> {
-    // Summary mode: no filters specified
-    if tool_name.is_none() && grep.is_none() && !errors_only {
+    // Summary mode: no filters specified (and no fields requested)
+    if tool_name.is_none() && grep.is_none() && !errors_only && fields.is_none() {
         return run_summary(conn, scope, format);
     }
 
@@ -80,6 +87,11 @@ pub fn run(
     let where_clause = conditions.join(" AND ");
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    // When --fields is specified, use extracted columns instead of raw input
+    if let Some(field_list) = fields {
+        return run_with_fields(conn, &where_clause, &param_refs, field_list, errors_only, format, limit);
+    }
 
     // JSON gets full column set for scripting; display gets only what's shown
     if matches!(format, OutputFormat::Json) {
@@ -149,6 +161,84 @@ pub fn run(
     match format {
         OutputFormat::Table => render_detail_table(&detail_rows),
         _ => render_detail_oneline(&detail_rows),
+    }
+
+    Ok(())
+}
+
+fn run_with_fields(
+    conn: &Connection,
+    where_clause: &str,
+    params: &[&dyn duckdb::types::ToSql],
+    field_list: &[&str],
+    errors_only: bool,
+    format: &OutputFormat,
+    limit: usize,
+) -> Result<()> {
+    // Build SELECT columns: session_id, name, then each field extracted from input JSON
+    let field_columns: Vec<String> = field_list
+        .iter()
+        .map(|f| format!("json_extract_string(tc.input, '$.{f}') AS \"{f}\""))
+        .collect();
+    let field_select = field_columns.join(", ");
+
+    let join_clause = if errors_only {
+        "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
+    } else {
+        ""
+    };
+    let error_filter = if errors_only { "AND tr.is_error = true" } else { "" };
+
+    // JSON mode: include extra metadata columns
+    if matches!(format, OutputFormat::Json) {
+        let sql = format!(
+            "SELECT tc.session_id, tc.project, tc.name, tc.timestamp, {field_select}
+             FROM tool_calls tc
+             {join_clause}
+             WHERE {where_clause}
+             {error_filter}
+             ORDER BY tc.timestamp DESC
+             LIMIT {limit}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        return output::print_results(&mut stmt, params, format);
+    }
+
+    let sql = format!(
+        "SELECT tc.session_id, tc.name, {field_select}
+         FROM tool_calls tc
+         {join_clause}
+         WHERE {where_clause}
+         {error_filter}
+         ORDER BY tc.timestamp DESC
+         LIMIT {limit}"
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows_iter = stmt.query(params)?;
+    let num_fields = field_list.len();
+    let total_cols = 2 + num_fields; // session_id, name, then fields
+    let mut rows: Vec<ToolFieldsRow> = Vec::new();
+
+    while let Some(row) = rows_iter.next()? {
+        let values: Vec<Value> = (0..total_cols)
+            .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
+            .collect();
+        rows.push(ToolFieldsRow {
+            session_id: val_str(&values[0]),
+            name: val_str(&values[1]),
+            fields: values[2..].iter().map(val_str).collect(),
+        });
+    }
+
+    if rows.is_empty() {
+        eprintln!("No results.");
+        return Ok(());
+    }
+
+    match format {
+        OutputFormat::Table => render_fields_table(&rows, field_list),
+        _ => render_fields_oneline(&rows, field_list),
     }
 
     Ok(())
@@ -300,6 +390,81 @@ fn render_detail_oneline(rows: &[ToolDetailRow]) {
         }).collect();
         println!("{}", cols.join("  "));
     }
+}
+
+fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str]) {
+    if rows.is_empty() {
+        eprintln!("No results.");
+        return;
+    }
+
+    let ncols = 2 + field_names.len(); // session_id, name, then fields
+    let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
+        let mut cols = vec![
+            if r.session_id.is_empty() { style::null_display().to_string() } else { style::short_id(&r.session_id, 8) },
+            if r.name.is_empty() { style::null_display().to_string() } else { r.name.clone() },
+        ];
+        for val in &r.fields {
+            cols.push(if val.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::truncate(val, 80)
+            });
+        }
+        cols
+    }).collect();
+
+    let mut widths = vec![0usize; ncols];
+    for row in &plain_rows {
+        for (i, cell) in row.iter().enumerate() {
+            if cell.len() > widths[i] {
+                widths[i] = cell.len();
+            }
+        }
+    }
+
+    for row in &plain_rows {
+        let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
+            let padded = if i == ncols - 1 {
+                cell.clone()
+            } else {
+                style::pad_right(cell, widths[i])
+            };
+            match i {
+                0 => style::color(&padded, style::Color::Secondary),
+                1 => style::color(&padded, style::Color::Primary),
+                _ => padded,
+            }
+        }).collect();
+        println!("{}", cols.join("  "));
+    }
+}
+
+fn render_fields_table(rows: &[ToolFieldsRow], field_names: &[&str]) {
+    if rows.is_empty() {
+        eprintln!("No results.");
+        return;
+    }
+
+    let mut headers: Vec<&str> = vec!["session", "tool"];
+    headers.extend_from_slice(field_names);
+
+    let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
+        let mut cols = vec![
+            if r.session_id.is_empty() { style::null_display().to_string() } else { style::short_id(&r.session_id, 8) },
+            if r.name.is_empty() { style::null_display().to_string() } else { r.name.clone() },
+        ];
+        for val in &r.fields {
+            cols.push(if val.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::truncate(val, 80)
+            });
+        }
+        cols
+    }).collect();
+
+    style::print_light_table(&headers, &string_rows);
 }
 
 fn render_detail_table(rows: &[ToolDetailRow]) {

@@ -65,6 +65,10 @@ enum Command {
         /// Show only tool calls that returned errors
         #[arg(long)]
         errors: bool,
+
+        /// Extract specific input fields as columns (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        fields: Option<Vec<String>>,
     },
     /// Query messages
     Messages {
@@ -145,8 +149,9 @@ fn main() -> Result<()> {
         Command::Sessions { grep } => {
             sessions::run(&conn, &scope, grep.as_deref(), &format, cli.limit)?;
         }
-        Command::Tools { name, grep, errors } => {
-            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, &format, cli.limit)?;
+        Command::Tools { name, grep, errors, fields } => {
+            let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
+            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), &format, cli.limit)?;
         }
         Command::Messages { msg_type, grep } => {
             messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), &format, cli.limit)?;
