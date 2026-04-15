@@ -155,11 +155,15 @@ pub fn run(
     }
 
     if detail_rows.is_empty() {
-        let mut extras: Vec<&str> = Vec::new();
-        if grep.is_some() { extras.push("--grep"); }
-        if errors_only { extras.push("--errors"); }
-        if tool_name.is_some() { extras.push("[name]"); }
-        super::print_no_results(&scope, &extras);
+        if scope.session.is_some() {
+            super::print_session_not_found(scope.session.as_ref().unwrap());
+        } else {
+            let mut extras: Vec<&str> = Vec::new();
+            if grep.is_some() { extras.push("--grep"); }
+            if errors_only { extras.push("--errors"); }
+            if tool_name.is_some() { extras.push("[name]"); }
+            super::print_no_results(&scope, &extras);
+        }
         return Ok(());
     }
 
@@ -257,9 +261,13 @@ fn run_with_fields(
     }
 
     if rows.is_empty() {
-        let mut extras: Vec<&str> = Vec::new();
-        if errors_only { extras.push("--errors"); }
-        super::print_no_results(scope, &extras);
+        if scope.session.is_some() {
+            super::print_session_not_found(scope.session.as_ref().unwrap());
+        } else {
+            let mut extras: Vec<&str> = Vec::new();
+            if errors_only { extras.push("--errors"); }
+            super::print_no_results(scope, &extras);
+        }
         return Ok(());
     }
 
@@ -336,7 +344,11 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> 
             }
 
             if summary_rows.is_empty() {
-                super::print_no_results(&scope, &[]);
+                if scope.session.is_some() {
+                    super::print_session_not_found(scope.session.as_ref().unwrap());
+                } else {
+                    super::print_no_results(&scope, &[]);
+                }
                 return Ok(());
             }
 

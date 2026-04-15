@@ -118,9 +118,13 @@ pub fn run(
             }
 
             if session_rows.is_empty() {
-                let mut extras: Vec<&str> = Vec::new();
-                if grep.is_some() { extras.push("--grep"); }
-                super::print_no_results(&scope, &extras);
+                if scope.session.is_some() {
+                    super::print_session_not_found(scope.session.as_ref().unwrap());
+                } else {
+                    let mut extras: Vec<&str> = Vec::new();
+                    if grep.is_some() { extras.push("--grep"); }
+                    super::print_no_results(&scope, &extras);
+                }
                 return Ok(());
             }
 

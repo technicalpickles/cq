@@ -16,6 +16,15 @@ pub fn limit_clause(limit: usize) -> String {
     }
 }
 
+/// Print "Session <id> not found." when --session is specified but no results match.
+pub fn print_session_not_found(session_id: &str) {
+    let short = &session_id[..std::cmp::min(8, session_id.len())];
+    eprintln!(
+        "Session {}... not found.",
+        short
+    );
+}
+
 /// Print "No results." with contextual suggestions based on active filters.
 pub fn print_no_results(scope: &crate::scope::QueryScope, extra_filters: &[&str]) {
     eprintln!("No results.");

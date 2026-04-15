@@ -1,6 +1,28 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 
+/// Validate that a session ID looks like a UUID.
+/// Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (8-4-4-4-12 hex chars)
+pub fn validate_session_id(id: &str) -> Result<()> {
+    let parts: Vec<&str> = id.split('-').collect();
+    let valid = parts.len() == 5
+        && parts[0].len() == 8
+        && parts[1].len() == 4
+        && parts[2].len() == 4
+        && parts[3].len() == 4
+        && parts[4].len() == 12
+        && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_hexdigit()));
+
+    if valid {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "'{}' is not a valid session ID. Expected UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            id
+        ))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct QueryScope {
     pub project: Option<String>,
@@ -83,5 +105,25 @@ mod tests {
     fn no_since_returns_none() {
         let scope = QueryScope::new(None, None, None);
         assert!(scope.since_timestamp().unwrap().is_none());
+    }
+
+    #[test]
+    fn validate_session_id_valid() {
+        assert!(validate_session_id("550e8400-e29b-41d4-a716-446655440000").is_ok());
+    }
+
+    #[test]
+    fn validate_session_id_short_prefix() {
+        assert!(validate_session_id("550e8400").is_err());
+    }
+
+    #[test]
+    fn validate_session_id_garbage() {
+        assert!(validate_session_id("not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn validate_session_id_empty() {
+        assert!(validate_session_id("").is_err());
     }
 }

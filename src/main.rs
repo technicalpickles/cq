@@ -123,6 +123,14 @@ fn main() -> Result<()> {
         OutputFormat::Default
     };
 
+    // Validate --session format before doing any work
+    if let Some(ref session) = cli.session {
+        if let Err(e) = cq::scope::validate_session_id(session) {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+
     // Schema command doesn't need a DB connection
     if let Command::Schema { name, examples } = &cli.command {
         schema::run(name.as_deref(), *examples);

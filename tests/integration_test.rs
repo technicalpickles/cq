@@ -447,6 +447,36 @@ fn no_results_shows_suggestions() {
 }
 
 #[test]
+fn session_invalid_format_errors() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--session", "not-a-uuid", "sessions"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not a valid session ID"),
+        "Should error on invalid UUID format, got: {stderr}"
+    );
+}
+
+#[test]
+fn session_not_found_errors() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--session", "00000000-0000-0000-0000-000000000000", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Session 00000000") && stderr.contains("not found"),
+        "Should show session-not-found message, got: {stderr}"
+    );
+}
+
+#[test]
 fn all_flag_overrides_auto_scope() {
     let projects = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();
