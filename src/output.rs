@@ -91,7 +91,15 @@ fn value_to_json(v: &Value) -> serde_json::Value {
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         Value::Decimal(d) => serde_json::Value::String(d.to_string()),
-        Value::Text(s) => serde_json::Value::String(s.clone()),
+        Value::Text(s) => {
+            // Try to parse as JSON object/array to avoid double-encoding
+            if s.starts_with('{') || s.starts_with('[') {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
+                    return parsed;
+                }
+            }
+            serde_json::Value::String(s.clone())
+        }
         Value::Enum(s) => serde_json::Value::String(s.clone()),
         other => serde_json::Value::String(format!("{:?}", other)),
     }
