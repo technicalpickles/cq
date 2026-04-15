@@ -37,6 +37,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_color: bool,
 
+    /// Show all projects (disable auto-scoping to current directory)
+    #[arg(long, global = true)]
+    all: bool,
+
     /// Maximum number of results (0 for unlimited)
     #[arg(long, global = true, default_value_t = 50)]
     limit: usize,
@@ -119,8 +123,6 @@ fn main() -> Result<()> {
         OutputFormat::Default
     };
 
-    let scope = QueryScope::new(cli.project, cli.session, cli.since);
-
     // Schema command doesn't need a DB connection
     if let Command::Schema { name, examples } = &cli.command {
         schema::run(name.as_deref(), *examples);
@@ -128,6 +130,30 @@ fn main() -> Result<()> {
     }
 
     let provider = ClaudeProvider::new()?;
+
+    // Auto-scope to current project if no explicit --project and not --all
+    let (project, auto_scoped) = if cli.project.is_some() {
+        (cli.project, false)
+    } else if cli.all || cli.json {
+        (None, false)
+    } else {
+        match std::env::var("PWD").ok() {
+            Some(cwd) => match provider.project_for_cwd(&cwd) {
+                Some(project_path) => (Some(project_path), true),
+                None => (None, false),
+            },
+            None => (None, false),
+        }
+    };
+
+    if auto_scoped && !cli.json {
+        if let Some(ref p) = project {
+            let leaf = p.split('/').filter(|s| !s.is_empty()).last().unwrap_or(p);
+            eprintln!("{}", cq::style::hint(&format!("Scoped to {leaf} (use --all for everything)")));
+        }
+    }
+
+    let scope = QueryScope::new(project, cli.session, cli.since);
 
     let options = db::DbOptions {
         reindex: cli.reindex,

@@ -393,3 +393,65 @@ fn no_truncation_hint_in_json_mode() {
         "Should not show truncation hint in JSON mode, got: {stderr}"
     );
 }
+
+#[test]
+fn auto_scope_to_current_project() {
+    // Create two project dirs with different sessions.
+    // The directory names must match the cwd embedded in the fixture files:
+    //   simple_session.jsonl has cwd "/Users/test/myproject" -> dir "-Users-test-myproject"
+    //   multi_tool_session.jsonl has cwd "/Users/test/webapp" -> dir "-Users-test-webapp"
+    let projects = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+
+    let project_a = projects.path().join("-Users-test-myproject");
+    let project_b = projects.path().join("-Users-test-webapp");
+    std::fs::create_dir_all(&project_a).unwrap();
+    std::fs::create_dir_all(&project_b).unwrap();
+    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
+    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+
+    let env = TestEnv { projects, cache };
+
+    // Run from "myproject" dir (matches simple_session.jsonl's cwd), should auto-scope
+    let output = cq_cmd(&env)
+        .env("PWD", "/Users/test/myproject")
+        .arg("sessions")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // sess-001 is in myproject, sess-002 is in webapp
+    assert!(stdout.contains("sess-001"), "Should show myproject session (sess-001), got: {stdout}");
+    assert!(!stdout.contains("sess-002"), "Should not show webapp session (sess-002), got: {stdout}");
+    assert!(stderr.contains("Scoped to"), "Should show scope notice, got: {stderr}");
+}
+
+#[test]
+fn all_flag_overrides_auto_scope() {
+    let projects = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+
+    let project_a = projects.path().join("-Users-test-myproject");
+    let project_b = projects.path().join("-Users-test-webapp");
+    std::fs::create_dir_all(&project_a).unwrap();
+    std::fs::create_dir_all(&project_b).unwrap();
+    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
+    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+
+    let env = TestEnv { projects, cache };
+
+    // Run with --all from myproject dir, should show sessions from BOTH projects
+    let output = cq_cmd(&env)
+        .env("PWD", "/Users/test/myproject")
+        .args(["--all", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("Scoped to"), "Should not show scope notice with --all, got: {stderr}");
+    // Both sessions should appear
+    assert!(stdout.contains("sess-001"), "Should show myproject session with --all, got: {stdout}");
+    assert!(stdout.contains("sess-002"), "Should show webapp session with --all, got: {stdout}");
+}

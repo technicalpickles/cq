@@ -44,6 +44,33 @@ impl ClaudeProvider {
         let decoded = Self::decode_path(encoded_name);
         decoded.to_lowercase().contains(&query.to_lowercase())
     }
+
+    /// Given a directory path, find the matching project name if one exists.
+    /// Checks if the encoded form of `cwd` (or any parent) matches a project directory.
+    pub fn project_for_cwd(&self, cwd: &str) -> Option<String> {
+        if !self.base_dir.exists() {
+            return None;
+        }
+
+        // Try the exact path first, then walk up parent directories
+        let mut path = std::path::Path::new(cwd);
+        loop {
+            let encoded = Self::encode_path(&path.to_string_lossy());
+            let project_dir = self.base_dir.join(&encoded);
+            if project_dir.is_dir() {
+                // Return the original path, not the decoded version.
+                // encode_path is lossy (both '/' and '.' become '-'), so
+                // decode_path won't roundtrip correctly for paths with dots.
+                // The project column in views uses the original cwd from JSONL.
+                return Some(path.to_string_lossy().to_string());
+            }
+            match path.parent() {
+                Some(parent) if parent != path => path = parent,
+                _ => break,
+            }
+        }
+        None
+    }
 }
 
 impl TranscriptProvider for ClaudeProvider {
@@ -241,6 +268,36 @@ mod tests {
         assert!(files.is_empty());
         let projects = provider.list_projects().unwrap();
         assert!(projects.is_empty());
+    }
+
+    #[test]
+    fn project_for_cwd_exact_match() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("-Users-test-myproject");
+        fs::create_dir_all(&project_dir).unwrap();
+        let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
+        let result = provider.project_for_cwd("/Users/test/myproject");
+        assert_eq!(result, Some("/Users/test/myproject".to_string()));
+    }
+
+    #[test]
+    fn project_for_cwd_subdirectory() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("-Users-test-myproject");
+        fs::create_dir_all(&project_dir).unwrap();
+        let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
+        let result = provider.project_for_cwd("/Users/test/myproject/src/lib");
+        assert_eq!(result, Some("/Users/test/myproject".to_string()));
+    }
+
+    #[test]
+    fn project_for_cwd_no_match() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("-Users-test-myproject");
+        fs::create_dir_all(&project_dir).unwrap();
+        let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
+        let result = provider.project_for_cwd("/Users/test/other");
+        assert_eq!(result, None);
     }
 
     #[test]
