@@ -98,3 +98,59 @@ ORDER BY invocations DESC
 **Why it's hard without cq:** The skill list spans 30+ skills across 13 plugins. There's no built-in analytics for "which skills fire." You'd need to grep through every session transcript and manually tally invocations, then cross-reference against the plugin repo to filter out skills from other sources (superpowers, local skills, etc.).
 
 **Impact:** Revealed that most plugin value concentrates in 3-4 skills. Skills that never fire might have description/triggering issues, or might just not match current workflows.
+
+## Context Budget Analysis: Which Tool Calls Burn the Most Tokens?
+
+**Question:** "In a long session using `pup` (Datadog CLI), which calls added the most context to the conversation?"
+
+**Finding:** In a session investigating production latency (58 `pup` calls total), the top 3 calls alone dumped ~47k characters into context. Two were trace searches piped through jq, one was a metrics query. Meanwhile, the bottom 30+ calls returned essentially nothing useful (31 chars each, empty responses or errors). The session was spending most of its context budget on a handful of large trace dumps while repeatedly retrying queries that returned nothing.
+
+**Query:**
+```bash
+cq sql "
+SELECT
+  tc.tool_use_id,
+  json_extract_string(tc.input, '$.command') AS command,
+  length(tr.content) AS result_length
+FROM tool_calls tc
+JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
+WHERE tc.session_id = '<SESSION_ID>'
+  AND tc.name = 'Bash'
+  AND json_extract_string(tc.input, '$.command') LIKE '%pup%'
+ORDER BY result_length DESC
+" --all
+```
+
+**Variations:**
+```bash
+# All Bash calls in a session, ranked by output size (not just pup)
+cq sql "
+SELECT
+  json_extract_string(tc.input, '$.command') AS command,
+  length(tr.content) AS result_chars,
+  tr.is_error
+FROM tool_calls tc
+JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
+WHERE tc.session_id = '<SESSION_ID>'
+  AND tc.name = 'Bash'
+ORDER BY result_chars DESC
+LIMIT 20
+" --all
+
+# All tool calls ranked by result size (Read, Grep, Bash, etc.)
+cq sql "
+SELECT
+  tc.name AS tool,
+  left(tc.input::text, 120) AS input_preview,
+  length(tr.content) AS result_chars
+FROM tool_calls tc
+JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
+WHERE tc.session_id = '<SESSION_ID>'
+ORDER BY result_chars DESC
+LIMIT 20
+" --all
+```
+
+**Why it's hard without cq:** You can't see tool result sizes in the conversation UI. Long outputs get truncated visually, so you don't notice that one `pup traces search` dumped 16k chars while a dozen other calls returned nothing. Without joining `tool_calls` to `tool_results` and measuring `length(content)`, there's no way to audit where context budget actually went.
+
+**Impact:** Identified that trace search commands need more aggressive filtering (tighter jq selectors, `| head`, or narrower Datadog queries) to avoid flooding context. Also revealed a pattern of retrying queries that consistently return empty results, suggesting the session needed to stop and reassess its approach rather than keep trying variants.
