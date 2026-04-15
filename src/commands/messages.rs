@@ -88,6 +88,14 @@ pub fn run(
                 });
             }
 
+            if message_rows.is_empty() {
+                let mut extras: Vec<&str> = Vec::new();
+                if msg_type.is_some() { extras.push("--type"); }
+                if grep.is_some() { extras.push("--grep"); }
+                super::print_no_results(&scope, &extras);
+                return Ok(());
+            }
+
             match format {
                 OutputFormat::Table => render_table(&message_rows),
                 _ => render_oneline(&message_rows),
@@ -108,11 +116,6 @@ pub fn run(
 }
 
 fn render_oneline(rows: &[MessageRow]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     // Build plain text rows (no color) for width calculation
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let session_id = if r.session_id.is_empty() {
@@ -173,11 +176,6 @@ fn render_oneline(rows: &[MessageRow]) {
 }
 
 fn render_table(rows: &[MessageRow]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     let headers = ["session_id", "type", "timestamp", "text"];
 
     let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {

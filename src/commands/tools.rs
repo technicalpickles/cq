@@ -91,7 +91,7 @@ pub fn run(
 
     // When --fields is specified, use extracted columns instead of raw input
     if let Some(field_list) = fields {
-        return run_with_fields(conn, &where_clause, &param_refs, field_list, errors_only, format, limit);
+        return run_with_fields(conn, scope, &where_clause, &param_refs, field_list, errors_only, format, limit);
     }
 
     // JSON gets full column set for scripting; display gets only what's shown
@@ -155,7 +155,11 @@ pub fn run(
     }
 
     if detail_rows.is_empty() {
-        eprintln!("No results.");
+        let mut extras: Vec<&str> = Vec::new();
+        if grep.is_some() { extras.push("--grep"); }
+        if errors_only { extras.push("--errors"); }
+        if tool_name.is_some() { extras.push("[name]"); }
+        super::print_no_results(&scope, &extras);
         return Ok(());
     }
 
@@ -186,6 +190,7 @@ pub fn run(
 
 fn run_with_fields(
     conn: &Connection,
+    scope: &QueryScope,
     where_clause: &str,
     params: &[&dyn duckdb::types::ToSql],
     field_list: &[&str],
@@ -252,7 +257,9 @@ fn run_with_fields(
     }
 
     if rows.is_empty() {
-        eprintln!("No results.");
+        let mut extras: Vec<&str> = Vec::new();
+        if errors_only { extras.push("--errors"); }
+        super::print_no_results(scope, &extras);
         return Ok(());
     }
 
@@ -328,6 +335,11 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> 
                 });
             }
 
+            if summary_rows.is_empty() {
+                super::print_no_results(&scope, &[]);
+                return Ok(());
+            }
+
             match format {
                 OutputFormat::Table => render_summary_table(&summary_rows),
                 _ => render_bar_chart(&summary_rows),
@@ -339,11 +351,6 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> 
 }
 
 fn render_bar_chart(rows: &[ToolSummaryRow]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     let max_count = rows.iter().map(|r| r.count).max().unwrap_or(1);
     let name_width = rows.iter().map(|r| r.name.len()).max().unwrap_or(0);
     let count_width = rows.iter().map(|r| r.count.to_string().len()).max().unwrap_or(0);
@@ -372,11 +379,6 @@ fn render_summary_table(rows: &[ToolSummaryRow]) {
 }
 
 fn render_detail_oneline(rows: &[ToolDetailRow]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     // Build plain text rows (no color) for width calculation
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let session_id = if r.session_id.is_empty() {
@@ -430,11 +432,6 @@ fn render_detail_oneline(rows: &[ToolDetailRow]) {
 }
 
 fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     let ncols = 2 + field_names.len(); // session_id, name, then fields
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let mut cols = vec![
@@ -478,11 +475,6 @@ fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str]) {
 }
 
 fn render_fields_table(rows: &[ToolFieldsRow], field_names: &[&str]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     let mut headers: Vec<&str> = vec!["session", "tool"];
     headers.extend_from_slice(field_names);
 

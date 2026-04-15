@@ -117,6 +117,13 @@ pub fn run(
                 });
             }
 
+            if session_rows.is_empty() {
+                let mut extras: Vec<&str> = Vec::new();
+                if grep.is_some() { extras.push("--grep"); }
+                super::print_no_results(&scope, &extras);
+                return Ok(());
+            }
+
             match format {
                 OutputFormat::Table => render_table(&session_rows),
                 _ => render_oneline(&session_rows),
@@ -137,11 +144,6 @@ pub fn run(
 }
 
 fn render_oneline(rows: &[SessionRow]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     // Build plain text rows (no color) for width calculation
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let time_ago = if r.started_at.is_empty() {
@@ -214,11 +216,6 @@ fn render_oneline(rows: &[SessionRow]) {
 }
 
 fn render_table(rows: &[SessionRow]) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     let headers = ["started", "project", "session_id", "dur", "msgs", "tools", "first_user_message"];
 
     let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {

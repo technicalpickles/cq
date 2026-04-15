@@ -428,6 +428,25 @@ fn auto_scope_to_current_project() {
 }
 
 #[test]
+fn no_results_shows_suggestions() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--project", "nonexistent", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No results"),
+        "Should show no results, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--project"),
+        "Should mention active filter in suggestion, got: {stderr}"
+    );
+}
+
+#[test]
 fn all_flag_overrides_auto_scope() {
     let projects = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();

@@ -16,6 +16,32 @@ pub fn limit_clause(limit: usize) -> String {
     }
 }
 
+/// Print "No results." with contextual suggestions based on active filters.
+pub fn print_no_results(scope: &crate::scope::QueryScope, extra_filters: &[&str]) {
+    eprintln!("No results.");
+
+    let mut active: Vec<String> = Vec::new();
+    if scope.project.is_some() {
+        active.push("--project".to_string());
+    }
+    if scope.session.is_some() {
+        active.push("--session".to_string());
+    }
+    if scope.since.is_some() {
+        active.push("--since".to_string());
+    }
+    for f in extra_filters {
+        active.push(f.to_string());
+    }
+
+    if !active.is_empty() {
+        eprintln!(
+            "{}",
+            style::hint(&format!("Active filters: {}. Try broadening or removing one.", active.join(", ")))
+        );
+    }
+}
+
 /// Run a COUNT(*) with the same WHERE clause and print a truncation hint if results were capped.
 /// Call after rendering results. `displayed` is how many rows were actually shown.
 /// Skips the hint if limit is 0 (unlimited) or displayed < limit (all rows fit).

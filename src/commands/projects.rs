@@ -166,6 +166,11 @@ pub fn run(
         });
     }
 
+    if project_rows.is_empty() {
+        super::print_no_results(&scope, &[]);
+        return Ok(());
+    }
+
     // Fetch skill names if --skills flag
     let skill_rows = if show_skills {
         let projects: Vec<&str> = project_rows.iter().map(|r| r.project.as_str()).collect();
@@ -233,11 +238,6 @@ fn format_count(n: i64) -> String {
 }
 
 fn render_oneline(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: bool) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let time_ago = if r.last_activity.is_empty() {
             style::null_display().to_string()
@@ -304,11 +304,6 @@ fn render_oneline(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: boo
 }
 
 fn render_table(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: bool) {
-    if rows.is_empty() {
-        eprintln!("No results.");
-        return;
-    }
-
     let headers = if show_skills {
         vec!["last_activity", "project", "sessions", "messages", "tools", "skills", "skill_names"]
     } else {
