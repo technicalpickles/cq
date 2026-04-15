@@ -50,6 +50,7 @@ pub fn run(
     fields: Option<&[&str]>,
     format: &OutputFormat,
     limit: usize,
+    offset: usize,
 ) -> Result<()> {
     // Summary mode: no filters specified (and no fields requested)
     if tool_name.is_none() && grep.is_none() && !errors_only && fields.is_none() {
@@ -86,12 +87,13 @@ pub fn run(
 
     let where_clause = conditions.join(" AND ");
     let limit_clause = super::limit_clause(limit);
+    let offset_clause = super::offset_clause(offset);
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     // When --fields is specified, use extracted columns instead of raw input
     if let Some(field_list) = fields {
-        return run_with_fields(conn, scope, &where_clause, &param_refs, field_list, errors_only, format, limit);
+        return run_with_fields(conn, scope, &where_clause, &param_refs, field_list, errors_only, format, limit, offset);
     }
 
     // JSON gets full column set for scripting; display gets only what's shown
@@ -104,7 +106,8 @@ pub fn run(
                  WHERE {where_clause}
                  AND tr.is_error = true
                  ORDER BY tc.timestamp DESC
-                 {limit_clause}"
+                 {limit_clause}
+                 {offset_clause}"
             )
         } else {
             format!(
@@ -112,7 +115,8 @@ pub fn run(
                  FROM tool_calls tc
                  WHERE {where_clause}
                  ORDER BY tc.timestamp DESC
-                 {limit_clause}"
+                 {limit_clause}
+                 {offset_clause}"
             )
         };
         let mut stmt = conn.prepare(&sql)?;
@@ -127,7 +131,8 @@ pub fn run(
              WHERE {where_clause}
              AND tr.is_error = true
              ORDER BY tc.timestamp DESC
-             {limit_clause}"
+             {limit_clause}
+             {offset_clause}"
         )
     } else {
         format!(
@@ -135,7 +140,8 @@ pub fn run(
              FROM tool_calls tc
              WHERE {where_clause}
              ORDER BY tc.timestamp DESC
-             {limit_clause}"
+             {limit_clause}
+             {offset_clause}"
         )
     };
 
@@ -201,6 +207,7 @@ fn run_with_fields(
     errors_only: bool,
     format: &OutputFormat,
     limit: usize,
+    offset: usize,
 ) -> Result<()> {
     // Build SELECT columns: session_id, name, then each field extracted from input JSON
     let field_columns: Vec<String> = field_list
@@ -210,6 +217,7 @@ fn run_with_fields(
     let field_select = field_columns.join(", ");
 
     let limit_clause = super::limit_clause(limit);
+    let offset_clause = super::offset_clause(offset);
 
     let join_clause = if errors_only {
         "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
@@ -227,7 +235,8 @@ fn run_with_fields(
              WHERE {where_clause}
              {error_filter}
              ORDER BY tc.timestamp DESC
-             {limit_clause}"
+             {limit_clause}
+             {offset_clause}"
         );
         let mut stmt = conn.prepare(&sql)?;
         return output::print_results(&mut stmt, params, format);
@@ -240,7 +249,8 @@ fn run_with_fields(
          WHERE {where_clause}
          {error_filter}
          ORDER BY tc.timestamp DESC
-         {limit_clause}"
+         {limit_clause}
+         {offset_clause}"
     );
 
     let mut stmt = conn.prepare(&sql)?;

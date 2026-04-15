@@ -16,6 +16,15 @@ pub fn limit_clause(limit: usize) -> String {
     }
 }
 
+/// Returns "OFFSET N" or empty string when offset is 0.
+pub fn offset_clause(offset: usize) -> String {
+    if offset == 0 {
+        String::new()
+    } else {
+        format!("OFFSET {offset}")
+    }
+}
+
 /// Print "Session <id> not found." when --session is specified but no results match.
 pub fn print_session_not_found(session_id: &str) {
     let short = &session_id[..std::cmp::min(8, session_id.len())];

@@ -54,6 +54,7 @@ pub fn run(
     show_skills: bool,
     format: &OutputFormat,
     limit: usize,
+    offset: usize,
 ) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
@@ -71,6 +72,7 @@ pub fn run(
     let where_clause = conditions.join(" AND ");
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let limit_clause = super::limit_clause(limit);
+    let offset_clause = super::offset_clause(offset);
 
     if matches!(format, OutputFormat::Json) {
         // JSON mode: include skill list per project
@@ -85,7 +87,8 @@ pub fn run(
             WHERE {where_clause}
             GROUP BY s.project
             ORDER BY last_activity DESC
-            {limit_clause}"
+            {limit_clause}
+            {offset_clause}"
         );
 
         // For JSON, build the result manually to include skills array
@@ -145,7 +148,8 @@ pub fn run(
         WHERE {where_clause}
         GROUP BY s.project
         ORDER BY last_activity DESC
-        {limit_clause}"
+        {limit_clause}
+        {offset_clause}"
     );
 
     let mut stmt = conn.prepare(&sql)?;

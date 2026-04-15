@@ -45,6 +45,10 @@ struct Cli {
     #[arg(long, global = true, default_value_t = 50)]
     limit: usize,
 
+    /// Number of results to skip before returning
+    #[arg(long, global = true, default_value_t = 0)]
+    offset: usize,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -183,17 +187,17 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Sessions { grep } => {
-            sessions::run(&conn, &scope, grep.as_deref(), &format, cli.limit)?;
+            sessions::run(&conn, &scope, grep.as_deref(), &format, cli.limit, cli.offset)?;
         }
         Command::Tools { name, grep, errors, fields } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), &format, cli.limit)?;
+            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), &format, cli.limit, cli.offset)?;
         }
         Command::Messages { msg_type, grep } => {
-            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), &format, cli.limit)?;
+            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), &format, cli.limit, cli.offset)?;
         }
         Command::Projects { skills } => {
-            projects::run(&conn, &scope, skills, &format, cli.limit)?;
+            projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset)?;
         }
         Command::Sql { query } => {
             sql::run(&conn, &query, &format)?;

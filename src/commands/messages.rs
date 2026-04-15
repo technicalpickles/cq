@@ -28,6 +28,7 @@ pub fn run(
     grep: Option<&str>,
     format: &OutputFormat,
     limit: usize,
+    offset: usize,
 ) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
@@ -59,13 +60,15 @@ pub fn run(
 
     let where_clause = conditions.join(" AND ");
     let limit_clause = super::limit_clause(limit);
+    let offset_clause = super::offset_clause(offset);
 
     let sql = format!(
         "SELECT session_id, type, timestamp, text
          FROM messages
          WHERE {where_clause}
          ORDER BY timestamp DESC
-         {limit_clause}"
+         {limit_clause}
+         {offset_clause}"
     );
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
