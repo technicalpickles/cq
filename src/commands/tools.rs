@@ -164,6 +164,23 @@ pub fn run(
         _ => render_detail_oneline(&detail_rows),
     }
 
+    super::print_truncation_hint(
+        conn,
+        if errors_only {
+            "tool_calls tc JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
+        } else {
+            "tool_calls tc"
+        },
+        &if errors_only {
+            format!("{where_clause} AND tr.is_error = true")
+        } else {
+            where_clause.clone()
+        },
+        &param_refs,
+        detail_rows.len(),
+        limit,
+    );
+
     Ok(())
 }
 
@@ -243,6 +260,23 @@ fn run_with_fields(
         OutputFormat::Table => render_fields_table(&rows, field_list),
         _ => render_fields_oneline(&rows, field_list),
     }
+
+    super::print_truncation_hint(
+        conn,
+        if errors_only {
+            "tool_calls tc JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
+        } else {
+            "tool_calls tc"
+        },
+        &if errors_only {
+            format!("{where_clause} AND tr.is_error = true")
+        } else {
+            where_clause.to_string()
+        },
+        params,
+        rows.len(),
+        limit,
+    );
 
     Ok(())
 }

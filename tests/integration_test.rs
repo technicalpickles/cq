@@ -344,3 +344,52 @@ fn tools_fields_json_format() {
     assert!(!parsed.is_empty());
     assert!(parsed[0].get("command").is_some(), "JSON should have 'command' field");
 }
+
+#[test]
+fn truncation_hint_shown_on_stderr() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "Bash", "--limit", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Showing 1 of"),
+        "Expected truncation hint on stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--limit 0"),
+        "Expected --limit 0 suggestion on stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn no_truncation_hint_when_all_results_shown() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "Bash", "--limit", "100"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Showing"),
+        "Should not show truncation hint when all results fit, got: {stderr}"
+    );
+}
+
+#[test]
+fn no_truncation_hint_in_json_mode() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "tools", "Bash", "--limit", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Showing"),
+        "Should not show truncation hint in JSON mode, got: {stderr}"
+    );
+}

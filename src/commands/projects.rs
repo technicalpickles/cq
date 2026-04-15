@@ -179,6 +179,22 @@ pub fn run(
         _ => render_oneline(&project_rows, &skill_rows, show_skills),
     }
 
+    // Truncation hint (inline because projects counts distinct, not rows)
+    if limit > 0 && project_rows.len() >= limit {
+        let count_sql = format!(
+            "SELECT COUNT(DISTINCT s.project) FROM sessions s WHERE {where_clause}"
+        );
+        if let Ok(total) = conn.query_row(&count_sql, &param_refs[..], |row| row.get::<_, i64>(0)) {
+            let total = total as usize;
+            if total > project_rows.len() {
+                eprintln!("{}", style::hint(&format!(
+                    "Showing {} of {} projects. Use --limit 0 for all.",
+                    project_rows.len(), total
+                )));
+            }
+        }
+    }
+
     Ok(())
 }
 

@@ -93,6 +93,15 @@ pub fn run(
                 _ => render_oneline(&message_rows),
             }
 
+            super::print_truncation_hint(
+                conn,
+                "messages",
+                &where_clause,
+                &param_refs,
+                message_rows.len(),
+                limit,
+            );
+
             Ok(())
         }
     }

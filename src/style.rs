@@ -1,6 +1,11 @@
 use owo_colors::{OwoColorize, Stream::Stdout};
 use chrono::{DateTime, Utc};
 
+pub fn hint(text: &str) -> String {
+    use owo_colors::Stream::Stderr;
+    format!("{}", text.if_supports_color(Stderr, |t| t.dimmed()))
+}
+
 pub enum Color {
     Primary,
     Secondary,

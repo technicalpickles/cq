@@ -122,6 +122,15 @@ pub fn run(
                 _ => render_oneline(&session_rows),
             }
 
+            super::print_truncation_hint(
+                conn,
+                "sessions",
+                &where_clause,
+                &param_refs,
+                session_rows.len(),
+                limit,
+            );
+
             Ok(())
         }
     }
