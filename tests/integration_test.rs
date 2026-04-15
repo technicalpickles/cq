@@ -428,6 +428,32 @@ fn auto_scope_to_current_project() {
 }
 
 #[test]
+fn auto_scope_hint_shows_path() {
+    let projects = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+
+    let project_a = projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_a).unwrap();
+    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
+
+    let env = TestEnv { projects, cache };
+
+    let output = cq_cmd(&env)
+        .env("PWD", "/Users/test/myproject")
+        .env("HOME", "/Users/test")
+        .arg("sessions")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should show path, not just leaf name
+    assert!(
+        stderr.contains("~/myproject"),
+        "Should show ~/myproject in scope hint, got: {stderr}"
+    );
+}
+
+#[test]
 fn no_results_shows_suggestions() {
     let env = setup_env(&["simple_session.jsonl"]);
     let output = cq_cmd(&env)

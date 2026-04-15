@@ -158,8 +158,8 @@ fn main() -> Result<()> {
 
     if auto_scoped && !cli.json {
         if let Some(ref p) = project {
-            let leaf = p.split('/').filter(|s| !s.is_empty()).last().unwrap_or(p);
-            eprintln!("{}", cq::style::hint(&format!("Scoped to {leaf} (use --all for everything)")));
+            let display = cq::style::abbreviate_home(p);
+            eprintln!("{}", cq::style::hint(&format!("Scoped to {display} (use --all for everything)")));
         }
     }
 

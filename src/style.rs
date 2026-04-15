@@ -22,6 +22,17 @@ pub fn color(text: &str, role: Color) -> String {
     }
 }
 
+/// Replace the home directory prefix with ~ for display.
+pub fn abbreviate_home(path: &str) -> String {
+    if let Some(home) = dirs::home_dir() {
+        let home_str = home.to_string_lossy();
+        if path.starts_with(home_str.as_ref()) {
+            return format!("~{}", &path[home_str.len()..]);
+        }
+    }
+    path.to_string()
+}
+
 pub fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
@@ -208,6 +219,23 @@ pub fn bar(value: i64, max_value: i64, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // abbreviate_home tests
+    #[test]
+    fn abbreviate_home_with_match() {
+        if let Some(home) = dirs::home_dir() {
+            let path = format!("{}/projects/myapp", home.display());
+            let result = abbreviate_home(&path);
+            assert!(result.starts_with("~/"), "Should start with ~/, got: {result}");
+            assert!(result.ends_with("/projects/myapp"), "Should end with path, got: {result}");
+        }
+    }
+
+    #[test]
+    fn abbreviate_home_no_match() {
+        let result = abbreviate_home("/some/other/path");
+        assert_eq!(result, "/some/other/path");
+    }
 
     // truncate tests
     #[test]
