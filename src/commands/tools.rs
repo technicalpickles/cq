@@ -85,6 +85,7 @@ pub fn run(
     }
 
     let where_clause = conditions.join(" AND ");
+    let limit_clause = super::limit_clause(limit);
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -103,7 +104,7 @@ pub fn run(
                  WHERE {where_clause}
                  AND tr.is_error = true
                  ORDER BY tc.timestamp DESC
-                 LIMIT {limit}"
+                 {limit_clause}"
             )
         } else {
             format!(
@@ -111,7 +112,7 @@ pub fn run(
                  FROM tool_calls tc
                  WHERE {where_clause}
                  ORDER BY tc.timestamp DESC
-                 LIMIT {limit}"
+                 {limit_clause}"
             )
         };
         let mut stmt = conn.prepare(&sql)?;
@@ -126,7 +127,7 @@ pub fn run(
              WHERE {where_clause}
              AND tr.is_error = true
              ORDER BY tc.timestamp DESC
-             LIMIT {limit}"
+             {limit_clause}"
         )
     } else {
         format!(
@@ -134,7 +135,7 @@ pub fn run(
              FROM tool_calls tc
              WHERE {where_clause}
              ORDER BY tc.timestamp DESC
-             LIMIT {limit}"
+             {limit_clause}"
         )
     };
 
@@ -182,6 +183,8 @@ fn run_with_fields(
         .collect();
     let field_select = field_columns.join(", ");
 
+    let limit_clause = super::limit_clause(limit);
+
     let join_clause = if errors_only {
         "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
     } else {
@@ -198,7 +201,7 @@ fn run_with_fields(
              WHERE {where_clause}
              {error_filter}
              ORDER BY tc.timestamp DESC
-             LIMIT {limit}"
+             {limit_clause}"
         );
         let mut stmt = conn.prepare(&sql)?;
         return output::print_results(&mut stmt, params, format);
@@ -211,7 +214,7 @@ fn run_with_fields(
          WHERE {where_clause}
          {error_filter}
          ORDER BY tc.timestamp DESC
-         LIMIT {limit}"
+         {limit_clause}"
     );
 
     let mut stmt = conn.prepare(&sql)?;

@@ -70,6 +70,7 @@ pub fn run(
 
     let where_clause = conditions.join(" AND ");
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let limit_clause = super::limit_clause(limit);
 
     if matches!(format, OutputFormat::Json) {
         // JSON mode: include skill list per project
@@ -84,7 +85,7 @@ pub fn run(
             WHERE {where_clause}
             GROUP BY s.project
             ORDER BY last_activity DESC
-            LIMIT {limit}"
+            {limit_clause}"
         );
 
         // For JSON, build the result manually to include skills array
@@ -144,7 +145,7 @@ pub fn run(
         WHERE {where_clause}
         GROUP BY s.project
         ORDER BY last_activity DESC
-        LIMIT {limit}"
+        {limit_clause}"
     );
 
     let mut stmt = conn.prepare(&sql)?;

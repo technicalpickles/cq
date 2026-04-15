@@ -58,13 +58,14 @@ pub fn run(
     }
 
     let where_clause = conditions.join(" AND ");
+    let limit_clause = super::limit_clause(limit);
 
     let sql = format!(
         "SELECT session_id, type, timestamp, text
          FROM messages
          WHERE {where_clause}
          ORDER BY timestamp DESC
-         LIMIT {limit}"
+         {limit_clause}"
     );
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();

@@ -37,7 +37,7 @@ struct Cli {
     #[arg(long, global = true)]
     no_color: bool,
 
-    /// Maximum number of results
+    /// Maximum number of results (0 for unlimited)
     #[arg(long, global = true, default_value_t = 50)]
     limit: usize,
 
