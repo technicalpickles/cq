@@ -1240,3 +1240,63 @@ fn tools_with_context_non_json_does_not_error() {
         .unwrap();
     assert!(output.status.success(), "non-JSON tools context path should not error, stderr: {}", String::from_utf8_lossy(&output.stderr));
 }
+
+#[test]
+fn tty_context_hides_match_kind_and_group_columns() {
+    let env = setup_env(&["context_session.jsonl"]);
+    // Default mode (no --json, no --table) = TTY-style.
+    // NO_COLOR=1 via cq_cmd strips ANSI so we can grep plain text.
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "NEEDLE", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let non_blank_lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(non_blank_lines.len(), 3, "expected 3 output rows, got:\n{stdout}");
+
+    // Each row's cells (split by the two-space delimiter print_context_rows uses) should not
+    // include any bare `match_kind` or `match_group` column value.
+    for line in &non_blank_lines {
+        let cells: Vec<&str> = line.split("  ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        for cell in &cells {
+            assert!(
+                !matches!(*cell, "match" | "before" | "after"),
+                "TTY output should not include bare match_kind column value '{cell}' in row:\n{line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tty_context_single_group_no_separator() {
+    // One match, -C 0 -- one group, no `--` separator line.
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "NEEDLE", "-A", "0", "-B", "0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
+    assert_eq!(separator_lines, 0, "single group should not have '--' separator, got:\n{stdout}");
+}
+
+#[test]
+fn tty_context_non_contiguous_groups_show_separator() {
+    // Grep "ne" matches "one" (ord 1), "six NEEDLE" (ord 6), and "nine" (ord 9) in the fixture.
+    // With -C 0, these form three non-contiguous groups separated by `--` separators.
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "ne", "-A", "0", "-B", "0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
+    assert_eq!(separator_lines, 2, "three non-contiguous matches should have exactly 2 '--' separators, got:\n{stdout}");
+    // Also verify we got three data rows plus two separators (5 total non-blank lines).
+    let non_blank: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(non_blank.len(), 5, "expected 3 match rows + 2 separator lines, got:\n{stdout}");
+}

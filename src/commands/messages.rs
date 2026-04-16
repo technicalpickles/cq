@@ -220,17 +220,21 @@ fn run_with_context(
     }
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
-    let mut stmt = conn.prepare(&sql)?;
 
-    // Task 6 will implement a context-aware TTY renderer for OutputFormat::Default.
-    // For now, fall back to Table output (which includes match_kind/match_group columns).
-    let effective_format = if matches!(format, OutputFormat::Json) {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Table
-    };
-
-    output::print_results(&mut stmt, &param_refs, &effective_format, wide)
+    match format {
+        OutputFormat::Json => {
+            let mut stmt = conn.prepare(&sql)?;
+            output::print_results(&mut stmt, &param_refs, format, wide)
+        }
+        OutputFormat::Table => {
+            let mut stmt = conn.prepare(&sql)?;
+            output::print_results(&mut stmt, &param_refs, format, wide)
+        }
+        OutputFormat::Default => {
+            let mut stmt = conn.prepare(&sql)?;
+            output::print_context_rows(&mut stmt, &param_refs, wide)
+        }
+    }
 }
 
 fn run_with_fields(

@@ -328,10 +328,13 @@ fn run_with_context(
             let mut stmt = conn.prepare(&wrapped)?;
             output::print_results(&mut stmt, &scope_param_refs, format, wide)
         }
-        _ => {
-            // Task 6 will add a proper TTY renderer; for now fall back to Table.
+        OutputFormat::Table => {
             let mut stmt = conn.prepare(&sql)?;
-            output::print_results(&mut stmt, &scope_param_refs, &OutputFormat::Table, wide)
+            output::print_results(&mut stmt, &scope_param_refs, format, wide)
+        }
+        OutputFormat::Default => {
+            let mut stmt = conn.prepare(&sql)?;
+            output::print_context_rows(&mut stmt, &scope_param_refs, wide)
         }
     }
 }
