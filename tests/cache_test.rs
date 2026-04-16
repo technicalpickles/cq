@@ -128,6 +128,17 @@ fn version_check_passes_on_current() {
 }
 
 #[test]
+fn cache_meta_has_last_sync_at() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+
+    let last_sync: i64 = conn
+        .query_row("SELECT last_sync_at FROM cache_meta", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(last_sync, 0);
+}
+
+#[test]
 fn version_mismatch_triggers_rebuild() {
     let dir = cache_dir();
     let conn = cq::cache::open(dir.path(), false).unwrap();

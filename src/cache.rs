@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use duckdb::OptionalExt;
 
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Open or create the cache database. Creates tables if missing,
 /// rebuilds if schema version mismatches or force_rebuild is true.
@@ -70,7 +70,8 @@ fn rebuild(conn: &Connection) -> Result<()> {
 
     conn.execute_batch(
         "CREATE TABLE cache_meta (
-            version INTEGER NOT NULL
+            version INTEGER NOT NULL,
+            last_sync_at BIGINT NOT NULL DEFAULT 0
         );
 
         CREATE TABLE file_registry (
@@ -92,5 +93,20 @@ fn rebuild(conn: &Connection) -> Result<()> {
         [SCHEMA_VERSION],
     )?;
 
+    Ok(())
+}
+
+/// Read the last_sync_at timestamp from cache_meta.
+/// Returns 0 if no value is stored (first run).
+pub fn last_sync_at(conn: &Connection) -> Result<i64> {
+    let ts: i64 = conn
+        .query_row("SELECT last_sync_at FROM cache_meta LIMIT 1", [], |r| r.get(0))
+        .with_context(|| "Failed to read last_sync_at")?;
+    Ok(ts)
+}
+
+/// Update the last_sync_at timestamp in cache_meta.
+pub fn set_last_sync_at(conn: &Connection, ts: i64) -> Result<()> {
+    conn.execute("UPDATE cache_meta SET last_sync_at = ?", [ts])?;
     Ok(())
 }
