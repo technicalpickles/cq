@@ -18,9 +18,10 @@ fn print_view(name: &str) {
     };
     match section {
         Some(s) => println!("{}", s),
-        None => eprintln!(
-            "Unknown view: {name}. Known views: messages, tool_calls, tool_results, sessions"
-        ),
+        None => {
+            eprintln!("Error: Unknown view '{}'\nValid views: messages, tool_calls, tool_results, sessions", name);
+            std::process::exit(1);
+        }
     }
 }
 

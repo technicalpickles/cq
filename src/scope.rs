@@ -17,7 +17,7 @@ pub fn validate_session_id(id: &str) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!(
-            "'{}' is not a valid session ID. Expected UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            "'{}' is not a valid session ID. Expected UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\nHint: Run 'cq sessions' to find session IDs",
             id
         ))
     }
@@ -51,13 +51,13 @@ impl QueryScope {
         let (num_str, unit) = since.split_at(len - 1);
         let num: i64 = num_str
             .parse()
-            .map_err(|_| anyhow!("Invalid duration number: {num_str}"))?;
+            .map_err(|_| anyhow!("Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"))?;
 
         let duration = match unit {
             "d" => Duration::days(num),
             "h" => Duration::hours(num),
             "m" => Duration::minutes(num),
-            _ => return Err(anyhow!("Unknown duration unit: {unit}. Use d, h, or m.")),
+            _ => return Err(anyhow!("Unknown duration unit '{unit}' in '{since}'\nValid units: d (days), h (hours), m (minutes)")),
         };
 
         Ok(Some(Utc::now() - duration))

@@ -9,11 +9,11 @@ use cq::scope::QueryScope;
 #[derive(Parser)]
 #[command(name = "cq", about = "Query AI agent session transcripts with SQL")]
 struct Cli {
-    /// Scope to a project (substring match)
+    /// Scope to a project (substring match, e.g. 'myproject')
     #[arg(short = 'p', long, global = true)]
     project: Option<String>,
 
-    /// Scope to a session (prefix match)
+    /// Scope to a session by UUID (prefix match supported)
     #[arg(short = 's', long, global = true)]
     session: Option<String>,
 
@@ -63,7 +63,7 @@ enum Command {
     },
     /// Query tool calls
     Tools {
-        /// Filter to a specific tool name
+        /// Filter to a specific tool name (run 'cq tools' to see available names)
         name: Option<String>,
 
         /// Filter tool inputs by content
@@ -74,13 +74,13 @@ enum Command {
         #[arg(long)]
         errors: bool,
 
-        /// Extract specific input fields as columns (comma-separated)
+        /// Extract specific input fields as columns (comma-separated; fields depend on the tool, see 'cq schema tool_calls')
         #[arg(long, value_delimiter = ',')]
         fields: Option<Vec<String>>,
     },
     /// Query messages
     Messages {
-        /// Filter by message type (user or assistant)
+        /// Filter by message type [valid: user, assistant]
         #[arg(long = "type", name = "type")]
         msg_type: Option<String>,
 
@@ -101,7 +101,7 @@ enum Command {
     },
     /// Show view schema documentation
     Schema {
-        /// Show documentation for a specific view
+        /// Show documentation for a specific view [valid: messages, tool_calls, tool_results, sessions]
         name: Option<String>,
 
         /// Show example queries

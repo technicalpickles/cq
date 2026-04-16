@@ -556,3 +556,82 @@ fn all_flag_overrides_auto_scope() {
     assert!(stdout.contains("sess-001"), "Should show myproject session with --all, got: {stdout}");
     assert!(stdout.contains("sess-002"), "Should show webapp session with --all, got: {stdout}");
 }
+
+#[test]
+fn since_invalid_shows_format_hint() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--since", "bogus", "sessions"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid duration 'bogus'"),
+        "Should show invalid input in quotes, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("7d, 24h, 30m"),
+        "Should show example formats, got: {stderr}"
+    );
+}
+
+#[test]
+fn since_bad_unit_shows_valid_units() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--since", "7x", "sessions"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("'x'"),
+        "Should show the bad unit in quotes, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("'7x'"),
+        "Should show the full input in quotes, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("d (days)"),
+        "Should show valid units with descriptions, got: {stderr}"
+    );
+}
+
+#[test]
+fn session_invalid_shows_hint() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--session", "not-a-uuid", "sessions"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not a valid session ID"),
+        "Should still mention invalid session ID, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("cq sessions"),
+        "Should hint to run 'cq sessions', got: {stderr}"
+    );
+}
+
+#[test]
+fn schema_unknown_view_error_format() {
+    let output = Command::cargo_bin("cq").unwrap()
+        .args(["schema", "bogus"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "Should exit with failure for unknown view");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown view 'bogus'"),
+        "Should show unknown view with input in quotes, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Valid views:"),
+        "Should list valid views, got: {stderr}"
+    );
+}
