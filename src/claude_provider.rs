@@ -155,31 +155,31 @@ mod tests {
     #[test]
     fn encode_path() {
         assert_eq!(
-            ClaudeProvider::encode_path("/Users/josh/pickleton"),
-            "-Users-josh-pickleton"
+            ClaudeProvider::encode_path("/Users/alice/myproject"),
+            "-Users-alice-myproject"
         );
     }
 
     #[test]
     fn encode_path_with_dots() {
         assert_eq!(
-            ClaudeProvider::encode_path("/Users/josh.nichols/my.project"),
-            "-Users-josh-nichols-my-project"
+            ClaudeProvider::encode_path("/Users/alice.smith/my.project"),
+            "-Users-alice-smith-my-project"
         );
     }
 
     #[test]
     fn decode_path() {
         assert_eq!(
-            ClaudeProvider::decode_path("-Users-josh-pickleton"),
-            "/Users/josh/pickleton"
+            ClaudeProvider::decode_path("-Users-alice-myproject"),
+            "/Users/alice/myproject"
         );
     }
 
     #[test]
     fn project_matching_substring() {
         let tmp = TempDir::new().unwrap();
-        let project_dir = tmp.path().join("-Users-josh-pickleton");
+        let project_dir = tmp.path().join("-Users-alice-myproject");
         fs::create_dir_all(&project_dir).unwrap();
         fs::write(
             project_dir.join("abc12345-0000-0000-0000-000000000000.jsonl"),
@@ -188,19 +188,19 @@ mod tests {
         .unwrap();
 
         let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
-        let scope = QueryScope::new(Some("pickleton".to_string()), None, None);
+        let scope = QueryScope::new(Some("myproject".to_string()), None, None);
         let files = provider.discover_files(&scope).unwrap();
         assert_eq!(files.len(), 1);
 
         let projects = provider.list_projects().unwrap();
         assert_eq!(projects.len(), 1);
-        assert!(projects[0].decoded_path.contains("pickleton"));
+        assert!(projects[0].decoded_path.contains("myproject"));
     }
 
     #[test]
     fn session_prefix_filtering() {
         let tmp = TempDir::new().unwrap();
-        let project_dir = tmp.path().join("-Users-josh-pickleton");
+        let project_dir = tmp.path().join("-Users-alice-myproject");
         fs::create_dir_all(&project_dir).unwrap();
         fs::write(
             project_dir.join("abc12345-6789-0000-0000-000000000000.jsonl"),
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn discover_files_no_filter_returns_all() {
         let tmp = TempDir::new().unwrap();
-        let project_dir = tmp.path().join("-Users-josh-pickleton");
+        let project_dir = tmp.path().join("-Users-alice-myproject");
         fs::create_dir_all(&project_dir).unwrap();
         fs::write(
             project_dir.join("abc12345-6789-0000-0000-000000000000.jsonl"),
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn project_filter_excludes_nonmatching() {
         let tmp = TempDir::new().unwrap();
-        let project_a = tmp.path().join("-Users-josh-pickleton");
+        let project_a = tmp.path().join("-Users-alice-myproject");
         let project_b = tmp.path().join("-Users-josh-other-repo");
         fs::create_dir_all(&project_a).unwrap();
         fs::create_dir_all(&project_b).unwrap();
@@ -254,10 +254,10 @@ mod tests {
         fs::write(project_b.join("session2.jsonl"), "{}").unwrap();
 
         let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
-        let scope = QueryScope::new(Some("pickleton".to_string()), None, None);
+        let scope = QueryScope::new(Some("myproject".to_string()), None, None);
         let files = provider.discover_files(&scope).unwrap();
         assert_eq!(files.len(), 1);
-        assert!(files[0].to_string_lossy().contains("pickleton"));
+        assert!(files[0].to_string_lossy().contains("myproject"));
     }
 
     #[test]

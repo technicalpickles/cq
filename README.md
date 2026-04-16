@@ -15,7 +15,7 @@ cargo install --path .
 ```bash
 # List recent sessions
 cq sessions
-cq sessions --project pickleton --since 7d
+cq sessions --project myproject --since 7d
 
 # Query tool usage
 cq tools                                 # summary (counts by tool name)
@@ -60,3 +60,7 @@ Run `cq schema` for full column details. Run `cq schema --examples` for a query 
 ## For agents
 
 `cq schema` and `cq schema --examples` are designed to be read by agents to construct queries. Use `--json` for machine-readable output.
+
+## License
+
+MIT

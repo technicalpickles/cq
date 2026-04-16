@@ -27,7 +27,7 @@ scope.rs          QueryScope: --project, --session, --since parsing
 - **Commands build SQL + params, output renders.** Each command constructs a WHERE clause with `?` placeholders, collects params in a `Vec<Box<dyn ToSql>>`, and passes both to `output::print_results`.
 - **Provider trait** abstracts file discovery. Only `ClaudeProvider` exists today but the trait allows other transcript sources.
 - **stderr for progress, stdout for data.** "Scanned N files" and "No results." go to stderr so piped output stays clean.
-- **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-josh-pickleton`) back to paths (`/Users/josh/pickleton`).
+- **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-alice-myproject`) back to paths (`/Users/alice/myproject`).
 - **ILIKE for project filtering.** `--project` does substring match, not exact.
 
 ## Tests
@@ -47,7 +47,7 @@ Fixtures live in `tests/fixtures/` as handcrafted JSONL files.
 ```bash
 cargo run -- sessions --limit 5                        # basic usage
 cargo run -- tools --limit 5                           # tool summary
-cargo run -- sessions --project pickleton --limit 5    # project filter
+cargo run -- sessions --project myproject --limit 5    # project filter
 cargo run -- sql "SELECT COUNT(*) FROM messages"       # raw SQL
 cargo run -- schema --examples                         # see available views + queries
 ```

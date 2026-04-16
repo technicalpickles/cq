@@ -3,6 +3,9 @@ name = "cq"
 version = "0.1.0"
 edition = "2021"
 description = "Query AI agent session transcripts with SQL"
+license = "MIT"
+repository = "https://github.com/technicalpickles/cq"
+authors = ["Josh Nichols <josh@technicalpickles.com>"]
 
 [dependencies]
 duckdb = { version = "1", features = ["bundled", "json"] }
