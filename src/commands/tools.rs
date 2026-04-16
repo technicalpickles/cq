@@ -51,6 +51,7 @@ pub fn run(
     errors_only: bool,
     fields: Option<&[&str]>,
     count_by: Option<&str>,
+    ctx: Option<super::ContextWindow>,
     format: &OutputFormat,
     limit: usize,
     offset: usize,
@@ -58,6 +59,13 @@ pub fn run(
 ) -> Result<()> {
     // Check for conflicting flags
     super::check_count_by_fields_conflict(count_by, fields);
+    super::check_count_by_context_conflict(count_by, ctx);
+    super::check_fields_context_conflict(fields, ctx);
+
+    // Dispatch to context mode
+    if let Some(window) = ctx {
+        return run_with_context(conn, scope, tool_name, grep, errors_only, window, format, limit, wide);
+    }
 
     // Dispatch to count-by mode
     if let Some(col) = count_by {
@@ -209,6 +217,146 @@ pub fn run(
     );
 
     Ok(())
+}
+
+fn run_with_context(
+    conn: &Connection,
+    scope: &crate::scope::QueryScope,
+    tool_name: Option<&str>,
+    grep: Option<&str>,
+    errors_only: bool,
+    window: super::ContextWindow,
+    format: &OutputFormat,
+    match_limit: usize,
+    wide: bool,
+) -> Result<()> {
+    // Scope conditions for the `ordered` CTE, over `messages`.
+    let mut scope_conditions = vec!["1=1".to_string()];
+    if scope.project.is_some() {
+        scope_conditions.push("project ILIKE ?".to_string());
+    }
+    if scope.session.is_some() {
+        scope_conditions.push("session_id = ?".to_string());
+    }
+    if let Some(ts) = scope.since_timestamp()? {
+        let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
+        scope_conditions.push(format!("timestamp >= '{formatted}'"));
+    }
+    let scope_where = scope_conditions.join(" AND ");
+
+    // Tool-match conditions: scope + tool name + grep, all against the tool_calls view.
+    let mut tool_conditions = vec!["1=1".to_string()];
+    // Initialize tool_params from scope (project + session), then add tool-specific params.
+    let mut tool_params = super::build_scope_params(scope);
+    if scope.project.is_some() {
+        tool_conditions.push("tc.project ILIKE ?".to_string());
+    }
+    if scope.session.is_some() {
+        tool_conditions.push("tc.session_id = ?".to_string());
+    }
+    if let Some(ts) = scope.since_timestamp()? {
+        let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
+        tool_conditions.push(format!("tc.timestamp >= '{formatted}'"));
+    }
+    if let Some(name) = tool_name {
+        tool_conditions.push("tc.name = ?".to_string());
+        tool_params.push(Box::new(name.to_string()));
+    }
+    if let Some(pattern) = grep {
+        tool_conditions.push("CAST(tc.input AS VARCHAR) ILIKE ?".to_string());
+        tool_params.push(Box::new(format!("%{pattern}%")));
+    }
+    let tool_where = tool_conditions.join(" AND ");
+
+    let errors_join = if errors_only {
+        "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id AND tr.is_error = true"
+    } else {
+        ""
+    };
+
+    // Materialize matches to a temp table. This avoids embedding the tool match SQL
+    // twice (once in the context builder, once in the JSON enrichment join).
+    // Apply match_limit here so both the context window and the enrichment JOIN see
+    // the same capped set of tool calls.
+    let temp_limit_clause = if match_limit > 0 {
+        format!("LIMIT {match_limit}")
+    } else {
+        String::new()
+    };
+    let create_temp_sql = format!(
+        "CREATE OR REPLACE TEMP TABLE cq_ctx_matches AS \
+         SELECT tc.session_id, tc.message_uuid, tc.name, CAST(tc.input AS VARCHAR) AS input, \
+                tc.tool_use_id, tc.timestamp \
+         FROM tool_calls tc {errors_join} \
+         WHERE {tool_where} \
+         ORDER BY tc.timestamp \
+         {temp_limit_clause}"
+    );
+    let tool_param_refs: Vec<&dyn duckdb::types::ToSql> = tool_params.iter().map(|p| p.as_ref()).collect();
+    conn.execute(&create_temp_sql, &tool_param_refs[..])?;
+
+    // Check for empty results before building the context SQL.
+    let match_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM cq_ctx_matches",
+        [],
+        |r| r.get(0),
+    )?;
+    if match_count == 0 {
+        if scope.session.is_some() {
+            super::print_session_not_found(scope.session.as_ref().unwrap());
+        } else {
+            let mut extras: Vec<&str> = Vec::new();
+            if tool_name.is_some() { extras.push("[name]"); }
+            if grep.is_some() { extras.push("--grep"); }
+            if errors_only { extras.push("--errors"); }
+            super::print_no_results(scope, &extras);
+        }
+        return Ok(());
+    }
+
+    // Build the context SQL. `matches_subquery` references the temp table -- no params needed.
+    // match_limit was already applied when building the temp table, so pass 0 here (unlimited).
+    let matches_subquery = "SELECT session_id, message_uuid FROM cq_ctx_matches".to_string();
+    let builder = super::ContextSqlBuilder {
+        window,
+        matches_subquery: &matches_subquery,
+        ordered_scope_where: &scope_where,
+        match_limit: 0,
+    };
+    let sql = builder.build();
+
+    // Only scope params remain for the context SQL.
+    let scope_params = super::build_scope_params(scope);
+    let scope_param_refs: Vec<&dyn duckdb::types::ToSql> = scope_params.iter().map(|p| p.as_ref()).collect();
+
+    match format {
+        OutputFormat::Json => {
+            // Heterogeneous JSON: wrap context SQL, LEFT JOIN temp table to enrich match rows.
+            // Safe to interpolate: ContextSqlBuilder generates SQL from trusted fragments
+            // (matches_subquery is a literal, ordered_scope_where is built from hardcoded conditions),
+            // and all user input is bound via ? placeholders in scope_params.
+            let wrapped = format!(
+                "WITH ctx AS ({sql}) \
+                 SELECT ctx.session_id, ctx.uuid, ctx.type, ctx.timestamp, ctx.text, \
+                        ctx.model, ctx.tool_count, ctx.project, ctx.match_kind, ctx.match_group, \
+                        m.name AS tool_name, m.input AS tool_input, m.tool_use_id \
+                 FROM ctx \
+                 LEFT JOIN cq_ctx_matches m \
+                   ON ctx.match_kind = 'match' AND ctx.uuid = m.message_uuid \
+                 ORDER BY ctx.session_id, ctx.timestamp"
+            );
+            let mut stmt = conn.prepare(&wrapped)?;
+            output::print_results(&mut stmt, &scope_param_refs, format, wide)
+        }
+        OutputFormat::Table => {
+            let mut stmt = conn.prepare(&sql)?;
+            output::print_results(&mut stmt, &scope_param_refs, format, wide)
+        }
+        OutputFormat::Default => {
+            let mut stmt = conn.prepare(&sql)?;
+            output::print_context_rows(&mut stmt, &scope_param_refs, wide)
+        }
+    }
 }
 
 fn run_with_fields(

@@ -129,6 +129,24 @@ If you add a new alias, make sure it works in every flag that accepts columns. I
 
 Users don't need to think about this difference. They write `--fields text` or `--fields command` and get the data.
 
+## Context flags (`-A`/`-B`/`-C`)
+
+cq mirrors grep's context flags on `tools` and `messages`:
+
+- `-A N`: N messages after each match
+- `-B N`: N messages before each match
+- `-C N`: N messages before AND after (shorthand for `-A N -B N`)
+
+Context is always counted in messages, not tool calls. When `cq tools` has a context flag, its output becomes message-shaped for the terminal; `--json` keeps heterogeneous rows with tool-specific fields on matches. `--limit N` limits matches, not total output rows. `--count-by` is incompatible with context flags. Context never crosses session boundaries.
+
+```bash
+# What did the agent do right after this Skill invocation?
+cq tools Skill --grep 'agent-meta:park' -A 3
+
+# Three messages on either side of a grep hit
+cq messages --grep 'compaction' -C 3
+```
+
 ## Checklist: adding a new flag
 
 When you add a flag to cq, run through this:

@@ -44,6 +44,88 @@ pub fn print_results(
     }
 }
 
+/// Render context-bearing rows for TTY (Default) output.
+/// Drops `match_kind` and `match_group` columns from the visible output.
+/// Dims rows where `match_kind != 'match'`.
+/// Prints `--` separator line when `match_group` changes between consecutive rows.
+///
+/// Expects the input statement to include both `match_kind` (text) and
+/// `match_group` (integer) columns. Column names and positions are detected at
+/// runtime so this works for both message-shaped and tools-shaped queries.
+pub fn print_context_rows(
+    stmt: &mut duckdb::Statement,
+    params: &[&dyn duckdb::types::ToSql],
+    wide: bool,
+) -> anyhow::Result<()> {
+    let mut rows_iter = stmt.query(params)?;
+    let column_names: Vec<String> = rows_iter
+        .as_ref()
+        .expect("query returned no result set")
+        .column_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let kind_idx = column_names.iter().position(|c| c == "match_kind");
+    let group_idx = column_names.iter().position(|c| c == "match_group");
+
+    // Indices to display (everything except the two metadata columns).
+    let display_indices: Vec<usize> = (0..column_names.len())
+        .filter(|i| Some(*i) != kind_idx && Some(*i) != group_idx)
+        .collect();
+
+    let max_width = if wide { 0 } else { 120 };
+
+    struct OutRow {
+        cells: Vec<String>,
+        is_match: bool,
+        group: Option<i64>,
+    }
+    let mut out_rows: Vec<OutRow> = Vec::new();
+
+    while let Some(row) = rows_iter.next()? {
+        let values: Vec<Value> = (0..column_names.len())
+            .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
+            .collect();
+
+        let group = group_idx.and_then(|i| match &values[i] {
+            Value::BigInt(n) => Some(*n),
+            Value::Int(n) => Some(*n as i64),
+            Value::HugeInt(n) => i64::try_from(*n).ok(),
+            _ => None,
+        });
+        let is_match = kind_idx
+            .map(|i| matches!(&values[i], Value::Text(s) if s == "match"))
+            .unwrap_or(true);
+
+        let cells: Vec<String> = display_indices
+            .iter()
+            .map(|&i| value_to_string(&values[i], max_width))
+            .collect();
+
+        out_rows.push(OutRow { cells, is_match, group });
+    }
+
+    let mut prev_group: Option<i64> = None;
+    for row in &out_rows {
+        if let (Some(prev), Some(this)) = (prev_group, row.group) {
+            if this != prev {
+                println!("--");
+            }
+        }
+        prev_group = row.group.or(prev_group);
+
+        let line = row.cells.join("  ");
+        if row.is_match {
+            println!("{line}");
+        } else {
+            println!("{}", crate::style::color(&line, crate::style::Color::Dim));
+        }
+    }
+
+    Ok(())
+}
+
 pub fn value_to_string(v: &Value, max_width: usize) -> String {
     let s = match v {
         Value::Null => return style::null_display().to_string(),

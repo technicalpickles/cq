@@ -99,6 +99,18 @@ enum Command {
         /// Aggregate rows into counts by column [valid: name, session, project]
         #[arg(long = "count-by")]
         count_by: Option<String>,
+
+        /// Show N messages after each match (grep -A)
+        #[arg(short = 'A', long = "after-context", value_name = "N")]
+        after: Option<usize>,
+
+        /// Show N messages before each match (grep -B)
+        #[arg(short = 'B', long = "before-context", value_name = "N")]
+        before: Option<usize>,
+
+        /// Show N messages before and after each match (grep -C, shorthand for -A N -B N)
+        #[arg(short = 'C', long = "context", value_name = "N", conflicts_with_all = ["after", "before"])]
+        context: Option<usize>,
     },
     /// Query messages
     Messages {
@@ -117,6 +129,18 @@ enum Command {
         /// Aggregate rows into counts by column [valid: type, session, project]
         #[arg(long = "count-by")]
         count_by: Option<String>,
+
+        /// Show N messages after each match (grep -A)
+        #[arg(short = 'A', long = "after-context", value_name = "N")]
+        after: Option<usize>,
+
+        /// Show N messages before each match (grep -B)
+        #[arg(short = 'B', long = "before-context", value_name = "N")]
+        before: Option<usize>,
+
+        /// Show N messages before and after each match (grep -C, shorthand for -A N -B N)
+        #[arg(short = 'C', long = "context", value_name = "N", conflicts_with_all = ["after", "before"])]
+        context: Option<usize>,
     },
     /// Summarize projects by session, message, and tool counts
     Projects {
@@ -223,13 +247,15 @@ fn main() -> Result<()> {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
             sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide, timeline)?;
         }
-        Command::Tools { name, grep, errors, fields, count_by } => {
+        Command::Tools { name, grep, errors, fields, count_by, after, before, context } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            let ctx = cq::commands::ContextWindow::from_flags(after, before, context);
+            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), count_by.as_deref(), ctx, &format, cli.limit, cli.offset, wide)?;
         }
-        Command::Messages { msg_type, grep, fields, count_by } => {
+        Command::Messages { msg_type, grep, fields, count_by, after, before, context } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            let ctx = cq::commands::ContextWindow::from_flags(after, before, context);
+            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), ctx, &format, cli.limit, cli.offset, wide)?;
         }
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;

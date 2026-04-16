@@ -1000,6 +1000,30 @@ fn timeline_env() -> TestEnv {
 }
 
 #[test]
+fn tools_help_shows_context_flags() {
+    Command::cargo_bin("cq").unwrap()
+        .args(["tools", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-A"))
+        .stdout(predicate::str::contains("-B"))
+        .stdout(predicate::str::contains("-C"))
+        .stdout(predicate::str::contains("messages after each match"))
+        .stdout(predicate::str::contains("messages before each match"));
+}
+
+#[test]
+fn messages_help_shows_context_flags() {
+    Command::cargo_bin("cq").unwrap()
+        .args(["messages", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-A"))
+        .stdout(predicate::str::contains("-B"))
+        .stdout(predicate::str::contains("-C"));
+}
+
+#[test]
 fn sessions_timeline_shows_events() {
     let env = timeline_env();
     let output = cq_cmd(&env)
@@ -1093,4 +1117,216 @@ fn sessions_count_by_project() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("myproject"), "Should show project name, got: {stdout}");
     assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+}
+
+#[test]
+fn tools_context_conflicts_with_count_by() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "-C", "2", "--count-by", "name"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--count-by") && stderr.contains("context"),
+        "Should explain conflict between --count-by and context flags, got: {stderr}"
+    );
+}
+
+#[test]
+fn messages_grep_with_context_a_shows_following_messages() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "messages", "--grep", "NEEDLE", "-A", "2"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let rows = parsed.as_array().unwrap();
+    assert_eq!(rows.len(), 3, "expected match + 2 after, got {}: {}", rows.len(), stdout);
+    assert_eq!(rows[0]["match_kind"], "match");
+    assert_eq!(rows[1]["match_kind"], "after");
+    assert_eq!(rows[2]["match_kind"], "after");
+    assert!(rows[0]["text"].as_str().unwrap().contains("NEEDLE"));
+}
+
+#[test]
+fn messages_grep_with_context_c_shows_surrounding() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "messages", "--grep", "NEEDLE", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["match_kind"], "before");
+    assert_eq!(rows[1]["match_kind"], "match");
+    assert_eq!(rows[2]["match_kind"], "after");
+}
+
+#[test]
+fn messages_context_does_not_cross_session_boundary() {
+    // Two sessions; match is in context_session. -B 10 shouldn't pull anything from simple_session.
+    let env = setup_env(&["simple_session.jsonl", "context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "messages", "--grep", "NEEDLE", "-B", "10"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let match_session = rows.iter()
+        .find(|r| r["match_kind"] == "match")
+        .and_then(|r| r["session_id"].as_str())
+        .unwrap()
+        .to_string();
+    for row in &rows {
+        assert_eq!(row["session_id"].as_str().unwrap(), match_session, "cross-session leak: {row}");
+    }
+}
+
+#[test]
+fn tools_with_context_c_shows_surrounding_messages() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "tools", "Read", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    // Read tool is at ord 4; -C 1 gives ords 3, 4, 5 -> 3 rows
+    assert_eq!(rows.len(), 3);
+    // Match row should carry the tool name.
+    let match_row = rows.iter().find(|r| r["match_kind"] == "match").unwrap();
+    assert_eq!(match_row["tool_name"], "Read", "match row should carry tool name, got: {match_row}");
+    // Context rows are message-shaped; tool_name should be null.
+    let context_rows: Vec<_> = rows.iter().filter(|r| r["match_kind"] != "match").collect();
+    assert_eq!(context_rows.len(), 2);
+    for ctx_row in &context_rows {
+        assert!(ctx_row["tool_name"].is_null(), "context row should not have tool_name, got: {ctx_row}");
+        assert!(ctx_row["type"].is_string(), "context row should be message-shaped, got: {ctx_row}");
+    }
+}
+
+#[test]
+fn tools_with_context_respects_match_limit() {
+    // multi_tool_session.jsonl has multiple tool calls.
+    // --limit 1 -C 0 should return exactly 1 match row (grep -m semantics).
+    let env = setup_env(&["multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "tools", "--limit", "1", "-C", "0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let match_count = rows.iter().filter(|r| r["match_kind"] == "match").count();
+    assert_eq!(match_count, 1, "expected 1 match with --limit 1, rows: {stdout}");
+}
+
+#[test]
+fn tools_with_context_non_json_does_not_error() {
+    // Task 6 will add a pretty TTY renderer; for now just make sure the Default/Table path
+    // doesn't crash.
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "Read", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "non-JSON tools context path should not error, stderr: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn tty_context_hides_match_kind_and_group_columns() {
+    let env = setup_env(&["context_session.jsonl"]);
+    // Default mode (no --json, no --table) = TTY-style.
+    // NO_COLOR=1 via cq_cmd strips ANSI so we can grep plain text.
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "NEEDLE", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let non_blank_lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(non_blank_lines.len(), 3, "expected 3 output rows, got:\n{stdout}");
+
+    // Each row's cells (split by the two-space delimiter print_context_rows uses) should not
+    // include any bare `match_kind` or `match_group` column value.
+    for line in &non_blank_lines {
+        let cells: Vec<&str> = line.split("  ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        for cell in &cells {
+            assert!(
+                !matches!(*cell, "match" | "before" | "after"),
+                "TTY output should not include bare match_kind column value '{cell}' in row:\n{line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tty_context_single_group_no_separator() {
+    // One match, -C 0 -- one group, no `--` separator line.
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "NEEDLE", "-A", "0", "-B", "0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
+    assert_eq!(separator_lines, 0, "single group should not have '--' separator, got:\n{stdout}");
+}
+
+#[test]
+fn tty_context_non_contiguous_groups_show_separator() {
+    // Grep "ne" matches "one" (ord 1), "six NEEDLE" (ord 6), and "nine" (ord 9) in the fixture.
+    // With -C 0, these form three non-contiguous groups separated by `--` separators.
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "ne", "-A", "0", "-B", "0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
+    assert_eq!(separator_lines, 2, "three non-contiguous matches should have exactly 2 '--' separators, got:\n{stdout}");
+    // Also verify we got three data rows plus two separators (5 total non-blank lines).
+    let non_blank: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(non_blank.len(), 5, "expected 3 match rows + 2 separator lines, got:\n{stdout}");
+}
+
+#[test]
+fn messages_context_empty_result_prints_no_results() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "xyz-will-not-match", "-C", "2"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No results"),
+        "expected 'No results' in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn messages_fields_conflicts_with_context() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "-C", "1", "--fields", "text"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--fields") && stderr.contains("-A"),
+        "expected conflict error mentioning --fields and -A, got: {stderr}"
+    );
 }

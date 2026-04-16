@@ -4,6 +4,9 @@ pub mod messages;
 pub mod projects;
 pub mod sql;
 pub mod schema;
+pub mod context;
+
+pub use context::ContextSqlBuilder;
 
 use crate::style;
 
@@ -33,6 +36,59 @@ pub fn validate_count_by(column: &str, valid_columns: &[&str], command_name: &st
         display_names.join(", "),
     );
     std::process::exit(1);
+}
+
+/// Describes a grep-style context window around matches.
+/// `before` and `after` are message counts in the same session.
+#[derive(Clone, Copy, Debug)]
+pub struct ContextWindow {
+    pub before: usize,
+    pub after: usize,
+}
+
+impl ContextWindow {
+    /// Resolve clap's --after/--before/--context trio into an Option<ContextWindow>.
+    /// Returns None when no context flag is set.
+    /// `--context` (if set) wins over `--after` and `--before` (clap's conflicts_with_all
+    /// should already prevent mixing, but we defend anyway).
+    pub fn from_flags(after: Option<usize>, before: Option<usize>, context: Option<usize>) -> Option<Self> {
+        if let Some(c) = context {
+            return Some(ContextWindow { before: c, after: c });
+        }
+        if after.is_none() && before.is_none() {
+            return None;
+        }
+        Some(ContextWindow {
+            before: before.unwrap_or(0),
+            after: after.unwrap_or(0),
+        })
+    }
+}
+
+/// Error out when --fields is combined with context flags.
+/// The output shape in context mode is partially fixed (match_kind/match_group columns),
+/// and --fields semantics don't cleanly compose with that. Reject explicitly rather
+/// than silently ignoring.
+pub fn check_fields_context_conflict(fields: Option<&[&str]>, ctx: Option<ContextWindow>) {
+    if fields.is_some() && ctx.is_some() {
+        eprintln!(
+            "Error: --fields cannot be used with -A, -B, or -C\n\
+             Use --json to get structured output with all fields when context flags are active"
+        );
+        std::process::exit(1);
+    }
+}
+
+/// Error out when --count-by is combined with context flags.
+/// Aggregation produces summary rows; context surrounds individual rows. Incompatible.
+pub fn check_count_by_context_conflict(count_by: Option<&str>, ctx: Option<ContextWindow>) {
+    if count_by.is_some() && ctx.is_some() {
+        eprintln!(
+            "Error: --count-by cannot be used with -A, -B, or -C\n\
+             --count-by aggregates rows into counts; context flags surround individual matches with nearby messages"
+        );
+        std::process::exit(1);
+    }
 }
 
 /// Check that --count-by and --fields are not both specified.
@@ -175,5 +231,59 @@ pub fn print_truncation_hint(
                 ))
             );
         }
+    }
+}
+
+/// Build the parameter vector corresponding to the scope WHERE clause fragments
+/// used in the `ordered` CTE and `matches_subquery`. Order matters, must match the
+/// order in which scope_conditions are pushed: project, then session. `since` is
+/// inlined into the SQL string so it contributes no params.
+pub fn build_scope_params(scope: &crate::scope::QueryScope) -> Vec<Box<dyn duckdb::types::ToSql>> {
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
+    if let Some(project) = &scope.project {
+        params.push(Box::new(format!("%{project}%")));
+    }
+    if let Some(session) = &scope.session {
+        params.push(Box::new(session.clone()));
+    }
+    params
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_window_none_when_no_flags() {
+        let ctx = ContextWindow::from_flags(None, None, None);
+        assert!(ctx.is_none());
+    }
+
+    #[test]
+    fn context_window_c_sets_both() {
+        let ctx = ContextWindow::from_flags(None, None, Some(3)).unwrap();
+        assert_eq!(ctx.before, 3);
+        assert_eq!(ctx.after, 3);
+    }
+
+    #[test]
+    fn context_window_explicit_a_b() {
+        let ctx = ContextWindow::from_flags(Some(5), Some(2), None).unwrap();
+        assert_eq!(ctx.before, 2);
+        assert_eq!(ctx.after, 5);
+    }
+
+    #[test]
+    fn context_window_a_only_b_defaults_to_zero() {
+        let ctx = ContextWindow::from_flags(Some(4), None, None).unwrap();
+        assert_eq!(ctx.before, 0);
+        assert_eq!(ctx.after, 4);
+    }
+
+    #[test]
+    fn context_window_b_only_a_defaults_to_zero() {
+        let ctx = ContextWindow::from_flags(None, Some(4), None).unwrap();
+        assert_eq!(ctx.before, 4);
+        assert_eq!(ctx.after, 0);
     }
 }
