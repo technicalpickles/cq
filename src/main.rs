@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use cq::claude_provider::ClaudeProvider;
@@ -36,6 +38,10 @@ struct Cli {
     /// Disable colored output
     #[arg(long, global = true)]
     no_color: bool,
+
+    /// Show full output without truncation (auto-enabled when piped)
+    #[arg(long, global = true)]
+    wide: bool,
 
     /// Show all projects (disable auto-scoping to current directory)
     #[arg(long, global = true)]
@@ -113,6 +119,9 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Wide mode: explicit flag or auto-detect when stdout is not a terminal (piped)
+    let wide = cli.wide || !std::io::stdout().is_terminal();
+
     // Disable color if --no-color or NO_COLOR env var
     if cli.no_color || std::env::var("NO_COLOR").is_ok() {
         owo_colors::set_override(false);
@@ -187,20 +196,20 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Sessions { grep } => {
-            sessions::run(&conn, &scope, grep.as_deref(), &format, cli.limit, cli.offset)?;
+            sessions::run(&conn, &scope, grep.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
         Command::Tools { name, grep, errors, fields } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), &format, cli.limit, cli.offset)?;
+            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
         Command::Messages { msg_type, grep } => {
-            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), &format, cli.limit, cli.offset)?;
+            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
         Command::Projects { skills } => {
-            projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset)?;
+            projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;
         }
         Command::Sql { query } => {
-            sql::run(&conn, &query, &format)?;
+            sql::run(&conn, &query, &format, wide)?;
         }
         Command::Schema { .. } => unreachable!(),
     }

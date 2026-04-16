@@ -51,10 +51,11 @@ pub fn run(
     format: &OutputFormat,
     limit: usize,
     offset: usize,
+    wide: bool,
 ) -> Result<()> {
     // Summary mode: no filters specified (and no fields requested)
     if tool_name.is_none() && grep.is_none() && !errors_only && fields.is_none() {
-        return run_summary(conn, scope, format);
+        return run_summary(conn, scope, format, wide);
     }
 
     let mut conditions = vec!["1=1".to_string()];
@@ -93,7 +94,7 @@ pub fn run(
 
     // When --fields is specified, use extracted columns instead of raw input
     if let Some(field_list) = fields {
-        return run_with_fields(conn, scope, &where_clause, &param_refs, field_list, errors_only, format, limit, offset);
+        return run_with_fields(conn, scope, &where_clause, &param_refs, field_list, errors_only, format, limit, offset, wide);
     }
 
     // JSON gets full column set for scripting; display gets only what's shown
@@ -120,7 +121,7 @@ pub fn run(
             )
         };
         let mut stmt = conn.prepare(&sql)?;
-        return output::print_results(&mut stmt, &param_refs, format);
+        return output::print_results(&mut stmt, &param_refs, format, wide);
     }
 
     let sql = if errors_only {
@@ -174,8 +175,8 @@ pub fn run(
     }
 
     match format {
-        OutputFormat::Table => render_detail_table(&detail_rows),
-        _ => render_detail_oneline(&detail_rows),
+        OutputFormat::Table => render_detail_table(&detail_rows, wide),
+        _ => render_detail_oneline(&detail_rows, wide),
     }
 
     super::print_truncation_hint(
@@ -208,6 +209,7 @@ fn run_with_fields(
     format: &OutputFormat,
     limit: usize,
     offset: usize,
+    wide: bool,
 ) -> Result<()> {
     // Build SELECT columns: session_id, name, then each field extracted from input JSON
     let field_columns: Vec<String> = field_list
@@ -239,7 +241,7 @@ fn run_with_fields(
              {offset_clause}"
         );
         let mut stmt = conn.prepare(&sql)?;
-        return output::print_results(&mut stmt, params, format);
+        return output::print_results(&mut stmt, params, format, wide);
     }
 
     let sql = format!(
@@ -282,8 +284,8 @@ fn run_with_fields(
     }
 
     match format {
-        OutputFormat::Table => render_fields_table(&rows, field_list),
-        _ => render_fields_oneline(&rows, field_list),
+        OutputFormat::Table => render_fields_table(&rows, field_list, wide),
+        _ => render_fields_oneline(&rows, field_list, wide),
     }
 
     super::print_truncation_hint(
@@ -306,7 +308,7 @@ fn run_with_fields(
     Ok(())
 }
 
-fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> Result<()> {
+fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wide: bool) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
 
@@ -339,7 +341,7 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat) -> 
     let mut stmt = conn.prepare(&sql)?;
 
     match format {
-        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format),
+        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format, wide),
         _ => {
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut summary_rows: Vec<ToolSummaryRow> = Vec::new();
@@ -400,7 +402,7 @@ fn render_summary_table(rows: &[ToolSummaryRow]) {
     style::print_light_table(&headers, &string_rows);
 }
 
-fn render_detail_oneline(rows: &[ToolDetailRow]) {
+fn render_detail_oneline(rows: &[ToolDetailRow], wide: bool) {
     // Build plain text rows (no color) for width calculation
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let session_id = if r.session_id.is_empty() {
@@ -417,6 +419,8 @@ fn render_detail_oneline(rows: &[ToolDetailRow]) {
 
         let input = if r.input.is_empty() {
             style::null_display().to_string()
+        } else if wide {
+            r.input.clone()
         } else {
             style::truncate(&r.input, 60)
         };
@@ -453,7 +457,7 @@ fn render_detail_oneline(rows: &[ToolDetailRow]) {
     }
 }
 
-fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str]) {
+fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str], wide: bool) {
     let ncols = 2 + field_names.len(); // session_id, name, then fields
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let mut cols = vec![
@@ -463,6 +467,8 @@ fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str]) {
         for val in &r.fields {
             cols.push(if val.is_empty() {
                 style::null_display().to_string()
+            } else if wide {
+                val.clone()
             } else {
                 style::truncate(val, 80)
             });
@@ -496,7 +502,7 @@ fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str]) {
     }
 }
 
-fn render_fields_table(rows: &[ToolFieldsRow], field_names: &[&str]) {
+fn render_fields_table(rows: &[ToolFieldsRow], field_names: &[&str], wide: bool) {
     let mut headers: Vec<&str> = vec!["session", "tool"];
     headers.extend_from_slice(field_names);
 
@@ -508,6 +514,8 @@ fn render_fields_table(rows: &[ToolFieldsRow], field_names: &[&str]) {
         for val in &r.fields {
             cols.push(if val.is_empty() {
                 style::null_display().to_string()
+            } else if wide {
+                val.clone()
             } else {
                 style::truncate(val, 80)
             });
@@ -518,7 +526,7 @@ fn render_fields_table(rows: &[ToolFieldsRow], field_names: &[&str]) {
     style::print_light_table(&headers, &string_rows);
 }
 
-fn render_detail_table(rows: &[ToolDetailRow]) {
+fn render_detail_table(rows: &[ToolDetailRow], wide: bool) {
     let headers = ["session", "tool", "input"];
     let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let session_id = if r.session_id.is_empty() {
@@ -535,6 +543,8 @@ fn render_detail_table(rows: &[ToolDetailRow]) {
 
         let input = if r.input.is_empty() {
             style::null_display().to_string()
+        } else if wide {
+            r.input.clone()
         } else {
             style::truncate(&r.input, 60)
         };

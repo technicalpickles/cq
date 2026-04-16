@@ -29,6 +29,7 @@ pub fn run(
     format: &OutputFormat,
     limit: usize,
     offset: usize,
+    wide: bool,
 ) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
@@ -75,7 +76,7 @@ pub fn run(
     let mut stmt = conn.prepare(&sql)?;
 
     match format {
-        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format),
+        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format, wide),
         _ => {
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut message_rows: Vec<MessageRow> = Vec::new();
@@ -104,8 +105,8 @@ pub fn run(
             }
 
             match format {
-                OutputFormat::Table => render_table(&message_rows),
-                _ => render_oneline(&message_rows),
+                OutputFormat::Table => render_table(&message_rows, wide),
+                _ => render_oneline(&message_rows, wide),
             }
 
             super::print_truncation_hint(
@@ -122,7 +123,7 @@ pub fn run(
     }
 }
 
-fn render_oneline(rows: &[MessageRow]) {
+fn render_oneline(rows: &[MessageRow], wide: bool) {
     // Build plain text rows (no color) for width calculation
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let session_id = if r.session_id.is_empty() {
@@ -145,6 +146,8 @@ fn render_oneline(rows: &[MessageRow]) {
 
         let text = if r.text.is_empty() {
             style::null_display().to_string()
+        } else if wide {
+            r.text.clone()
         } else {
             style::truncate(&r.text, 60)
         };
@@ -182,7 +185,7 @@ fn render_oneline(rows: &[MessageRow]) {
     }
 }
 
-fn render_table(rows: &[MessageRow]) {
+fn render_table(rows: &[MessageRow], wide: bool) {
     let headers = ["session_id", "type", "timestamp", "text"];
 
     let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
@@ -206,6 +209,8 @@ fn render_table(rows: &[MessageRow]) {
 
         let text = if r.text.is_empty() {
             style::null_display().to_string()
+        } else if wide {
+            r.text.clone()
         } else {
             style::truncate(&r.text, 60)
         };

@@ -55,6 +55,7 @@ pub fn run(
     format: &OutputFormat,
     limit: usize,
     offset: usize,
+    _wide: bool,
 ) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();

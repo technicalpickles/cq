@@ -60,6 +60,7 @@ pub fn run(
     format: &OutputFormat,
     limit: usize,
     offset: usize,
+    wide: bool,
 ) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
@@ -101,7 +102,7 @@ pub fn run(
     let mut stmt = conn.prepare(&sql)?;
 
     match format {
-        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format),
+        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format, wide),
         _ => {
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut session_rows: Vec<SessionRow> = Vec::new();
@@ -132,8 +133,8 @@ pub fn run(
             }
 
             match format {
-                OutputFormat::Table => render_table(&session_rows),
-                _ => render_oneline(&session_rows),
+                OutputFormat::Table => render_table(&session_rows, wide),
+                _ => render_oneline(&session_rows, wide),
             }
 
             super::print_truncation_hint(
@@ -150,7 +151,7 @@ pub fn run(
     }
 }
 
-fn render_oneline(rows: &[SessionRow]) {
+fn render_oneline(rows: &[SessionRow], wide: bool) {
     // Build plain text rows (no color) for width calculation
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let time_ago = if r.started_at.is_empty() {
@@ -182,6 +183,8 @@ fn render_oneline(rows: &[SessionRow]) {
 
         let first_msg = if r.first_user_message.is_empty() {
             style::null_display().to_string()
+        } else if wide {
+            r.first_user_message.clone()
         } else {
             style::truncate(&r.first_user_message, 60)
         };
@@ -222,7 +225,7 @@ fn render_oneline(rows: &[SessionRow]) {
     }
 }
 
-fn render_table(rows: &[SessionRow]) {
+fn render_table(rows: &[SessionRow], wide: bool) {
     let headers = ["started", "project", "session_id", "dur", "msgs", "tools", "first_user_message"];
 
     let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
@@ -255,6 +258,8 @@ fn render_table(rows: &[SessionRow]) {
 
         let first_msg = if r.first_user_message.is_empty() {
             style::null_display().to_string()
+        } else if wide {
+            r.first_user_message.clone()
         } else {
             style::truncate(&r.first_user_message, 60)
         };

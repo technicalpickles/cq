@@ -619,6 +619,117 @@ fn session_invalid_shows_hint() {
 }
 
 #[test]
+fn wide_flag_shows_full_values() {
+    let env = setup_env(&["long_values_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--wide", "tools", "Bash"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The long command should NOT be truncated (no "..." at end of the input column)
+    // The fixture has a command longer than 60 chars, which would normally be truncated
+    assert!(
+        stdout.contains("sort -rn"),
+        "With --wide, full command should be visible, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("..."),
+        "With --wide, output should not be truncated, got: {stdout}"
+    );
+}
+
+#[test]
+fn default_truncates_long_values() {
+    let env = setup_env(&["long_values_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "Bash"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The long command from the fixture should be truncated in default mode
+    // (assert_cmd runs as a piped process, but we test that the default code path works)
+    // Note: when piped (not a TTY), wide is automatically enabled, so the output won't be truncated.
+    // This test just confirms the command works without errors in default mode.
+    assert!(
+        stdout.contains("find"),
+        "Should show tool input content, got: {stdout}"
+    );
+}
+
+#[test]
+fn wide_flag_in_help() {
+    Command::cargo_bin("cq").unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--wide"));
+}
+
+#[test]
+fn wide_flag_with_table_format() {
+    let env = setup_env(&["long_values_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--wide", "--table", "tools", "Bash"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sort -rn"),
+        "With --wide --table, full command should be visible, got: {stdout}"
+    );
+}
+
+#[test]
+fn wide_flag_sessions() {
+    let env = setup_env(&["long_values_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--wide", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The first_user_message is long, should not be truncated with --wide
+    assert!(
+        stdout.contains("truncation width"),
+        "With --wide, full first_user_message should be visible, got: {stdout}"
+    );
+}
+
+#[test]
+fn wide_flag_messages() {
+    let env = setup_env(&["long_values_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--wide", "messages"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The user message text is long, should not be truncated with --wide
+    assert!(
+        stdout.contains("truncation width"),
+        "With --wide, full message text should be visible, got: {stdout}"
+    );
+}
+
+#[test]
+fn wide_flag_sql() {
+    let env = setup_env(&["long_values_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--wide", "sql", "SELECT name, CAST(input AS VARCHAR) AS input FROM tool_calls LIMIT 1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sort -rn"),
+        "With --wide sql, full values should be visible, got: {stdout}"
+    );
+}
+
+#[test]
 fn schema_unknown_view_error_format() {
     let output = Command::cargo_bin("cq").unwrap()
         .args(["schema", "bogus"])

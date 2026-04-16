@@ -14,6 +14,7 @@ pub fn print_results(
     stmt: &mut duckdb::Statement,
     params: &[&dyn duckdb::types::ToSql],
     format: &OutputFormat,
+    wide: bool,
 ) -> Result<()> {
     let mut rows_iter = stmt.query(params)?;
 
@@ -35,13 +36,15 @@ pub fn print_results(
         rows.push(values);
     }
 
+    let max_width = if wide { 0 } else { 120 };
+
     match format {
         OutputFormat::Json => print_json(&column_names, &rows),
-        _ => print_light_table_output(&column_names, &rows),
+        _ => print_light_table_output(&column_names, &rows, max_width),
     }
 }
 
-pub fn value_to_string(v: &Value) -> String {
+pub fn value_to_string(v: &Value, max_width: usize) -> String {
     let s = match v {
         Value::Null => return style::null_display().to_string(),
         Value::Boolean(b) => b.to_string(),
@@ -61,7 +64,11 @@ pub fn value_to_string(v: &Value) -> String {
         Value::Enum(s) => s.clone(),
         other => format!("{:?}", other),
     };
-    style::truncate(&s, 120)
+    if max_width == 0 {
+        s
+    } else {
+        style::truncate(&s, max_width)
+    }
 }
 
 fn value_to_json(v: &Value) -> serde_json::Value {
@@ -105,11 +112,11 @@ fn value_to_json(v: &Value) -> serde_json::Value {
     }
 }
 
-fn print_light_table_output(column_names: &[String], rows: &[Vec<Value>]) -> Result<()> {
+fn print_light_table_output(column_names: &[String], rows: &[Vec<Value>], max_width: usize) -> Result<()> {
     let headers: Vec<&str> = column_names.iter().map(|s| s.as_str()).collect();
     let string_rows: Vec<Vec<String>> = rows
         .iter()
-        .map(|row| row.iter().map(value_to_string).collect())
+        .map(|row| row.iter().map(|v| value_to_string(v, max_width)).collect())
         .collect();
     style::print_light_table(&headers, &string_rows);
     Ok(())
