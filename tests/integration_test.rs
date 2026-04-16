@@ -1118,3 +1118,18 @@ fn sessions_count_by_project() {
     assert!(stdout.contains("myproject"), "Should show project name, got: {stdout}");
     assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
 }
+
+#[test]
+fn tools_context_conflicts_with_count_by() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "-C", "2", "--count-by", "name"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--count-by") && stderr.contains("context"),
+        "Should explain conflict between --count-by and context flags, got: {stderr}"
+    );
+}

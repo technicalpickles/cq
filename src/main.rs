@@ -247,13 +247,15 @@ fn main() -> Result<()> {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
             sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide, timeline)?;
         }
-        Command::Tools { name, grep, errors, fields, count_by, after: _, before: _, context: _ } => {
+        Command::Tools { name, grep, errors, fields, count_by, after, before, context } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            let ctx = cq::commands::ContextWindow::from_flags(after, before, context);
+            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), count_by.as_deref(), ctx, &format, cli.limit, cli.offset, wide)?;
         }
-        Command::Messages { msg_type, grep, fields, count_by, after: _, before: _, context: _ } => {
+        Command::Messages { msg_type, grep, fields, count_by, after, before, context } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            let ctx = cq::commands::ContextWindow::from_flags(after, before, context);
+            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), ctx, &format, cli.limit, cli.offset, wide)?;
         }
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;

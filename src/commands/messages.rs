@@ -34,6 +34,7 @@ pub fn run(
     grep: Option<&str>,
     fields: Option<&[&str]>,
     count_by: Option<&str>,
+    ctx: Option<super::ContextWindow>,
     format: &OutputFormat,
     limit: usize,
     offset: usize,
@@ -41,6 +42,7 @@ pub fn run(
 ) -> Result<()> {
     // Check for conflicting flags
     super::check_count_by_fields_conflict(count_by, fields);
+    super::check_count_by_context_conflict(count_by, ctx);
 
     // Dispatch to count-by mode
     if let Some(col) = count_by {
