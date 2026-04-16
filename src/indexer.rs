@@ -8,6 +8,7 @@ pub struct SyncStats {
     pub added: usize,
     pub removed: usize,
     pub changed: usize,
+    pub total: usize,
 }
 
 struct FileInfo {
@@ -62,6 +63,8 @@ pub fn sync(conn: &Connection, projects_dir: &Path) -> Result<SyncStats> {
     if !to_add.is_empty() {
         index_files(conn, &to_add)?;
     }
+
+    stats.total = disk_files.len();
 
     Ok(stats)
 }

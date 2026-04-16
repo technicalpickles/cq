@@ -140,8 +140,8 @@ fn no_files_no_error() {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Cache up to date"),
-        "Expected 'Cache up to date' on stderr, got: {stderr}"
+        stderr.contains("Loaded 0 files"),
+        "Expected 'Loaded 0 files' on stderr, got: {stderr}"
     );
 }
 
@@ -166,12 +166,12 @@ fn progress_on_stderr_not_stdout() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Progress messages go to stderr
     assert!(
-        stderr.contains("Indexed") || stderr.contains("Cache up to date"),
+        stderr.contains("Synced") || stderr.contains("Loaded"),
         "Expected progress on stderr, got: {stderr}"
     );
     // stdout should not have progress messages
-    assert!(!stdout.contains("Indexed"), "Progress message leaked to stdout: {stdout}");
-    assert!(!stdout.contains("Cache up to date"), "Progress message leaked to stdout: {stdout}");
+    assert!(!stdout.contains("Synced"), "Progress message leaked to stdout: {stdout}");
+    assert!(!stdout.contains("Loaded"), "Progress message leaked to stdout: {stdout}");
 }
 
 #[test]

@@ -178,9 +178,9 @@ fn main() -> Result<()> {
     let db_setup = db::setup_connection(provider.base_dir(), &options)?;
     let elapsed = start.elapsed();
     if db_setup.file_count > 0 {
-        eprintln!("Indexed {} files in {:.1}s", db_setup.file_count, elapsed.as_secs_f64());
+        eprintln!("Synced {} new files ({} total, {:.1}s)", db_setup.file_count, db_setup.total_files, elapsed.as_secs_f64());
     } else {
-        eprintln!("Cache up to date ({:.1}s)", elapsed.as_secs_f64());
+        eprintln!("Loaded {} files ({:.1}s)", db_setup.total_files, elapsed.as_secs_f64());
     }
 
     let conn = db_setup.conn;

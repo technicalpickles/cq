@@ -7,6 +7,7 @@ use crate::views;
 pub struct DbSetup {
     pub conn: Connection,
     pub file_count: usize,
+    pub total_files: usize,
 }
 
 pub struct DbOptions {
@@ -31,5 +32,5 @@ pub fn setup_connection(projects_dir: &std::path::Path, options: &DbOptions) -> 
 
     views::register_derived_views(&conn)?;
 
-    Ok(DbSetup { conn, file_count })
+    Ok(DbSetup { conn, file_count, total_files: stats.total })
 }

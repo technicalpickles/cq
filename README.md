@@ -36,17 +36,19 @@ Find tool calls that errored:
 $ cq tools --errors --since 24h
 ```
 
+See activity across all your projects:
+
+```bash
+$ cq projects --all
+```
+
 Or just write SQL directly, because sometimes that's the move:
 
 ```bash
 $ cq sql "SELECT name, count(*) n FROM tool_calls GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
 ```
 
-The `schema` command shows all available views and columns, and `schema --examples` has a query cookbook to get you started:
-
-```bash
-$ cq schema --examples
-```
+`cq schema` shows all available views and columns. `cq schema --examples` has a query cookbook to get you started.
 
 ## Install
 
@@ -63,8 +65,12 @@ cargo install --git https://github.com/technicalpickles/cq
 | `--project <name>` | `-p` | Scope to a project (substring match) |
 | `--session <id>` | `-s` | Scope to a session (UUID prefix match) |
 | `--since <duration>` | | Time filter: `7d`, `24h`, `30m` |
+| `--all` | | Show all projects (disable auto-scoping) |
 | `--json` | | JSON output instead of tables |
-| `--limit <n>` | | Max results (default: 50) |
+| `--table` | | Aligned table with headers |
+| `--no-color` | | Disable colored output |
+| `--limit <n>` | | Max results (default: 50, 0 for unlimited) |
+| `--offset <n>` | | Skip first N results |
 
 ## Views
 
@@ -76,6 +82,12 @@ Four SQL views, all queryable with `cq sql`:
 - **tool_results**: one row per tool response, with an error flag
 
 Run `cq schema` for full column details.
+
+**Tip:** The `project` column in SQL contains full decoded paths (e.g. `/Users/alice/myproject`), while built-in commands show short names. When filtering in raw SQL, use `LIKE` instead of `=`:
+
+```sql
+WHERE project LIKE '%myproject'
+```
 
 ## Use cases
 
