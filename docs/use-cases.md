@@ -131,3 +131,11 @@ ORDER BY result_chars DESC
 LIMIT 20
 " --all
 ```
+
+## Trace what happened around a tool call
+
+```bash
+cq tools Read --grep '/etc/passwd' -C 2
+```
+
+Show the Read call plus two messages before and after. Useful for debugging why a tool was called, what context the agent had, and what it did with the result.
