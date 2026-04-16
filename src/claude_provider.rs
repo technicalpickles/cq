@@ -45,6 +45,27 @@ impl ClaudeProvider {
         decoded.to_lowercase().contains(&query.to_lowercase())
     }
 
+    /// Given a project query string (as passed to --project), return the
+    /// matching project directories on disk. Used by SyncScope::Projects.
+    pub fn project_dirs_for_query(&self, query: &str) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        if !self.base_dir.exists() {
+            return dirs;
+        }
+        if let Ok(entries) = std::fs::read_dir(&self.base_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if self.matches_project(&dir_name, query) {
+                    dirs.push(entry.path());
+                }
+            }
+        }
+        dirs
+    }
+
     /// Given a directory path, find the matching project name if one exists.
     /// Checks if the encoded form of `cwd` (or any parent) matches a project directory.
     pub fn project_for_cwd(&self, cwd: &str) -> Option<String> {

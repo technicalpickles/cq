@@ -243,8 +243,21 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
+    let sync_scope = if cli.reindex {
+        cq::sync_scope::SyncScope::All
+    } else if let Some(ref p) = scope.project {
+        let dirs = provider.project_dirs_for_query(p);
+        if dirs.is_empty() {
+            cq::sync_scope::SyncScope::All
+        } else {
+            cq::sync_scope::SyncScope::Projects(dirs)
+        }
+    } else {
+        cq::sync_scope::SyncScope::All
+    };
+
     let start = std::time::Instant::now();
-    let db_setup = db::setup_connection(provider.base_dir(), &options, cq::sync_scope::SyncScope::All)?;
+    let db_setup = db::setup_connection(provider.base_dir(), &options, sync_scope)?;
     let elapsed = start.elapsed();
     if db_setup.lock_busy {
         eprintln!("index busy, using cached data (re-run with --reindex to force)");
