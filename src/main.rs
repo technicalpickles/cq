@@ -74,6 +74,10 @@ enum Command {
         /// Aggregate rows into counts by column [valid: project]
         #[arg(long = "count-by")]
         count_by: Option<String>,
+
+        /// Show chronological tool call timeline (requires --session)
+        #[arg(long)]
+        timeline: bool,
     },
     /// Query tool calls
     Tools {
@@ -215,9 +219,9 @@ fn main() -> Result<()> {
     let conn = db_setup.conn;
 
     match cli.command {
-        Command::Sessions { grep, fields, count_by } => {
+        Command::Sessions { grep, fields, count_by, timeline } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide, timeline)?;
         }
         Command::Tools { name, grep, errors, fields, count_by } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());

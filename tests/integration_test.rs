@@ -993,6 +993,85 @@ fn count_by_and_fields_conflict() {
     );
 }
 
+// --- timeline tests ---
+
+fn timeline_env() -> TestEnv {
+    setup_env(&["timeline_session.jsonl"])
+}
+
+#[test]
+fn sessions_timeline_shows_events() {
+    let env = timeline_env();
+    let output = cq_cmd(&env)
+        .args(["sessions", "--session", "aaaa0000-0000-0000-0000-000000000001", "--timeline"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("call"), "Should show 'call' events, got: {stdout}");
+    assert!(stdout.contains("result"), "Should show 'result' events, got: {stdout}");
+    assert!(stdout.contains("Read"), "Should show Read tool, got: {stdout}");
+    assert!(stdout.contains("Bash"), "Should show Bash tool, got: {stdout}");
+}
+
+#[test]
+fn sessions_timeline_requires_session() {
+    let env = timeline_env();
+    let output = cq_cmd(&env)
+        .args(["sessions", "--timeline"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--timeline requires --session"),
+        "Should error about requiring --session, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("cq sessions"),
+        "Should hint about finding session IDs, got: {stderr}"
+    );
+}
+
+#[test]
+fn sessions_timeline_shows_errors() {
+    let env = timeline_env();
+    let output = cq_cmd(&env)
+        .args(["sessions", "--session", "aaaa0000-0000-0000-0000-000000000001", "--timeline"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("error"),
+        "Should show 'error' for failed tool result, got: {stdout}"
+    );
+}
+
+#[test]
+fn sessions_timeline_json() {
+    let env = timeline_env();
+    let output = cq_cmd(&env)
+        .args(["--json", "sessions", "--session", "aaaa0000-0000-0000-0000-000000000001", "--timeline"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout)
+        .expect(&format!("Should be valid JSON, got: {stdout}"));
+    assert!(!parsed.is_empty(), "Should have timeline events");
+    assert!(
+        parsed[0].get("event").is_some(),
+        "JSON should have 'event' key, got: {}",
+        parsed[0]
+    );
+    assert!(
+        parsed[0].get("name").is_some(),
+        "JSON should have 'name' key, got: {}",
+        parsed[0]
+    );
+}
+
 #[test]
 fn sessions_count_by_project() {
     let projects = TempDir::new().unwrap();
