@@ -14,6 +14,8 @@ Write            █████                            341
 Grep             ████                             298
 ```
 
+*1600 Bash calls. What am I even running?*
+
 **TIGHT ON** the commands.
 
 ```
@@ -21,9 +23,11 @@ $ cq tools Bash --fields command --limit 5
 c82e9d4c  Bash  cargo test
 c82e9d4c  Bash  git diff --stat
 bfc27bd2  Bash  docker compose up -d
-bfc27bd2  Bash  curl -s localhost:3000/health | jq .
+bfc27bd2  Bash  git commit -m "fix: resolve session timeout"
 a1f3e890  Bash  psql -c "SELECT count(*) FROM users"
 ```
+
+*Wait, I set up a git commit skill for that. Is it even firing? The commits would still go through Bash either way...*
 
 **CUT TO** Claude, investigating a hunch.
 
@@ -53,7 +57,7 @@ total_sessions  used_skill  bypassed
            168          16       152
 ```
 
-152 sessions. The skill was right there. Nobody called it.
+**152 sessions. The skill was right there. Nobody called it.**
 
 ---
 
