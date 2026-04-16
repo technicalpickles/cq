@@ -1,14 +1,11 @@
 # cq Use Cases
 
-Real examples of insights discovered through cq that would be difficult or impossible to find otherwise.
+Real investigations, real findings. Each of these surfaced something that would have been difficult or impossible to spot without querying the session logs directly.
 
 ## Skill Activation Gaps
 
-**Question:** "How often does the `git:commit` skill actually fire when Claude commits?"
+You saw this one in the [README](../README.md). Here's the full picture.
 
-**Finding:** Out of 166 sessions that ran `git commit` in a 7-day window, only 16 (~9.6%) activated any commit skill. 152 sessions just ran git commit directly via Bash, bypassing the skill entirely.
-
-**Query:**
 ```bash
 cq sql "
 WITH commit_calls AS (
@@ -33,22 +30,19 @@ SELECT
 " --since 7d --table
 ```
 
-**Why it's hard without cq:** You'd need to manually read through session transcripts to correlate Skill tool calls with Bash tool calls across hundreds of sessions. No single log file contains both pieces of information together.
+Out of 166 sessions that ran `git commit` in a 7-day window, only 16 activated any commit skill. The rest went straight through Bash. Digging further, subagents (which may not have the skill list in their context) accounted for many of the misses. Claude's built-in commit instructions also compete with the skill, so even in main sessions, the skill gets skipped more often than you'd expect.
 
-**Impact:** Led to hypothesis that Claude's built-in commit instructions compete with the skill, and that subagents (which may lack the skill list) account for many of the misses.
+## The Silent Failure
 
-## Silent Skill Failures: Wrong File Paths
+*The writing-voice skill works. Mostly. But sometimes Claude burns three or four extra tool calls finding the reference files. It's not broken, it just feels... slow.*
 
-**Question:** "The writing-voice skill sometimes fails to find voice samples. When and why?"
-
-**Finding:** The skill's instructions reference excerpt files without the `references/` subdirectory prefix. Claude tries `writing-voice/blog-excerpts.md`, gets an error, then self-corrects by Glob-searching and finding them at `writing-voice/references/blog-excerpts.md`. This wastes tool calls and tokens every time.
-
-**Query:**
 ```bash
-# Find sessions that invoked the skill
 cq tools Skill --since 30d --grep writing-voice --table
+```
 
-# Then find Read errors in those sessions
+*23 sessions in the last month. OK. Let's look at what tool calls those sessions made around the voice files.*
+
+```bash
 cq sql "
 SELECT tc.session_id, tc.name, tc.timestamp,
   left(tc.input::text, 250) as input_preview,
@@ -65,65 +59,42 @@ ORDER BY tc.timestamp DESC
 " --since 30d --table
 ```
 
-**Why it's hard without cq:** The skill "works" from the user's perspective (Claude recovers), so there's no visible error. You'd only notice it by watching tool calls in real time, or by reading full session transcripts looking for error-then-retry patterns. Across 23 writing-voice sessions over 30 days, this pattern repeated silently.
+*There it is. Read fails, then Glob searches, then Read succeeds at a different path. Every single time.*
 
-**Impact:** A small fix that saves wasted tool calls on every invocation.
+**The skill instructions referenced the wrong path.** They pointed to `writing-voice/blog-excerpts.md` instead of `writing-voice/references/blog-excerpts.md`. Claude recovered every time by Glob-searching for the file, so from the outside everything looked fine. Across 23 sessions over 30 days, the same silent failure repeated.
 
-## Plugin Marketplace Usage Audit
+One-line fix. Saved wasted tool calls on every invocation.
 
-**Question:** "Which of my pickled-claude-plugins skills are actually getting used?"
+## The Audit
 
-**Finding:** Aggregated all Skill tool invocations, cross-referenced against the actual plugin list from the marketplace repo, and found clear usage tiers:
+*I've built 30+ skills across 13 plugins. Which ones actually get used?*
 
-- **Dominant:** `agent-meta:park` (140), `agent-meta:unpark` (36)
-- **Solid:** `git:commit` (16)
-- **Occasional:** `dev-tools:designing-clis` (3), `second-brain:obsidian` (3), `git:checkout` (3), `git:pull-request` (3), `buildkite:*` (4 total)
-- **Never fired (7d):** `agent-meta:snapshot`, `git:triage`, `git:update`, `git:inbox`, `sandbox-first`, most `second-brain:*` variants, `dev-tools:finding-api-docs/hk/working-with-mise`, `stay-on-target:scope-handoffs`, `working-in-monorepos`, `mcpproxy`
-
-**Query:**
 ```bash
 cq sql "
 SELECT json_extract_string(input, '$.skill') as skill, count(*) as invocations
 FROM tool_calls
 WHERE name = 'Skill'
-  AND json_extract_string(input, '$.skill') IN (
-    'agent-meta:park', 'agent-meta:unpark', 'agent-meta:snapshot',
-    -- ... full list of marketplace skills
-  )
 GROUP BY skill
 ORDER BY invocations DESC
 " --since 7d --table
 ```
 
-**Why it's hard without cq:** The skill list spans 30+ skills across 13 plugins. There's no built-in analytics for "which skills fire." You'd need to grep through every session transcript and manually tally invocations, then cross-reference against the plugin repo to filter out skills from other sources (superpowers, local skills, etc.).
+Clear tiers emerged:
 
-**Impact:** Revealed that most plugin value concentrates in 3-4 skills. Skills that never fire might have description/triggering issues, or might just not match current workflows.
+- **Dominant:** `agent-meta:park` (140 invocations), `agent-meta:unpark` (36)
+- **Solid:** `git:commit` (16)
+- **Occasional:** `dev-tools:designing-clis` (3), `second-brain:obsidian` (3), `git:checkout` (3), `git:pull-request` (3), `buildkite:*` (4 total)
+- **Never fired (7d):** `agent-meta:snapshot`, `git:triage`, `git:update`, `git:inbox`, `sandbox-first`, most `second-brain:*` variants, `dev-tools:finding-api-docs`, `stay-on-target:scope-handoffs`
 
-## Context Budget Analysis: Which Tool Calls Burn the Most Tokens?
+**Most of the value concentrates in 3 or 4 skills. Seven never fired once in a week.**
 
-**Question:** "In a long session using `pup` (Datadog CLI), which calls added the most context to the conversation?"
+Skills that never fire might have description or triggering issues, or they just don't match current workflows. Either way, you can't fix what you can't see.
 
-**Finding:** In a session investigating production latency (58 `pup` calls total), the top 3 calls alone dumped ~47k characters into context. Two were trace searches piped through jq, one was a metrics query. Meanwhile, the bottom 30+ calls returned essentially nothing useful (31 chars each, empty responses or errors). The session was spending most of its context budget on a handful of large trace dumps while repeatedly retrying queries that returned nothing.
+## Where Did the Context Go?
 
-**Query:**
+*This Datadog session ran 58 pup commands investigating production latency. It still didn't find the issue. Something went wrong, but looking at the conversation, every individual step seemed reasonable. What happened?*
+
 ```bash
-cq sql "
-SELECT
-  tc.tool_use_id,
-  json_extract_string(tc.input, '$.command') AS command,
-  length(tr.content) AS result_length
-FROM tool_calls tc
-JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
-WHERE tc.session_id = '<SESSION_ID>'
-  AND tc.name = 'Bash'
-  AND json_extract_string(tc.input, '$.command') LIKE '%pup%'
-ORDER BY result_length DESC
-" --all
-```
-
-**Variations:**
-```bash
-# All Bash calls in a session, ranked by output size (not just pup)
 cq sql "
 SELECT
   json_extract_string(tc.input, '$.command') AS command,
@@ -133,11 +104,21 @@ FROM tool_calls tc
 JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
 WHERE tc.session_id = '<SESSION_ID>'
   AND tc.name = 'Bash'
+  AND json_extract_string(tc.input, '$.command') LIKE '%pup%'
 ORDER BY result_chars DESC
-LIMIT 20
 " --all
+```
 
-# All tool calls ranked by result size (Read, Grep, Bash, etc.)
+*The top three calls dumped 47k characters into context. The bottom thirty returned 31 characters each. Empty responses, every one.*
+
+**Three calls ate the context budget. Thirty more burned it retrying queries that would never work.** The session was spending most of its context on a handful of large trace dumps while repeatedly running variations of queries that returned nothing. No single call looked wrong. The pattern only showed up when you ranked them all by output size.
+
+The fix was two-fold: tighter jq selectors on trace searches to avoid flooding context, and recognizing when a session is stuck in a retry loop on empty results.
+
+You can run this same analysis on any session:
+
+```bash
+# All tool calls ranked by result size
 cq sql "
 SELECT
   tc.name AS tool,
@@ -150,7 +131,3 @@ ORDER BY result_chars DESC
 LIMIT 20
 " --all
 ```
-
-**Why it's hard without cq:** You can't see tool result sizes in the conversation UI. Long outputs get truncated visually, so you don't notice that one `pup traces search` dumped 16k chars while a dozen other calls returned nothing. Without joining `tool_calls` to `tool_results` and measuring `length(content)`, there's no way to audit where context budget actually went.
-
-**Impact:** Identified that trace search commands need more aggressive filtering (tighter jq selectors, `| head`, or narrower Datadog queries) to avoid flooding context. Also revealed a pattern of retrying queries that consistently return empty results, suggesting the session needed to stop and reassess its approach rather than keep trying variants.
