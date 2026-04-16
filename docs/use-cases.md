@@ -35,7 +35,7 @@ SELECT
 
 **Why it's hard without cq:** You'd need to manually read through session transcripts to correlate Skill tool calls with Bash tool calls across hundreds of sessions. No single log file contains both pieces of information together.
 
-**Impact:** Created bean gt-5uxp to investigate. Led to hypothesis that Claude's built-in commit instructions compete with the skill, and that subagents (which may lack the skill list) account for many of the misses.
+**Impact:** Led to hypothesis that Claude's built-in commit instructions compete with the skill, and that subagents (which may lack the skill list) account for many of the misses.
 
 ## Silent Skill Failures: Wrong File Paths
 
@@ -67,7 +67,7 @@ ORDER BY tc.timestamp DESC
 
 **Why it's hard without cq:** The skill "works" from the user's perspective (Claude recovers), so there's no visible error. You'd only notice it by watching tool calls in real time, or by reading full session transcripts looking for error-then-retry patterns. Across 23 writing-voice sessions over 30 days, this pattern repeated silently.
 
-**Impact:** Created bean gt-9cuu to fix the path references. A small fix that saves wasted tool calls on every invocation.
+**Impact:** A small fix that saves wasted tool calls on every invocation.
 
 ## Plugin Marketplace Usage Audit
 
