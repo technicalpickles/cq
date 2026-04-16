@@ -9,7 +9,7 @@ use crate::commands::ContextWindow;
 /// Param-positioning contract: callers must bind params in order:
 /// 1. All `ordered_scope_where` params first
 /// 2. All `matches_subquery` params second
-/// This matches the SQL generation order (ordered CTE before matches CTE).
+///    (matches the SQL generation order: ordered CTE before matches CTE)
 ///
 /// Trust boundary: both `matches_subquery` and `ordered_scope_where` are trusted SQL fragments.
 /// Callers must use `?` placeholders for user input; never interpolate strings directly.

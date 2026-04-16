@@ -60,6 +60,7 @@ pub fn run(
     // Check for conflicting flags
     super::check_count_by_fields_conflict(count_by, fields);
     super::check_count_by_context_conflict(count_by, ctx);
+    super::check_fields_context_conflict(fields, ctx);
 
     // Dispatch to context mode
     if let Some(window) = ctx {
@@ -293,6 +294,25 @@ fn run_with_context(
     );
     let tool_param_refs: Vec<&dyn duckdb::types::ToSql> = tool_params.iter().map(|p| p.as_ref()).collect();
     conn.execute(&create_temp_sql, &tool_param_refs[..])?;
+
+    // Check for empty results before building the context SQL.
+    let match_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM cq_ctx_matches",
+        [],
+        |r| r.get(0),
+    )?;
+    if match_count == 0 {
+        if scope.session.is_some() {
+            super::print_session_not_found(scope.session.as_ref().unwrap());
+        } else {
+            let mut extras: Vec<&str> = Vec::new();
+            if tool_name.is_some() { extras.push("[name]"); }
+            if grep.is_some() { extras.push("--grep"); }
+            if errors_only { extras.push("--errors"); }
+            super::print_no_results(scope, &extras);
+        }
+        return Ok(());
+    }
 
     // Build the context SQL. `matches_subquery` references the temp table -- no params needed.
     // match_limit was already applied when building the temp table, so pass 0 here (unlimited).

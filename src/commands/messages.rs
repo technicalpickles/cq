@@ -43,6 +43,7 @@ pub fn run(
     // Check for conflicting flags
     super::check_count_by_fields_conflict(count_by, fields);
     super::check_count_by_context_conflict(count_by, ctx);
+    super::check_fields_context_conflict(fields, ctx);
 
     // Dispatch to context mode
     if let Some(window) = ctx {
@@ -220,6 +221,24 @@ fn run_with_context(
     }
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+
+    // Check for empty results before rendering.
+    let count: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM ({sql}) __cq_count"),
+        &param_refs[..],
+        |r| r.get(0),
+    )?;
+    if count == 0 {
+        if scope.session.is_some() {
+            super::print_session_not_found(scope.session.as_ref().unwrap());
+        } else {
+            let mut extras: Vec<&str> = Vec::new();
+            if msg_type.is_some() { extras.push("--type"); }
+            if grep.is_some() { extras.push("--grep"); }
+            super::print_no_results(scope, &extras);
+        }
+        return Ok(());
+    }
 
     match format {
         OutputFormat::Json => {

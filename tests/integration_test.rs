@@ -1300,3 +1300,33 @@ fn tty_context_non_contiguous_groups_show_separator() {
     let non_blank: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(non_blank.len(), 5, "expected 3 match rows + 2 separator lines, got:\n{stdout}");
 }
+
+#[test]
+fn messages_context_empty_result_prints_no_results() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "xyz-will-not-match", "-C", "2"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No results"),
+        "expected 'No results' in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn messages_fields_conflicts_with_context() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "-C", "1", "--fields", "text"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--fields") && stderr.contains("-A"),
+        "expected conflict error mentioning --fields and -A, got: {stderr}"
+    );
+}

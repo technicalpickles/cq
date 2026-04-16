@@ -65,6 +65,20 @@ impl ContextWindow {
     }
 }
 
+/// Error out when --fields is combined with context flags.
+/// The output shape in context mode is partially fixed (match_kind/match_group columns),
+/// and --fields semantics don't cleanly compose with that. Reject explicitly rather
+/// than silently ignoring.
+pub fn check_fields_context_conflict(fields: Option<&[&str]>, ctx: Option<ContextWindow>) {
+    if fields.is_some() && ctx.is_some() {
+        eprintln!(
+            "Error: --fields cannot be used with -A, -B, or -C\n\
+             Use --json to get structured output with all fields when context flags are active"
+        );
+        std::process::exit(1);
+    }
+}
+
 /// Error out when --count-by is combined with context flags.
 /// Aggregation produces summary rows; context surrounds individual rows. Incompatible.
 pub fn check_count_by_context_conflict(count_by: Option<&str>, ctx: Option<ContextWindow>) {
