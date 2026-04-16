@@ -9,6 +9,7 @@ authors = ["Josh Nichols <josh@technicalpickles.com>"]
 
 [dependencies]
 duckdb = { version = "1", features = ["bundled", "json"] }
+fs2 = "0.4"
 clap = { version = "4", features = ["derive"] }
 owo-colors = { version = "4", features = ["supports-colors"] }
 serde = { version = "1", features = ["derive"] }
