@@ -1097,6 +1097,20 @@ fn sessions_timeline_json() {
 }
 
 #[test]
+fn no_reindex_skips_sync() {
+    let mut cmd = Command::cargo_bin("cq").unwrap();
+    cmd.arg("--no-reindex").arg("sessions").arg("--limit").arg("1");
+    cmd.assert().success();
+}
+
+#[test]
+fn reindex_and_no_reindex_conflict() {
+    let mut cmd = Command::cargo_bin("cq").unwrap();
+    cmd.arg("--reindex").arg("--no-reindex").arg("sessions");
+    cmd.assert().failure();
+}
+
+#[test]
 fn sessions_count_by_project() {
     let projects = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();
