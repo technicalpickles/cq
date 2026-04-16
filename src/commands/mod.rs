@@ -220,6 +220,21 @@ pub fn print_truncation_hint(
     }
 }
 
+/// Build the parameter vector corresponding to the scope WHERE clause fragments
+/// used in the `ordered` CTE and `matches_subquery`. Order matters, must match the
+/// order in which scope_conditions are pushed: project, then session. `since` is
+/// inlined into the SQL string so it contributes no params.
+pub fn build_scope_params(scope: &crate::scope::QueryScope) -> Vec<Box<dyn duckdb::types::ToSql>> {
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
+    if let Some(project) = &scope.project {
+        params.push(Box::new(format!("%{project}%")));
+    }
+    if let Some(session) = &scope.session {
+        params.push(Box::new(session.clone()));
+    }
+    params
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

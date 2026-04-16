@@ -44,6 +44,11 @@ pub fn run(
     super::check_count_by_fields_conflict(count_by, fields);
     super::check_count_by_context_conflict(count_by, ctx);
 
+    // Dispatch to context mode
+    if let Some(window) = ctx {
+        return run_with_context(conn, scope, msg_type, grep, window, format, limit, wide);
+    }
+
     // Dispatch to count-by mode
     if let Some(col) = count_by {
         let resolved = super::validate_count_by(col, VALID_COUNT_BY_COLUMNS, "messages");
@@ -147,6 +152,85 @@ pub fn run(
             Ok(())
         }
     }
+}
+
+fn run_with_context(
+    conn: &Connection,
+    scope: &QueryScope,
+    msg_type: Option<&str>,
+    grep: Option<&str>,
+    window: super::ContextWindow,
+    format: &OutputFormat,
+    match_limit: usize,
+    wide: bool,
+) -> Result<()> {
+    // Build scope WHERE conditions (used in both `ordered` CTE and inside matches_subquery).
+    let mut scope_conditions = vec!["1=1".to_string()];
+
+    if let Some(_project) = &scope.project {
+        scope_conditions.push("project ILIKE ?".to_string());
+    }
+    if let Some(_session) = &scope.session {
+        scope_conditions.push("session_id = ?".to_string());
+    }
+    if let Some(ts) = scope.since_timestamp()? {
+        let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
+        scope_conditions.push(format!("timestamp >= '{formatted}'"));
+    }
+    let scope_where = scope_conditions.join(" AND ");
+
+    // Build match-level conditions for the matches_subquery.
+    let mut match_conditions = vec!["1=1".to_string()];
+
+    if let Some(_t) = msg_type {
+        match_conditions.push("type = ?".to_string());
+    }
+    if let Some(_pattern) = grep {
+        match_conditions.push("text ILIKE ?".to_string());
+    }
+    let match_where = match_conditions.join(" AND ");
+
+    // matches_subquery projects session_id + message_uuid and filters by scope + match conditions.
+    let matches_subquery = format!(
+        "SELECT session_id, uuid AS message_uuid FROM messages WHERE {scope_where} AND {match_where}"
+    );
+
+    let builder = super::ContextSqlBuilder {
+        window,
+        matches_subquery: &matches_subquery,
+        ordered_scope_where: &scope_where,
+        match_limit,
+    };
+    let sql = builder.build();
+
+    // Param order matches the SQL generation order:
+    //   1. scope_params for the `ordered` CTE WHERE clause
+    //   2. scope_params again (duplicated because matches_subquery embeds scope_where inline)
+    //   3. match_params for the matches_subquery additional conditions
+    let mut all_params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
+    // scope params appear twice: once for `ordered` CTE, once inside matches_subquery's embedded WHERE
+    all_params.extend(super::build_scope_params(scope));
+    all_params.extend(super::build_scope_params(scope));
+    // then match-level params (type, grep)
+    if let Some(t) = msg_type {
+        all_params.push(Box::new(t.to_string()));
+    }
+    if let Some(pattern) = grep {
+        all_params.push(Box::new(format!("%{pattern}%")));
+    }
+
+    let param_refs: Vec<&dyn duckdb::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+
+    // Task 6 will implement a context-aware TTY renderer for OutputFormat::Default.
+    // For now, fall back to Table output (which includes match_kind/match_group columns).
+    let effective_format = if matches!(format, OutputFormat::Json) {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Table
+    };
+
+    output::print_results(&mut stmt, &param_refs, &effective_format, wide)
 }
 
 fn run_with_fields(

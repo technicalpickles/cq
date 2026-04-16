@@ -75,11 +75,16 @@ deduped AS (
     FROM expanded
     GROUP BY session_id, ord
 ),
+with_lag AS (
+    SELECT *,
+           LAG(ord) OVER (PARTITION BY session_id ORDER BY ord) AS prev_ord
+    FROM deduped
+),
 grouped AS (
     SELECT *,
-           SUM(CASE WHEN ord = LAG(ord) OVER (PARTITION BY session_id ORDER BY ord) + 1 THEN 0 ELSE 1 END)
+           SUM(CASE WHEN ord = prev_ord + 1 THEN 0 ELSE 1 END)
              OVER (PARTITION BY session_id ORDER BY ord) AS match_group
-    FROM deduped
+    FROM with_lag
 )
 SELECT session_id, uuid, type, timestamp, text, model, tool_count, project,
        CASE WHEN is_match_any = 1 THEN 'match' ELSE any_kind END AS match_kind,
@@ -111,7 +116,7 @@ mod tests {
         let sql = b.build();
         assert!(sql.contains("match_ord - 2"));
         assert!(sql.contains("match_ord + 3"));
-        assert!(sql.contains("SUM(CASE WHEN ord = LAG(ord)"));
+        assert!(sql.contains("SUM(CASE WHEN ord = prev_ord + 1"));
         assert!(!sql.contains("LIMIT"));
     }
 

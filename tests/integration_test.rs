@@ -1133,3 +1133,58 @@ fn tools_context_conflicts_with_count_by() {
         "Should explain conflict between --count-by and context flags, got: {stderr}"
     );
 }
+
+#[test]
+fn messages_grep_with_context_a_shows_following_messages() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "messages", "--grep", "NEEDLE", "-A", "2"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let rows = parsed.as_array().unwrap();
+    assert_eq!(rows.len(), 3, "expected match + 2 after, got {}: {}", rows.len(), stdout);
+    assert_eq!(rows[0]["match_kind"], "match");
+    assert_eq!(rows[1]["match_kind"], "after");
+    assert_eq!(rows[2]["match_kind"], "after");
+    assert!(rows[0]["text"].as_str().unwrap().contains("NEEDLE"));
+}
+
+#[test]
+fn messages_grep_with_context_c_shows_surrounding() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "messages", "--grep", "NEEDLE", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["match_kind"], "before");
+    assert_eq!(rows[1]["match_kind"], "match");
+    assert_eq!(rows[2]["match_kind"], "after");
+}
+
+#[test]
+fn messages_context_does_not_cross_session_boundary() {
+    // Two sessions; match is in context_session. -B 10 shouldn't pull anything from simple_session.
+    let env = setup_env(&["simple_session.jsonl", "context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "messages", "--grep", "NEEDLE", "-B", "10"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let match_session = rows.iter()
+        .find(|r| r["match_kind"] == "match")
+        .and_then(|r| r["session_id"].as_str())
+        .unwrap()
+        .to_string();
+    for row in &rows {
+        assert_eq!(row["session_id"].as_str().unwrap(), match_session, "cross-session leak: {row}");
+    }
+}
