@@ -4,6 +4,9 @@ pub mod messages;
 pub mod projects;
 pub mod sql;
 pub mod schema;
+pub mod context;
+
+pub use context::ContextSqlBuilder;
 
 use crate::style;
 
