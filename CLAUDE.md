@@ -30,6 +30,52 @@ scope.rs          QueryScope: --project, --session, --since parsing
 - **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-alice-myproject`) back to paths (`/Users/alice/myproject`).
 - **ILIKE for project filtering.** `--project` does substring match, not exact.
 
+## CLI UX conventions
+
+When adding or modifying CLI behavior, follow these conventions. See `docs/cli-ux-conventions.md` for the full reference with examples, rationale, and checklists.
+
+### Discoverability: valid values in `--help`
+
+Any flag or arg that accepts a fixed set of values lists them in the help text using `[valid: ...]` format:
+
+```
+--type <TYPE>       Filter by message type [valid: user, assistant]
+--count-by <COL>    Aggregate rows into counts [valid: name, session, project]
+--fields <FIELDS>   Extract specific columns [valid: session_id, project, type, ...]
+```
+
+For dynamic or tool-dependent values, point to where the user can discover them:
+
+```
+[NAME]  Filter to a specific tool name (run 'cq tools' to see available names)
+```
+
+When adding a new flag, ask: "Can the user discover valid values without trial and error?" If not, add them to `--help`.
+
+### Forgiveness: error message template
+
+Every validation error uses this structure:
+
+```
+Error: <what went wrong, including the invalid input in quotes>
+Valid <thing>: <comma-separated list>
+Hint: <how to learn more or fix it, if applicable>
+```
+
+The three lines serve different needs: the first tells you what's wrong, the second tells you what's right, the third tells you where to go next. The hint line is optional for cases where the valid values already make the fix obvious.
+
+When adding validation, always include the user's invalid input in the error so they can see their typo.
+
+### Consistency: friendly aliases
+
+Use short aliases for common column references: `session` maps to `session_id`. Keep aliases consistent across flags (`--fields session` and `--count-by session` both work). If you add a new alias, it should work everywhere that column appears.
+
+### TTY-aware output
+
+Truncation serves terminal readability. When piped, output full values (the consumer is another program). `--wide` forces full output in terminal. `--json` always gives full output.
+
+The pattern: `let wide = cli.wide || !std::io::stdout().is_terminal();`
+
 ## Tests
 
 ```bash
