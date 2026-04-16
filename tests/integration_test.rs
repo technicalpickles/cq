@@ -1188,3 +1188,55 @@ fn messages_context_does_not_cross_session_boundary() {
         assert_eq!(row["session_id"].as_str().unwrap(), match_session, "cross-session leak: {row}");
     }
 }
+
+#[test]
+fn tools_with_context_c_shows_surrounding_messages() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "tools", "Read", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    // Read tool is at ord 4; -C 1 gives ords 3, 4, 5 -> 3 rows
+    assert_eq!(rows.len(), 3);
+    // Match row should carry the tool name.
+    let match_row = rows.iter().find(|r| r["match_kind"] == "match").unwrap();
+    assert_eq!(match_row["tool_name"], "Read", "match row should carry tool name, got: {match_row}");
+    // Context rows are message-shaped; tool_name should be null.
+    let context_rows: Vec<_> = rows.iter().filter(|r| r["match_kind"] != "match").collect();
+    assert_eq!(context_rows.len(), 2);
+    for ctx_row in &context_rows {
+        assert!(ctx_row["tool_name"].is_null(), "context row should not have tool_name, got: {ctx_row}");
+        assert!(ctx_row["type"].is_string(), "context row should be message-shaped, got: {ctx_row}");
+    }
+}
+
+#[test]
+fn tools_with_context_respects_match_limit() {
+    // multi_tool_session.jsonl has multiple tool calls.
+    // --limit 1 -C 0 should return exactly 1 match row (grep -m semantics).
+    let env = setup_env(&["multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "tools", "--limit", "1", "-C", "0"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let match_count = rows.iter().filter(|r| r["match_kind"] == "match").count();
+    assert_eq!(match_count, 1, "expected 1 match with --limit 1, rows: {stdout}");
+}
+
+#[test]
+fn tools_with_context_non_json_does_not_error() {
+    // Task 6 will add a pretty TTY renderer; for now just make sure the Default/Table path
+    // doesn't crash.
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "Read", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "non-JSON tools context path should not error, stderr: {}", String::from_utf8_lossy(&output.stderr));
+}
