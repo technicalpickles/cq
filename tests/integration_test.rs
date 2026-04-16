@@ -1000,6 +1000,30 @@ fn timeline_env() -> TestEnv {
 }
 
 #[test]
+fn tools_help_shows_context_flags() {
+    Command::cargo_bin("cq").unwrap()
+        .args(["tools", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-A"))
+        .stdout(predicate::str::contains("-B"))
+        .stdout(predicate::str::contains("-C"))
+        .stdout(predicate::str::contains("messages after each match"))
+        .stdout(predicate::str::contains("messages before each match"));
+}
+
+#[test]
+fn messages_help_shows_context_flags() {
+    Command::cargo_bin("cq").unwrap()
+        .args(["messages", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-A"))
+        .stdout(predicate::str::contains("-B"))
+        .stdout(predicate::str::contains("-C"));
+}
+
+#[test]
 fn sessions_timeline_shows_events() {
     let env = timeline_env();
     let output = cq_cmd(&env)
