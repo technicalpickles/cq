@@ -45,7 +45,7 @@ impl QueryScope {
 
         let len = since.len();
         if len < 2 {
-            return Err(anyhow!("Invalid duration: {since}"));
+            return Err(anyhow!("Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"));
         }
 
         let (num_str, unit) = since.split_at(len - 1);
