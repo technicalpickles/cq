@@ -70,6 +70,10 @@ enum Command {
         /// Extract specific columns (comma-separated) [valid: session_id, project, started_at, ended_at, message_count, tool_call_count, user_message_count, first_user_message]
         #[arg(long, value_delimiter = ',')]
         fields: Option<Vec<String>>,
+
+        /// Aggregate rows into counts by column [valid: project]
+        #[arg(long = "count-by")]
+        count_by: Option<String>,
     },
     /// Query tool calls
     Tools {
@@ -87,6 +91,10 @@ enum Command {
         /// Extract specific input fields as columns (comma-separated; fields depend on the tool, see 'cq schema tool_calls')
         #[arg(long, value_delimiter = ',')]
         fields: Option<Vec<String>>,
+
+        /// Aggregate rows into counts by column [valid: name, session, project]
+        #[arg(long = "count-by")]
+        count_by: Option<String>,
     },
     /// Query messages
     Messages {
@@ -101,6 +109,10 @@ enum Command {
         /// Extract specific columns (comma-separated) [valid: session_id, project, type, timestamp, text, model, tool_count]
         #[arg(long, value_delimiter = ',')]
         fields: Option<Vec<String>>,
+
+        /// Aggregate rows into counts by column [valid: type, session, project]
+        #[arg(long = "count-by")]
+        count_by: Option<String>,
     },
     /// Summarize projects by session, message, and tool counts
     Projects {
@@ -203,17 +215,17 @@ fn main() -> Result<()> {
     let conn = db_setup.conn;
 
     match cli.command {
-        Command::Sessions { grep, fields } => {
+        Command::Sessions { grep, fields, count_by } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
-        Command::Tools { name, grep, errors, fields } => {
+        Command::Tools { name, grep, errors, fields, count_by } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
-        Command::Messages { msg_type, grep, fields } => {
+        Command::Messages { msg_type, grep, fields, count_by } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), &format, cli.limit, cli.offset, wide)?;
+            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;

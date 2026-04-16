@@ -7,6 +7,67 @@ pub mod schema;
 
 use crate::style;
 
+/// Validate a --count-by column name. Resolves aliases (e.g. "session" -> "session_id").
+/// On invalid column, prints error to stderr and exits.
+/// Returns the resolved SQL column name.
+pub fn validate_count_by(column: &str, valid_columns: &[&str], command_name: &str) -> String {
+    let canonical = match column {
+        "session" => "session_id",
+        other => other,
+    };
+    if valid_columns.contains(&canonical) {
+        return canonical.to_string();
+    }
+    // Build display names (friendly aliases)
+    let display_names: Vec<&str> = valid_columns
+        .iter()
+        .map(|c| match *c {
+            "session_id" => "session",
+            other => other,
+        })
+        .collect();
+    eprintln!(
+        "Error: Unknown count-by column '{}' for {}\nValid columns: {}",
+        column,
+        command_name,
+        display_names.join(", "),
+    );
+    std::process::exit(1);
+}
+
+/// Check that --count-by and --fields are not both specified.
+/// If both are set, prints error to stderr and exits.
+pub fn check_count_by_fields_conflict(count_by: Option<&str>, fields: Option<&[&str]>) {
+    if count_by.is_some() && fields.is_some() {
+        eprintln!(
+            "Error: --count-by and --fields cannot be used together\n\
+             --count-by aggregates rows into counts; --fields selects columns from detail rows"
+        );
+        std::process::exit(1);
+    }
+}
+
+/// Render a bar chart from (label, count) pairs. Used by --count-by and tools summary mode.
+pub fn render_bar_chart(rows: &[(String, i64)]) {
+    let max_count = rows.iter().map(|r| r.1).max().unwrap_or(1);
+    let name_width = rows.iter().map(|r| r.0.len()).max().unwrap_or(0);
+    let count_width = rows.iter().map(|r| r.1.to_string().len()).max().unwrap_or(0);
+
+    for row in rows {
+        let name_padded = style::pad_right(&row.0, name_width);
+        let bar_str = style::bar(row.1, max_count, 30);
+        let count_str = row.1.to_string();
+        let count_padded = style::pad_left(&count_str, count_width);
+
+        println!(
+            "{}  {}  {}",
+            style::color(&name_padded, style::Color::Primary),
+            style::color(&bar_str, style::Color::Bar),
+            style::color(&count_padded, style::Color::Dim),
+        );
+    }
+}
+
 /// Validate field names for --fields flag. Resolves aliases (e.g. "session" -> "session_id").
 /// On invalid field, prints error to stderr and exits.
 pub fn validate_fields(fields: &[&str], valid_fields: &[&str], command_name: &str) -> Vec<String> {

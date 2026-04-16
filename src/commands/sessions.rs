@@ -58,16 +58,28 @@ const VALID_FIELDS: &[&str] = &[
     "tool_call_count", "user_message_count", "first_user_message",
 ];
 
+const VALID_COUNT_BY_COLUMNS: &[&str] = &["project"];
+
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
     grep: Option<&str>,
     fields: Option<&[&str]>,
+    count_by: Option<&str>,
     format: &OutputFormat,
     limit: usize,
     offset: usize,
     wide: bool,
 ) -> Result<()> {
+    // Check for conflicting flags
+    super::check_count_by_fields_conflict(count_by, fields);
+
+    // Dispatch to count-by mode
+    if let Some(col) = count_by {
+        let resolved = super::validate_count_by(col, VALID_COUNT_BY_COLUMNS, "sessions");
+        return run_count_by(conn, scope, grep, &resolved, format, wide);
+    }
+
     // Validate and resolve fields if specified
     if let Some(field_list) = fields {
         let resolved = super::validate_fields(field_list, VALID_FIELDS, "sessions");
@@ -216,6 +228,78 @@ fn run_with_fields(
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     output::print_results(&mut stmt, &param_refs, format, wide)
+}
+
+fn run_count_by(
+    conn: &Connection,
+    scope: &QueryScope,
+    grep: Option<&str>,
+    column: &str,
+    format: &OutputFormat,
+    wide: bool,
+) -> Result<()> {
+    let mut conditions = vec!["1=1".to_string()];
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
+
+    if let Some(project) = &scope.project {
+        conditions.push("project ILIKE ?".to_string());
+        params.push(Box::new(format!("%{project}%")));
+    }
+
+    if let Some(session) = &scope.session {
+        conditions.push("session_id = ?".to_string());
+        params.push(Box::new(session.clone()));
+    }
+
+    if let Some(ts) = scope.since_timestamp()? {
+        let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
+        conditions.push(format!("started_at >= '{formatted}'"));
+    }
+
+    if let Some(pattern) = grep {
+        conditions.push("first_user_message ILIKE ?".to_string());
+        params.push(Box::new(format!("%{pattern}%")));
+    }
+
+    let where_clause = conditions.join(" AND ");
+
+    let sql = format!(
+        "SELECT {column}, COUNT(*) AS count
+         FROM sessions
+         WHERE {where_clause}
+         GROUP BY {column}
+         ORDER BY count DESC"
+    );
+
+    let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+
+    match format {
+        OutputFormat::Json | OutputFormat::Table => {
+            output::print_results(&mut stmt, &param_refs, format, wide)
+        }
+        _ => {
+            let mut rows_iter = stmt.query(&param_refs[..])?;
+            let mut chart_rows: Vec<(String, i64)> = Vec::new();
+            while let Some(row) = rows_iter.next()? {
+                let label = row.get::<_, Value>(0)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let count = row.get::<_, Value>(1)
+                    .map(|v| val_i64(&v))
+                    .unwrap_or(0);
+                chart_rows.push((label, count));
+            }
+
+            if chart_rows.is_empty() {
+                super::print_no_results(scope, &[]);
+                return Ok(());
+            }
+
+            super::render_bar_chart(&chart_rows);
+            Ok(())
+        }
+    }
 }
 
 fn render_oneline(rows: &[SessionRow], wide: bool) {

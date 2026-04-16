@@ -883,3 +883,135 @@ fn sessions_fields_multiple() {
         "Should show first_user_message, got: {stdout}"
     );
 }
+
+// --- --count-by tests ---
+
+#[test]
+fn tools_count_by_name() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--count-by", "name"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should produce bar chart with tool names
+    assert!(stdout.contains("Bash"), "Should show Bash tool name, got: {stdout}");
+    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+}
+
+#[test]
+fn tools_count_by_session() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--count-by", "session"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should produce bar chart with session IDs
+    assert!(stdout.contains("sess-001"), "Should show session ID, got: {stdout}");
+    assert!(stdout.contains("sess-002"), "Should show session ID, got: {stdout}");
+    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+}
+
+#[test]
+fn tools_count_by_invalid() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--count-by", "bogus"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("'bogus'"),
+        "Should show invalid column in quotes, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Valid columns:"),
+        "Should list valid columns, got: {stderr}"
+    );
+}
+
+#[test]
+fn tools_count_by_with_filter() {
+    let env = setup_env(&["simple_session.jsonl", "error_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--errors", "--count-by", "session"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // error_session.jsonl has sess-003 with an error
+    assert!(stdout.contains("sess-003"), "Should show error session, got: {stdout}");
+    // simple_session.jsonl sess-001 has no errors, should not appear
+    assert!(!stdout.contains("sess-001"), "Should not show non-error session, got: {stdout}");
+}
+
+#[test]
+fn messages_count_by_type() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--count-by", "type"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("user"), "Should show user type, got: {stdout}");
+    assert!(stdout.contains("assistant"), "Should show assistant type, got: {stdout}");
+    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+}
+
+#[test]
+fn count_by_json_output() {
+    let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "tools", "--count-by", "name"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert!(!parsed.is_empty());
+    assert!(parsed[0].get("name").is_some(), "JSON should have 'name' key, got: {}", parsed[0]);
+    assert!(parsed[0].get("count").is_some(), "JSON should have 'count' key, got: {}", parsed[0]);
+}
+
+#[test]
+fn count_by_and_fields_conflict() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "Bash", "--count-by", "name", "--fields", "command"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--count-by") && stderr.contains("--fields"),
+        "Should mention both flags in error, got: {stderr}"
+    );
+}
+
+#[test]
+fn sessions_count_by_project() {
+    let projects = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+
+    let project_a = projects.path().join("-Users-test-myproject");
+    let project_b = projects.path().join("-Users-test-webapp");
+    std::fs::create_dir_all(&project_a).unwrap();
+    std::fs::create_dir_all(&project_b).unwrap();
+    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
+    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+
+    let env = TestEnv { projects, cache };
+    let output = cq_cmd(&env)
+        .args(["sessions", "--count-by", "project"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("myproject"), "Should show project name, got: {stdout}");
+    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+}

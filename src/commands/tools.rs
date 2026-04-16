@@ -41,6 +41,8 @@ fn val_i64(v: &Value) -> i64 {
     }
 }
 
+const VALID_COUNT_BY_COLUMNS: &[&str] = &["name", "session_id", "project"];
+
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
@@ -48,11 +50,21 @@ pub fn run(
     grep: Option<&str>,
     errors_only: bool,
     fields: Option<&[&str]>,
+    count_by: Option<&str>,
     format: &OutputFormat,
     limit: usize,
     offset: usize,
     wide: bool,
 ) -> Result<()> {
+    // Check for conflicting flags
+    super::check_count_by_fields_conflict(count_by, fields);
+
+    // Dispatch to count-by mode
+    if let Some(col) = count_by {
+        let resolved = super::validate_count_by(col, VALID_COUNT_BY_COLUMNS, "tools");
+        return run_count_by(conn, scope, tool_name, grep, errors_only, &resolved, format, wide);
+    }
+
     // Summary mode: no filters specified (and no fields requested)
     if tool_name.is_none() && grep.is_none() && !errors_only && fields.is_none() {
         return run_summary(conn, scope, format, wide);
@@ -308,6 +320,96 @@ fn run_with_fields(
     Ok(())
 }
 
+fn run_count_by(
+    conn: &Connection,
+    scope: &QueryScope,
+    tool_name: Option<&str>,
+    grep: Option<&str>,
+    errors_only: bool,
+    column: &str,
+    format: &OutputFormat,
+    wide: bool,
+) -> Result<()> {
+    let mut conditions = vec!["1=1".to_string()];
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
+
+    if let Some(project) = &scope.project {
+        conditions.push("tc.project ILIKE ?".to_string());
+        params.push(Box::new(format!("%{project}%")));
+    }
+
+    if let Some(session) = &scope.session {
+        conditions.push("tc.session_id = ?".to_string());
+        params.push(Box::new(session.clone()));
+    }
+
+    if let Some(ts) = scope.since_timestamp()? {
+        let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
+        conditions.push(format!("tc.timestamp >= '{formatted}'"));
+    }
+
+    if let Some(name) = tool_name {
+        conditions.push("tc.name = ?".to_string());
+        params.push(Box::new(name.to_string()));
+    }
+
+    if let Some(pattern) = grep {
+        conditions.push("CAST(tc.input AS VARCHAR) ILIKE ?".to_string());
+        params.push(Box::new(format!("%{pattern}%")));
+    }
+
+    let where_clause = conditions.join(" AND ");
+    let join_clause = if errors_only {
+        "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
+    } else {
+        ""
+    };
+    let error_filter = if errors_only { "AND tr.is_error = true" } else { "" };
+
+    let sql = format!(
+        "SELECT tc.{column}, COUNT(*) AS count
+         FROM tool_calls tc
+         {join_clause}
+         WHERE {where_clause}
+         {error_filter}
+         GROUP BY tc.{column}
+         ORDER BY count DESC"
+    );
+
+    let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+
+    match format {
+        OutputFormat::Json => {
+            output::print_results(&mut stmt, &param_refs, format, wide)
+        }
+        OutputFormat::Table => {
+            output::print_results(&mut stmt, &param_refs, format, wide)
+        }
+        _ => {
+            let mut rows_iter = stmt.query(&param_refs[..])?;
+            let mut chart_rows: Vec<(String, i64)> = Vec::new();
+            while let Some(row) = rows_iter.next()? {
+                let label = row.get::<_, Value>(0)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let count = row.get::<_, Value>(1)
+                    .map(|v| val_i64(&v))
+                    .unwrap_or(0);
+                chart_rows.push((label, count));
+            }
+
+            if chart_rows.is_empty() {
+                super::print_no_results(scope, &[]);
+                return Ok(());
+            }
+
+            super::render_bar_chart(&chart_rows);
+            Ok(())
+        }
+    }
+}
+
 fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wide: bool) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
@@ -366,31 +468,17 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wid
 
             match format {
                 OutputFormat::Table => render_summary_table(&summary_rows),
-                _ => render_bar_chart(&summary_rows),
+                _ => {
+                    let chart_rows: Vec<(String, i64)> = summary_rows
+                        .iter()
+                        .map(|r| (r.name.clone(), r.count))
+                        .collect();
+                    super::render_bar_chart(&chart_rows);
+                }
             }
 
             Ok(())
         }
-    }
-}
-
-fn render_bar_chart(rows: &[ToolSummaryRow]) {
-    let max_count = rows.iter().map(|r| r.count).max().unwrap_or(1);
-    let name_width = rows.iter().map(|r| r.name.len()).max().unwrap_or(0);
-    let count_width = rows.iter().map(|r| r.count.to_string().len()).max().unwrap_or(0);
-
-    for row in rows {
-        let name_padded = style::pad_right(&row.name, name_width);
-        let bar_str = style::bar(row.count, max_count, 30);
-        let count_str = row.count.to_string();
-        let count_padded = style::pad_left(&count_str, count_width);
-
-        println!(
-            "{}  {}  {}",
-            style::color(&name_padded, style::Color::Primary),
-            style::color(&bar_str, style::Color::Bar),
-            style::color(&count_padded, style::Color::Dim),
-        );
     }
 }
 
