@@ -23,11 +23,11 @@ struct Cli {
     #[arg(long, global = true)]
     since: Option<String>,
 
-    /// Force full reindex of session files
+    /// Force full reindex of session files (waits for lock if index is busy)
     #[arg(long, global = true, conflicts_with = "no_reindex")]
     reindex: bool,
 
-    /// Skip sync entirely, use cached data
+    /// Skip sync entirely, use cached data (fastest, no lock contention)
     #[arg(long, global = true, conflicts_with = "reindex")]
     no_reindex: bool,
 
