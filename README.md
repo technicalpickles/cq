@@ -1,54 +1,65 @@
 # cq
 
-SQL for your AI agent sessions.
+**INT. TERMINAL**
 
-Claude Code stores every conversation as JSONL transcripts in `~/.claude/projects/`. cq loads them into an in-memory [DuckDB](https://duckdb.org/) instance and gives you four SQL views to query against: `sessions`, `messages`, `tool_calls`, and `tool_results`. Built-in commands handle the common stuff, and `cq sql` lets you run whatever you want.
+Hundreds of Claude Code sessions. Thousands of tool calls.
+You've never looked at the logs.
 
-## What can you do with it?
-
-Find out which tools you actually use:
-
-```bash
+```
 $ cq tools
- name             | calls | pct
-──────────────────┼───────┼─────
- Read             |  1847 | ████████████████████ 28.5%
- Bash             |  1623 | █████████████████ 25.0%
- Edit             |   982 | ██████████ 15.1%
- ...
+Read             ██████████████████████████████  1847
+Bash             ████████████████████████████    1623
+Edit             ███████████████                  982
+Write            █████                            341
+Grep             ████                             298
 ```
 
-Search your conversation history:
+**TIGHT ON** the commands.
 
-```bash
-$ cq messages --type user --grep "docker" --since 7d
+```
+$ cq tools Bash --fields command --limit 5
+c82e9d4c  Bash  cargo test
+c82e9d4c  Bash  git diff --stat
+bfc27bd2  Bash  docker compose up -d
+bfc27bd2  Bash  curl -s localhost:3000/health | jq .
+a1f3e890  Bash  psql -c "SELECT count(*) FROM users"
 ```
 
-See what commands you've been running:
+**CUT TO** Claude, investigating a hunch.
 
-```bash
-$ cq tools Bash --fields command --limit 10
+```
+$ cq sql "
+WITH commit_sessions AS (
+  SELECT DISTINCT session_id FROM tool_calls
+  WHERE name = 'Bash'
+    AND json_extract_string(input, '$.command') LIKE '%git commit%'
+),
+skill_sessions AS (
+  SELECT DISTINCT session_id FROM tool_calls
+  WHERE name = 'Skill'
+    AND json_extract_string(input, '$.skill') LIKE '%commit%'
+)
+SELECT
+  (SELECT count(*) FROM commit_sessions) as total_sessions,
+  (SELECT count(*) FROM skill_sessions) as used_skill,
+  (SELECT count(*) FROM commit_sessions)
+    - (SELECT count(*) FROM skill_sessions) as bypassed
+" --since 7d
 ```
 
-Find tool calls that errored:
-
-```bash
-$ cq tools --errors --since 24h
+```
+total_sessions  used_skill  bypassed
+──────────────  ──────────  ────────
+           168          16       152
 ```
 
-See activity across all your projects:
+152 sessions. The skill was right there. Nobody called it.
 
-```bash
-$ cq projects --all
-```
+---
 
-Or just write SQL directly, because sometimes that's the move:
+**TITLE CARD:** SQL for your Claude Code sessions.
 
-```bash
-$ cq sql "SELECT name, count(*) n FROM tool_calls GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
-```
-
-`cq schema` shows all available views and columns. `cq schema --examples` has a query cookbook to get you started.
+cq loads Claude Code's JSONL session transcripts into an in-memory [DuckDB](https://duckdb.org/) instance and gives you SQL views to query against. Built-in commands handle the common stuff, and `cq sql` lets you run whatever you want.
 
 ## Install
 
@@ -57,6 +68,17 @@ Requires [Rust](https://rustup.rs/).
 ```bash
 cargo install --git https://github.com/technicalpickles/cq
 ```
+
+## Quick start
+
+```bash
+cq sessions                              # your recent sessions
+cq tools                                 # tool usage, ranked
+cq messages --grep "docker" --since 7d   # search your history
+cq sql "SELECT count(*) FROM messages"   # run anything
+```
+
+Run `cq schema --examples` for a query cookbook.
 
 ## Common flags
 
@@ -76,22 +98,16 @@ cargo install --git https://github.com/technicalpickles/cq
 
 Four SQL views, all queryable with `cq sql`:
 
-- **sessions**: one row per session with timestamps, message counts, tool counts
-- **messages**: one row per conversation turn (user or assistant)
-- **tool_calls**: one row per tool invocation, with input as queryable JSON
-- **tool_results**: one row per tool response, with an error flag
+- **sessions** - one row per session with timestamps, message counts, tool counts
+- **messages** - one row per conversation turn (user or assistant)
+- **tool_calls** - one row per tool invocation, with input as queryable JSON
+- **tool_results** - one row per tool response, with an error flag
 
 Run `cq schema` for full column details.
 
-**Tip:** The `project` column in SQL contains full decoded paths (e.g. `/Users/alice/myproject`), while built-in commands show short names. When filtering in raw SQL, use `LIKE` instead of `=`:
-
-```sql
-WHERE project LIKE '%myproject'
-```
-
 ## Use cases
 
-For deeper examples of what you can dig up, see [docs/use-cases.md](docs/use-cases.md). Things like finding skills that never fire, auditing which tool calls burn the most context, and catching silent failures that look fine from the outside.
+For deeper examples of what you can dig up, see [docs/use-cases.md](docs/use-cases.md). Skill activation gaps, silent failures that look fine from the outside, context budget analysis across tool calls.
 
 ## For agents
 
