@@ -30,10 +30,10 @@ fn index_new_files() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    let stats = cq::indexer::sync(&conn, projects.path()).unwrap();
-    assert_eq!(stats.added, 1);
-    assert_eq!(stats.removed, 0);
-    assert_eq!(stats.changed, 0);
+    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    assert_eq!(result.stats.added, 1);
+    assert_eq!(result.stats.removed, 0);
+    assert_eq!(result.stats.changed, 0);
 
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM raw_records", [], |r| r.get(0))
@@ -52,11 +52,11 @@ fn no_changes_is_noop() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync(&conn, projects.path()).unwrap();
-    let stats = cq::indexer::sync(&conn, projects.path()).unwrap();
-    assert_eq!(stats.added, 0);
-    assert_eq!(stats.removed, 0);
-    assert_eq!(stats.changed, 0);
+    cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    assert_eq!(result.stats.added, 0);
+    assert_eq!(result.stats.removed, 0);
+    assert_eq!(result.stats.changed, 0);
 }
 
 #[test]
@@ -65,13 +65,13 @@ fn detects_deleted_files() {
     let projects = setup_projects(&["simple_session.jsonl", "error_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync(&conn, projects.path()).unwrap();
+    cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
 
     let project_dir = projects.path().join("-Users-test-myproject");
     std::fs::remove_file(project_dir.join("error_session.jsonl")).unwrap();
 
-    let stats = cq::indexer::sync(&conn, projects.path()).unwrap();
-    assert_eq!(stats.removed, 1);
+    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    assert_eq!(result.stats.removed, 1);
 
     let reg_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM file_registry", [], |r| r.get(0))
@@ -85,7 +85,7 @@ fn detects_changed_files() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync(&conn, projects.path()).unwrap();
+    cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
 
     let project_dir = projects.path().join("-Users-test-myproject");
     let file_path = project_dir.join("simple_session.jsonl");
@@ -93,8 +93,8 @@ fn detects_changed_files() {
     use std::io::Write;
     writeln!(f, "{{}}").unwrap();
 
-    let stats = cq::indexer::sync(&conn, projects.path()).unwrap();
-    assert_eq!(stats.changed, 1);
+    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    assert_eq!(result.stats.changed, 1);
 }
 
 #[test]
@@ -158,4 +158,73 @@ fn version_mismatch_triggers_rebuild() {
         .query_row("SELECT COUNT(*) FROM file_registry", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 0, "rebuild should clear all data");
+}
+
+#[test]
+fn auto_sync_skips_when_nothing_changed() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+
+    let result = cq::indexer::sync(
+        &conn,
+        projects.path(),
+        cq::db::SyncMode::Auto,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    ).unwrap();
+    assert_eq!(result.stats.added, 1);
+    assert!(!result.skipped);
+
+    let result = cq::indexer::sync(
+        &conn,
+        projects.path(),
+        cq::db::SyncMode::Auto,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    ).unwrap();
+    assert_eq!(result.stats.added, 0);
+    assert_eq!(result.stats.changed, 0);
+    assert_eq!(result.stats.removed, 0);
+}
+
+#[test]
+fn force_sync_always_scans() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+
+    cq::indexer::sync(
+        &conn,
+        projects.path(),
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    ).unwrap();
+
+    let result = cq::indexer::sync(
+        &conn,
+        projects.path(),
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    ).unwrap();
+    assert!(!result.skipped);
+}
+
+#[test]
+fn skip_sync_returns_immediately() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+
+    let result = cq::indexer::sync(
+        &conn,
+        projects.path(),
+        cq::db::SyncMode::Skip,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    ).unwrap();
+    assert!(result.skipped);
+    assert_eq!(result.stats.added, 0);
 }

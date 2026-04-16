@@ -3,11 +3,14 @@ use duckdb::Connection;
 use crate::cache;
 use crate::indexer;
 use crate::views;
+use crate::sync_scope::SyncScope;
 
 pub struct DbSetup {
     pub conn: Connection,
     pub file_count: usize,
     pub total_files: usize,
+    pub skipped: bool,
+    pub lock_busy: bool,
 }
 
 /// Controls how the indexer decides whether to sync.
@@ -34,15 +37,25 @@ impl Default for DbOptions {
 /// Set up a DuckDB connection with views registered.
 ///
 /// Uses the persistent cache for fast incremental startup.
-pub fn setup_connection(projects_dir: &std::path::Path, options: &DbOptions) -> Result<DbSetup> {
+pub fn setup_connection(
+    projects_dir: &std::path::Path,
+    options: &DbOptions,
+    scope: SyncScope,
+) -> Result<DbSetup> {
     let cache_dir = cache::cache_dir()?;
     let force_rebuild = options.sync_mode == SyncMode::Force;
     let conn = cache::open(&cache_dir, force_rebuild)?;
 
-    let stats = indexer::sync(&conn, projects_dir)?;
-    let file_count = stats.added + stats.changed;
+    let result = indexer::sync(&conn, projects_dir, options.sync_mode, scope, &cache_dir)?;
+    let file_count = result.stats.added + result.stats.changed;
 
     views::register_derived_views(&conn)?;
 
-    Ok(DbSetup { conn, file_count, total_files: stats.total })
+    Ok(DbSetup {
+        conn,
+        file_count,
+        total_files: result.stats.total,
+        skipped: result.skipped,
+        lock_busy: result.lock_busy,
+    })
 }

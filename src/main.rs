@@ -244,9 +244,13 @@ fn main() -> Result<()> {
     };
 
     let start = std::time::Instant::now();
-    let db_setup = db::setup_connection(provider.base_dir(), &options)?;
+    let db_setup = db::setup_connection(provider.base_dir(), &options, cq::sync_scope::SyncScope::All)?;
     let elapsed = start.elapsed();
-    if db_setup.file_count > 0 {
+    if db_setup.lock_busy {
+        eprintln!("index busy, using cached data (re-run with --reindex to force)");
+    } else if db_setup.skipped {
+        // --no-reindex: silence
+    } else if db_setup.file_count > 0 {
         eprintln!("Synced {} new files ({} total, {:.1}s)", db_setup.file_count, db_setup.total_files, elapsed.as_secs_f64());
     } else {
         eprintln!("Loaded {} files ({:.1}s)", db_setup.total_files, elapsed.as_secs_f64());
