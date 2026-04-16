@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod indexer;
+pub mod sync_scope;
 pub mod scope;
 pub mod provider;
 pub mod claude_provider;
