@@ -22,6 +22,10 @@ claude_provider.rs  ClaudeProvider: discovers JSONL files from ~/.claude/project
 scope.rs          QueryScope: --project, --session, --since parsing
 ```
 
+## Design principles
+
+CQ is a query tool, not a monitoring tool. Default scope is global (narrow explicitly with `--project`/`--session`). Stale-but-available beats error. Explicit always wins (`--reindex`/`--no-reindex` override all automatic behavior). See `docs/design-principles.md` for the full reference.
+
 ## Key patterns
 
 - **Commands build SQL + params, output renders.** Each command constructs a WHERE clause with `?` placeholders, collects params in a `Vec<Box<dyn ToSql>>`, and passes both to `output::print_results`.
