@@ -10,13 +10,24 @@ pub struct DbSetup {
     pub total_files: usize,
 }
 
+/// Controls how the indexer decides whether to sync.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SyncMode {
+    /// Check mtimes, try-lock, skip if busy. The default.
+    Auto,
+    /// Force full sync, wait for lock.
+    Force,
+    /// Skip sync entirely, use cached data.
+    Skip,
+}
+
 pub struct DbOptions {
-    pub reindex: bool,
+    pub sync_mode: SyncMode,
 }
 
 impl Default for DbOptions {
     fn default() -> Self {
-        Self { reindex: false }
+        Self { sync_mode: SyncMode::Auto }
     }
 }
 
@@ -25,7 +36,8 @@ impl Default for DbOptions {
 /// Uses the persistent cache for fast incremental startup.
 pub fn setup_connection(projects_dir: &std::path::Path, options: &DbOptions) -> Result<DbSetup> {
     let cache_dir = cache::cache_dir()?;
-    let conn = cache::open(&cache_dir, options.reindex)?;
+    let force_rebuild = options.sync_mode == SyncMode::Force;
+    let conn = cache::open(&cache_dir, force_rebuild)?;
 
     let stats = indexer::sync(&conn, projects_dir)?;
     let file_count = stats.added + stats.changed;

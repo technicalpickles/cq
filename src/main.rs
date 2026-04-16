@@ -24,8 +24,12 @@ struct Cli {
     since: Option<String>,
 
     /// Force full reindex of session files
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "no_reindex")]
     reindex: bool,
+
+    /// Skip sync entirely, use cached data
+    #[arg(long, global = true, conflicts_with = "reindex")]
+    no_reindex: bool,
 
     /// Output as JSON
     #[arg(long, global = true)]
@@ -226,8 +230,16 @@ fn main() -> Result<()> {
 
     let scope = QueryScope::new(project, cli.session, cli.since);
 
+    let sync_mode = if cli.reindex {
+        db::SyncMode::Force
+    } else if cli.no_reindex {
+        db::SyncMode::Skip
+    } else {
+        db::SyncMode::Auto
+    };
+
     let options = db::DbOptions {
-        reindex: cli.reindex,
+        sync_mode,
         ..Default::default()
     };
 
