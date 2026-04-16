@@ -746,3 +746,140 @@ fn schema_unknown_view_error_format() {
         "Should list valid views, got: {stderr}"
     );
 }
+
+// --- messages --fields tests ---
+
+#[test]
+fn messages_fields_text() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--fields", "text"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("list the files"),
+        "Should show message text, got: {stdout}"
+    );
+    // session_id should NOT appear as a column when only text is requested
+    assert!(
+        !stdout.contains("sess-001"),
+        "Should not show session_id when only text field requested, got: {stdout}"
+    );
+}
+
+#[test]
+fn messages_fields_invalid() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--fields", "bogus"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("'bogus'"),
+        "Should show the invalid field name in quotes, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Valid fields:"),
+        "Should list valid fields, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("cq schema messages"),
+        "Should hint to run 'cq schema messages', got: {stderr}"
+    );
+}
+
+#[test]
+fn messages_fields_json() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "messages", "--fields", "text,type"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert!(!parsed.is_empty());
+    assert!(parsed[0].get("text").is_some(), "JSON should have 'text' field, got: {}", parsed[0]);
+    assert!(parsed[0].get("type").is_some(), "JSON should have 'type' field, got: {}", parsed[0]);
+    // Should NOT have fields that weren't requested
+    assert!(parsed[0].get("session_id").is_none(), "JSON should not have 'session_id' when not requested, got: {}", parsed[0]);
+}
+
+#[test]
+fn messages_fields_session_alias() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--fields", "session,text"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // "session" should resolve to session_id and show the ID
+    assert!(
+        stdout.contains("sess-001"),
+        "Should show session_id (alias 'session' resolved), got: {stdout}"
+    );
+    assert!(
+        stdout.contains("list the files"),
+        "Should show text, got: {stdout}"
+    );
+}
+
+// --- sessions --fields tests ---
+
+#[test]
+fn sessions_fields_session_id() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["sessions", "--fields", "session_id"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sess-001"),
+        "Should show session_id, got: {stdout}"
+    );
+}
+
+#[test]
+fn sessions_fields_invalid() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["sessions", "--fields", "bogus"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("'bogus'"),
+        "Should show the invalid field name in quotes, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("cq schema sessions"),
+        "Should hint to run 'cq schema sessions', got: {stderr}"
+    );
+}
+
+#[test]
+fn sessions_fields_multiple() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["sessions", "--fields", "session_id,first_user_message"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sess-001"),
+        "Should show session_id, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("list the files"),
+        "Should show first_user_message, got: {stdout}"
+    );
+}

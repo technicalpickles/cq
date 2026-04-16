@@ -7,6 +7,33 @@ pub mod schema;
 
 use crate::style;
 
+/// Validate field names for --fields flag. Resolves aliases (e.g. "session" -> "session_id").
+/// On invalid field, prints error to stderr and exits.
+pub fn validate_fields(fields: &[&str], valid_fields: &[&str], command_name: &str) -> Vec<String> {
+    let mut resolved = Vec::new();
+    for field in fields {
+        let f = field.trim();
+        // Resolve aliases
+        let canonical = match f {
+            "session" => "session_id",
+            other => other,
+        };
+        if valid_fields.contains(&canonical) {
+            resolved.push(canonical.to_string());
+        } else {
+            eprintln!(
+                "Error: Unknown field '{}' for {}\nValid fields: {}\nHint: Run 'cq schema {}' for field descriptions",
+                f,
+                command_name,
+                valid_fields.join(", "),
+                command_name,
+            );
+            std::process::exit(1);
+        }
+    }
+    resolved
+}
+
 /// Returns "LIMIT N" or empty string when limit is 0 (unlimited).
 pub fn limit_clause(limit: usize) -> String {
     if limit == 0 {

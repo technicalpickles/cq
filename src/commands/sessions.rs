@@ -53,15 +53,28 @@ fn duration_mins(started: &str, ended: &str) -> i64 {
     }
 }
 
+const VALID_FIELDS: &[&str] = &[
+    "session_id", "project", "started_at", "ended_at", "message_count",
+    "tool_call_count", "user_message_count", "first_user_message",
+];
+
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
     grep: Option<&str>,
+    fields: Option<&[&str]>,
     format: &OutputFormat,
     limit: usize,
     offset: usize,
     wide: bool,
 ) -> Result<()> {
+    // Validate and resolve fields if specified
+    if let Some(field_list) = fields {
+        let resolved = super::validate_fields(field_list, VALID_FIELDS, "sessions");
+        let resolved_refs: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
+        return run_with_fields(conn, scope, grep, &resolved_refs, format, limit, offset, wide);
+    }
+
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
 
@@ -149,6 +162,60 @@ pub fn run(
             Ok(())
         }
     }
+}
+
+fn run_with_fields(
+    conn: &Connection,
+    scope: &QueryScope,
+    grep: Option<&str>,
+    field_list: &[&str],
+    format: &OutputFormat,
+    limit: usize,
+    offset: usize,
+    wide: bool,
+) -> Result<()> {
+    let mut conditions = vec!["1=1".to_string()];
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
+
+    if let Some(project) = &scope.project {
+        conditions.push("project ILIKE ?".to_string());
+        params.push(Box::new(format!("%{project}%")));
+    }
+
+    if let Some(session) = &scope.session {
+        conditions.push("session_id = ?".to_string());
+        params.push(Box::new(session.clone()));
+    }
+
+    if let Some(ts) = scope.since_timestamp()? {
+        let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
+        conditions.push(format!("started_at >= '{formatted}'"));
+    }
+
+    if let Some(pattern) = grep {
+        conditions.push("first_user_message ILIKE ?".to_string());
+        params.push(Box::new(format!("%{pattern}%")));
+    }
+
+    let where_clause = conditions.join(" AND ");
+    let limit_clause = super::limit_clause(limit);
+    let offset_clause = super::offset_clause(offset);
+
+    // Build SELECT with only requested columns
+    let select_cols = field_list.join(", ");
+
+    let sql = format!(
+        "SELECT {select_cols}
+         FROM sessions
+         WHERE {where_clause}
+         ORDER BY started_at DESC
+         {limit_clause}
+         {offset_clause}"
+    );
+
+    let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    output::print_results(&mut stmt, &param_refs, format, wide)
 }
 
 fn render_oneline(rows: &[SessionRow], wide: bool) {

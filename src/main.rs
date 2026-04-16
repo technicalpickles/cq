@@ -66,6 +66,10 @@ enum Command {
         /// Filter sessions by content
         #[arg(long)]
         grep: Option<String>,
+
+        /// Extract specific columns (comma-separated) [valid: session_id, project, started_at, ended_at, message_count, tool_call_count, user_message_count, first_user_message]
+        #[arg(long, value_delimiter = ',')]
+        fields: Option<Vec<String>>,
     },
     /// Query tool calls
     Tools {
@@ -93,6 +97,10 @@ enum Command {
         /// Filter messages by content
         #[arg(long)]
         grep: Option<String>,
+
+        /// Extract specific columns (comma-separated) [valid: session_id, project, type, timestamp, text, model, tool_count]
+        #[arg(long, value_delimiter = ',')]
+        fields: Option<Vec<String>>,
     },
     /// Summarize projects by session, message, and tool counts
     Projects {
@@ -195,15 +203,17 @@ fn main() -> Result<()> {
     let conn = db_setup.conn;
 
     match cli.command {
-        Command::Sessions { grep } => {
-            sessions::run(&conn, &scope, grep.as_deref(), &format, cli.limit, cli.offset, wide)?;
+        Command::Sessions { grep, fields } => {
+            let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
+            sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
         Command::Tools { name, grep, errors, fields } => {
             let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
             tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
-        Command::Messages { msg_type, grep } => {
-            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), &format, cli.limit, cli.offset, wide)?;
+        Command::Messages { msg_type, grep, fields } => {
+            let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
+            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), &format, cli.limit, cli.offset, wide)?;
         }
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;
