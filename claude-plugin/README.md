@@ -6,8 +6,8 @@ marketplace via a `git-subdir` source pointing at `claude-plugin/` in this repo.
 
 ## Contents
 
-- `.claude-plugin/plugin.json` — manifest
-- `skills/cq/SKILL.md` — the skill that teaches Claude when and how to invoke `cq`
+- `.claude-plugin/plugin.json`: manifest
+- `skills/cq/SKILL.md`: the skill that teaches Claude when and how to invoke `cq`
 
 ## Installing
 
