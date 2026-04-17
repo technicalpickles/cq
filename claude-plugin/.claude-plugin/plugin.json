@@ -1,0 +1,10 @@
+{
+  "name": "cq",
+  "description": "Query past Claude Code sessions via the cq CLI (SQL over session transcripts). Teaches Claude when and how to invoke cq to answer questions about session history, tool usage, errors, and past commands.",
+  "author": {
+    "name": "Josh Nichols",
+    "email": "josh@technicalpickles.com"
+  },
+  "repository": "https://github.com/technicalpickles/cq",
+  "license": "MIT"
+}
