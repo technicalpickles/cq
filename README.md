@@ -116,6 +116,12 @@ Run `cq schema` for full column details.
 
 For deeper examples of what you can dig up, see [docs/use-cases.md](docs/use-cases.md). Skill activation gaps, silent failures that look fine from the outside, context budget analysis across tool calls.
 
+## Use with Claude Code
+
+cq ships a Claude Code plugin that teaches Claude when and how to query your session history. Install it from the [`pickled-claude-plugins`](https://github.com/technicalpickles/pickled-claude-plugins) marketplace and Claude will reach for cq automatically when you ask about past sessions.
+
+See [`claude-plugin/README.md`](claude-plugin/README.md) for details.
+
 ## For agents
 
 `cq schema` and `cq schema --examples` are designed to be consumed by AI agents building their own queries. Pair with `--json` for machine-readable output.
