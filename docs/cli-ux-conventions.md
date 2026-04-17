@@ -157,6 +157,8 @@ When you add a flag to cq, run through this:
 - [ ] Does it conflict with other flags? Write a clear conflict error explaining why
 - [ ] Does it affect output? Make sure it respects `--wide`, `--json`, and `--table`
 - [ ] Is the flag name consistent with existing patterns? (e.g. don't add `--group-by` when `--count-by` exists)
+- [ ] If it's user-facing, update the README "Common flags" table
+- [ ] If it sets a new UX pattern, add an example to this file
 
 ## Checklist: adding a new command
 
@@ -166,3 +168,20 @@ Same as above, plus:
 - [ ] Does it support `--json` and `--table` output modes?
 - [ ] Does "no results" give useful hints about active filters?
 - [ ] Does it respect `--limit` and `--offset`?
+- [ ] Update the README "Quick start" list
+- [ ] If it exposes new data patterns, add an example to `docs/use-cases.md` and to `cq schema --examples` output
+
+## Keeping docs in sync
+
+Docs drift when behavior changes but nobody grep'd the docs. Before considering a change done, find the row that matches and run through the updates.
+
+| If you change... | Update... |
+|------------------|-----------|
+| A user-facing flag | README "Common flags" table, the flag's `--help` string |
+| A subcommand's behavior | README "Quick start", `cq schema --examples` output if query patterns shift |
+| A module in `src/` | CLAUDE.md architecture tree |
+| Sync / cache / scope behavior | CLAUDE.md "Key patterns"; `docs/design-principles.md` if a default changes |
+| A SQL view's columns | `cq schema` output (in `src/commands/schema.rs`); README "Views" bullets if a view is added or removed |
+| A default behavior (scope, sync mode, output) | `docs/design-principles.md` and any example that relied on the old default |
+
+Rule of thumb: if you catch yourself writing "the default is X" or "cq does Y" in code, grep the docs for the old wording before committing. A stale doc is a bug report you haven't opened yet.

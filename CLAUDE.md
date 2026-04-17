@@ -29,7 +29,7 @@ scope.rs          QueryScope: --project, --session, --since parsing
 
 ## Design principles
 
-CQ is a query tool, not a monitoring tool. Default scope is global (narrow explicitly with `--project`/`--session`). Stale-but-available beats error. Explicit always wins (`--reindex`/`--no-reindex` override all automatic behavior). See `docs/design-principles.md` for the full reference.
+CQ is a query tool, not a monitoring tool. Default is auto-scope to the current project directory; `--all` escapes to global. Stale-but-available beats error. Explicit always wins (`--reindex`/`--no-reindex` override all automatic behavior). See `docs/design-principles.md` for the full reference.
 
 ## Key patterns
 
@@ -41,6 +41,10 @@ CQ is a query tool, not a monitoring tool. Default scope is global (narrow expli
 - **stderr for progress, stdout for data.** "Scanned N files" and "No results." go to stderr so piped output stays clean.
 - **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-alice-myproject`) back to paths (`/Users/alice/myproject`).
 - **ILIKE for project filtering.** `--project` does substring match, not exact.
+
+## Keeping docs in sync
+
+When you change behavior, the matching docs need to move with it. `docs/cli-ux-conventions.md` has a "Keeping docs in sync" table mapping change types to the docs they affect (flags → README table, modules → CLAUDE.md tree, sync/cache → Key patterns, etc.). Run through the matching row before considering a change done.
 
 ## CLI UX conventions
 
