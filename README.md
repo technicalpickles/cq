@@ -63,7 +63,7 @@ total_sessions  used_skill  bypassed
 
 **TITLE CARD:** SQL for your Claude Code sessions.
 
-cq loads Claude Code's JSONL session transcripts into an in-memory [DuckDB](https://duckdb.org/) instance and gives you SQL views to query against. Built-in commands handle the common stuff, and `cq sql` lets you run whatever you want.
+cq indexes Claude Code's JSONL session transcripts into a local [DuckDB](https://duckdb.org/) cache at `~/.cache/cq/` and gives you SQL views to query against. Incremental sync keeps it fresh on each run, so you only pay the full-parse cost once. Built-in commands handle the common stuff, and `cq sql` lets you run whatever you want.
 
 ## Install
 

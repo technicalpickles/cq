@@ -2,12 +2,13 @@
 
 CLI tool for querying Claude Code session transcripts with SQL. Rust + DuckDB.
 
-Reads Claude Code's JSONL session files from `~/.claude/projects/`, loads them into an in-memory DuckDB instance, and exposes four SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`.
+Reads Claude Code's JSONL session files from `~/.claude/projects/`, indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes four SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`. Sync is incremental: files are re-parsed only when their mtime or size changes.
 
 ## Architecture
 
 ```
 main.rs           CLI (clap), arg parsing, dispatches to commands
+lib.rs            Library entry point, re-exports modules for integration tests
 commands/
   sessions.rs     List/filter sessions
   tools.rs        Tool call queries + summary mode (no filters = grouped counts)
@@ -15,8 +16,12 @@ commands/
   sql.rs          Raw SQL passthrough (intentionally unparameterized)
   schema.rs       View schema docs + example queries (pure text, no DB needed)
 output.rs         Shared rendering: table (comfy-table) or JSON, accepts params
-views.rs          SQL view definitions (raw_records, messages, tool_calls, tool_results, sessions)
-db.rs             Connection setup: discover files, register views, return DbSetup
+style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
+views.rs          SQL view definitions (messages, tool_calls, tool_results, sessions) over the cached raw_records table
+db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
+cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
+indexer.rs        Incremental sync: file_registry + mtime/size fast-path, fs2 file lock for concurrency
+sync_scope.rs     SyncScope: narrows which files the indexer touches (derived from --project etc.)
 provider.rs       TranscriptProvider trait
 claude_provider.rs  ClaudeProvider: discovers JSONL files from ~/.claude/projects/
 scope.rs          QueryScope: --project, --session, --since parsing
@@ -29,6 +34,9 @@ CQ is a query tool, not a monitoring tool. Default scope is global (narrow expli
 ## Key patterns
 
 - **Commands build SQL + params, output renders.** Each command constructs a WHERE clause with `?` placeholders, collects params in a `Vec<Box<dyn ToSql>>`, and passes both to `output::print_results`.
+- **Persistent cache + incremental sync.** `cache.rs` opens the cache DB and handles schema versioning. `indexer.rs` walks files, checks mtime + size against `file_registry`, and only re-parses what changed. `fs2` file locking serializes concurrent writers; readers fall back to cached data when the lock is busy.
+- **SyncMode is explicit over smart.** `Auto` (default) does mtime fast-path + try-lock + skip-if-busy. `Force` (`--reindex`) waits for the lock and re-parses everything. `Skip` (`--no-reindex`) bypasses sync entirely. User flags always beat smart behavior.
+- **SyncScope narrows sync work.** A `--project` filter also restricts which files the indexer touches, not just which rows the query returns. Derived in `main.rs` from the CLI flags, passed through `db::setup_connection` into `indexer::sync`.
 - **Provider trait** abstracts file discovery. Only `ClaudeProvider` exists today but the trait allows other transcript sources.
 - **stderr for progress, stdout for data.** "Scanned N files" and "No results." go to stderr so piped output stays clean.
 - **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-alice-myproject`) back to paths (`/Users/alice/myproject`).

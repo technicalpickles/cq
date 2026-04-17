@@ -8,21 +8,22 @@ CQ answers questions about sessions that have happened. It's not watching a live
 
 This shapes everything from how indexing works (lazy, not eager) to what we optimize for (query speed over data recency).
 
-## Default is global, narrow explicitly
+## Auto-scope to the current project, escape to global
 
-Most CQ questions span projects: "what sessions did I run today," "which skills get invoked most," "find that session where I was debugging X." Defaulting to one project would make these queries silently incomplete.
+Most CQ questions happen inside a project: "what did I do in this repo today," "which sessions touched this codebase." When you run cq from a directory that matches a known project, cq auto-scopes to that project and prints the scope on stderr. `--all` escapes to global when you want everything.
 
-Scoping is always opt-in via flags like `--project` or `--session`. The unscoped default shows everything.
+This makes the common case fast and obvious, without hiding the rest. The scope hint on stderr means you always see what's being matched, and piping still gets clean stdout.
 
-## Three query scopes
+## Query scopes
 
-| Scope | When | Example |
-|-------|------|---------|
-| **Global** | Questions across all work | `cq sessions --since today` |
-| **Project** | Focused on a specific codebase | `cq sessions --project ~/pickleton` |
-| **Session** | Looking at one session's details | `cq messages --session <id>` |
+| Scope | When | How |
+|-------|------|-----|
+| **Auto-project** (default in a project dir) | Focused on current repo | `cq sessions --since today` |
+| **Global** | Questions across all work | `cq sessions --all` |
+| **Named project** | A different codebase | `cq sessions --project myproject` |
+| **Session** | One session's details | `cq messages --session <id>` |
 
-These scopes affect both what data is queried and how much work the indexer does to keep data fresh. Sync scope follows query scope.
+Scope affects both what data is queried and how much work the indexer does. Sync scope follows query scope, so `--project foo` narrows the indexer to that project's files too.
 
 ## Stale-but-available beats error
 
