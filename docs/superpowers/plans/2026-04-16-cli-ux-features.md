@@ -1605,18 +1605,9 @@ Errors are highlighted. Supports --json, --table, and --wide."
 
 ---
 
-### Task 6: Update beans to in-progress
+### Task 6: Final verification
 
-- [ ] **Step 1: Mark all four beans as in-progress**
-
-```bash
-pt beans update gt-u9ff -s in-progress
-pt beans update gt-ilzd -s in-progress
-pt beans update gt-r4mh -s in-progress
-pt beans update gt-m6bl -s in-progress
-```
-
-- [ ] **Step 2: Run final full test suite**
+- [ ] **Step 1: Run final full test suite**
 
 ```bash
 cargo test 2>&1
@@ -1624,7 +1615,7 @@ cargo test 2>&1
 
 Expected: All tests pass (existing + new).
 
-- [ ] **Step 3: Manual smoke test**
+- [ ] **Step 2: Manual smoke test**
 
 ```bash
 cq tools --wide

@@ -8,8 +8,6 @@
 
 **Tech Stack:** Rust, clap 4 (derive), DuckDB (window functions, CTEs, `ANY_VALUE`), assert_cmd for integration tests.
 
-**Bean:** gt-rwd0
-
 ---
 
 ## Design Decisions (locked)
@@ -1110,45 +1108,19 @@ git commit -m "docs: document -A/-B/-C context flags"
 
 ---
 
-## Task 8: Update bean and close work
-
-**Files:**
-- Bean `gt-rwd0`
+## Task 8: Final verification and PR
 
 - [ ] **Step 1: Verify all tests pass**
 
 Run: `cargo test`
 Expected: all green, no skipped tests.
 
-- [ ] **Step 2: Update bean with summary of what shipped**
+- [ ] **Step 2: Push branch and open PR**
 
 ```bash
-pt beans update gt-rwd0 --status completed -d "Shipped in gt-rwd0/context-flags branch.
-
-## What shipped
-- -A N / -B N / -C N flags on cq tools and cq messages
-- Message-level context within session boundaries
-- Table output: dimmed context rows + -- separators between non-contiguous groups
-- JSON output: heterogeneous rows with match_kind and match_group fields; match rows on cq tools retain tool-specific columns (name, input, tool_use_id)
-- --count-by + context flags errors out with a clear message
-- --limit applies to match count (grep -m semantics)
-- Integration tests covering session boundary, limit semantics, conflict errors, JSON/TTY shapes
-
-## Related
-- See gt-w3eu for the skill-injection investigation that motivated this"
+git push -u origin <branch>
+gh pr create
 ```
-
-- [ ] **Step 3: Commit any remaining bean state and push**
-
-```bash
-git status
-# If there are pending changes:
-git add <bean file path if changed>
-git commit -m "chore: mark gt-rwd0 complete"
-git push -u origin gt-rwd0/context-flags
-```
-
-- [ ] **Step 4: Open PR** (use `pt pr create` or `gh pr create`)
 
 ---
 

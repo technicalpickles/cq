@@ -2,8 +2,6 @@
 
 Four features that improve cq's output control and aggregation capabilities.
 
-Related beans: gt-u9ff, gt-ilzd, gt-r4mh, gt-m6bl
-
 ## Design Principles
 
 ### `--fields` is column selection everywhere
@@ -157,7 +155,7 @@ Valid views: messages, tool_calls, tool_results, sessions
 - `src/scope.rs`: improve `--since` and `--session` error messages
 - `src/commands/schema.rs`: align error format
 
-## Feature 1: `--wide` flag and TTY detection (gt-u9ff)
+## Feature 1: `--wide` flag and TTY detection
 
 ### CLI
 
@@ -194,7 +192,7 @@ Thread `wide` into each command's `run()` function, which passes it to render fu
 - `src/commands/messages.rs`: thread wide to render functions
 - `src/commands/sessions.rs`: thread wide to render functions
 
-## Feature 2: `--fields` on messages and sessions (gt-ilzd)
+## Feature 2: `--fields` on messages and sessions
 
 ### CLI
 
@@ -231,7 +229,7 @@ This differs from `tools --fields` which builds `json_extract_string` expression
 - `src/commands/messages.rs`: add field validation, modify SELECT when fields specified
 - `src/commands/sessions.rs`: add field validation, modify SELECT when fields specified
 
-## Feature 3: `--count-by` aggregation (gt-r4mh)
+## Feature 3: `--count-by` aggregation
 
 ### CLI
 
@@ -285,7 +283,7 @@ When `--count-by` is present, build an aggregation query instead of a detail que
 - `src/commands/messages.rs`: add aggregation path, validate column name
 - `src/commands/sessions.rs`: add aggregation path, validate column name
 
-## Feature 4: Session timeline (gt-m6bl)
+## Feature 4: Session timeline
 
 ### CLI
 
