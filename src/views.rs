@@ -10,6 +10,23 @@ const PROJECT_EXPR: &str =
         '/' || replace(regexp_extract(source_file, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')
     )";
 
+/// SQL expression for the subagent identity (NULL for main-loop rows).
+const AGENT_ID_EXPR: &str = "json_extract_string(json, '$.agentId')";
+
+/// SQL expression for the sidechain flag (always non-null; false for main loop).
+const IS_SIDECHAIN_EXPR: &str =
+    "COALESCE(CAST(json_extract(json, '$.isSidechain') AS BOOLEAN), false)";
+
+/// SQL expression for the workflow run id, parsed from the file path.
+/// NULL for plain subagents and main-loop rows.
+const WORKFLOW_ID_EXPR: &str =
+    "NULLIF(regexp_extract(source_file, 'workflows/(wf_[^/]+)/', 1), '')";
+
+/// SQL expression for the subagent type, read from the sidecar meta.json at
+/// index time and stored in file_registry. NULL for main-loop rows.
+const AGENT_TYPE_EXPR: &str =
+    "(SELECT fr.agent_type FROM file_registry fr WHERE fr.file_path = source_file)";
+
 /// Register all queryable views against the given JSONL transcript files.
 ///
 /// Creates four views:
@@ -88,7 +105,11 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
                 json_extract_string(json, '$.timestamp') AS timestamp,
                 json_extract_string(json, '$.message.content') AS text,
                 CAST(0 AS BIGINT) AS tool_count,
-                json_extract_string(json, '$.message.model') AS model
+                json_extract_string(json, '$.message.model') AS model,
+                {AGENT_ID_EXPR} AS agent_id,
+                {IS_SIDECHAIN_EXPR} AS is_sidechain,
+                {AGENT_TYPE_EXPR} AS agent_type,
+                {WORKFLOW_ID_EXPR} AS workflow_id
             FROM raw_records
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'VARCHAR'
@@ -111,7 +132,11 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
                      WHERE json_extract_string(item, '$.type') = 'tool_use')
                 ELSE CAST(0 AS BIGINT)
                 END AS tool_count,
-                json_extract_string(json, '$.message.model') AS model
+                json_extract_string(json, '$.message.model') AS model,
+                {AGENT_ID_EXPR} AS agent_id,
+                {IS_SIDECHAIN_EXPR} AS is_sidechain,
+                {AGENT_TYPE_EXPR} AS agent_type,
+                {WORKFLOW_ID_EXPR} AS workflow_id
             FROM raw_records
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
@@ -137,7 +162,11 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
             json_extract_string(item, '$.id') AS tool_use_id,
             json_extract_string(item, '$.name') AS name,
             json_extract(item, '$.input') AS input,
-            json_extract_string(json, '$.timestamp') AS timestamp
+            json_extract_string(json, '$.timestamp') AS timestamp,
+            {AGENT_ID_EXPR} AS agent_id,
+            {IS_SIDECHAIN_EXPR} AS is_sidechain,
+            {AGENT_TYPE_EXPR} AS agent_type,
+            {WORKFLOW_ID_EXPR} AS workflow_id
         FROM raw_records,
         LATERAL (
             SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
@@ -161,7 +190,11 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
             {PROJECT_EXPR} AS project,
             json_extract_string(item, '$.tool_use_id') AS tool_use_id,
             COALESCE(CAST(json_extract(item, '$.is_error') AS BOOLEAN), false) AS is_error,
-            json_extract_string(item, '$.content') AS content
+            json_extract_string(item, '$.content') AS content,
+            {AGENT_ID_EXPR} AS agent_id,
+            {IS_SIDECHAIN_EXPR} AS is_sidechain,
+            {AGENT_TYPE_EXPR} AS agent_type,
+            {WORKFLOW_ID_EXPR} AS workflow_id
         FROM raw_records,
         LATERAL (
             SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
@@ -218,7 +251,11 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             NULL::VARCHAR AS timestamp,
             NULL::VARCHAR AS text,
             CAST(0 AS BIGINT) AS tool_count,
-            NULL::VARCHAR AS model
+            NULL::VARCHAR AS model,
+            NULL::VARCHAR AS agent_id,
+            false AS is_sidechain,
+            NULL::VARCHAR AS agent_type,
+            NULL::VARCHAR AS workflow_id
         WHERE 1=0"
     ).context("Failed to create empty messages view")?;
 
@@ -231,7 +268,11 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             NULL::VARCHAR AS tool_use_id,
             NULL::VARCHAR AS name,
             NULL::JSON AS input,
-            NULL::VARCHAR AS timestamp
+            NULL::VARCHAR AS timestamp,
+            NULL::VARCHAR AS agent_id,
+            false AS is_sidechain,
+            NULL::VARCHAR AS agent_type,
+            NULL::VARCHAR AS workflow_id
         WHERE 1=0"
     ).context("Failed to create empty tool_calls view")?;
 
@@ -242,7 +283,11 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS tool_use_id,
             false AS is_error,
-            NULL::VARCHAR AS content
+            NULL::VARCHAR AS content,
+            NULL::VARCHAR AS agent_id,
+            false AS is_sidechain,
+            NULL::VARCHAR AS agent_type,
+            NULL::VARCHAR AS workflow_id
         WHERE 1=0"
     ).context("Failed to create empty tool_results view")?;
 

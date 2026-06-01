@@ -18,6 +18,7 @@ fn setup_db(fixture: &str) -> Connection {
             mtime_ns BIGINT,
             file_size BIGINT,
             cwd TEXT,
+            agent_type TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )"
     ).unwrap();
@@ -36,6 +37,7 @@ fn setup_db_multi(fixtures: &[&str]) -> Connection {
             mtime_ns BIGINT,
             file_size BIGINT,
             cwd TEXT,
+            agent_type TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )"
     ).unwrap();
@@ -319,6 +321,77 @@ fn multi_file_sessions() {
         .query_row("SELECT COUNT(DISTINCT session_id) FROM sessions", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 2, "two files should produce two sessions");
+}
+
+// ---- subagent tagging ----
+
+#[test]
+fn messages_tag_sidechain_rows() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 5, "all main-loop and sidechain messages are queryable");
+
+    let (is_side, agent): (bool, Option<String>) = conn
+        .query_row(
+            "SELECT is_sidechain, agent_id FROM messages WHERE uuid = 'su1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(is_side);
+    assert_eq!(agent.as_deref(), Some("agentAAA"));
+
+    let (is_side, agent): (bool, Option<String>) = conn
+        .query_row(
+            "SELECT is_sidechain, agent_id FROM messages WHERE uuid = 'mu1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(!is_side);
+    assert_eq!(agent, None);
+}
+
+#[test]
+fn tool_calls_tag_sidechain_rows() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tool_calls", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(total, 3, "Task + Read + Grep");
+
+    let main_only: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE NOT is_sidechain",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(main_only, 1, "only the Task call is main-loop");
+
+    let agent: Option<String> = conn
+        .query_row(
+            "SELECT agent_id FROM tool_calls WHERE name = 'Read'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(agent.as_deref(), Some("agentAAA"));
+}
+
+#[test]
+fn tool_results_tag_sidechain_rows() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let is_side: bool = conn
+        .query_row(
+            "SELECT is_sidechain FROM tool_results WHERE tool_use_id = 'toolu_s1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(is_side);
 }
 
 // ---- empty files ----
