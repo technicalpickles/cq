@@ -210,19 +210,25 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
 /// Create the sessions view.
 ///
 /// Aggregates from the messages view to provide session-level metrics.
+/// Counts (message_count, tool_call_count, user_message_count) include only
+/// main-loop rows (is_sidechain = false). subagent_count is the number of
+/// distinct subagent IDs seen in the session (NULL agent_id for main-loop rows
+/// is ignored by COUNT(DISTINCT)).
 fn register_sessions_view(conn: &Connection) -> Result<()> {
     let sql = "CREATE OR REPLACE VIEW sessions AS
         SELECT
             session_id,
             project,
-            MIN(timestamp) AS started_at,
-            MAX(timestamp) AS ended_at,
-            COUNT(*) AS message_count,
-            CAST(SUM(tool_count) AS BIGINT) AS tool_call_count,
-            COUNT(CASE WHEN type = 'user' THEN 1 END) AS user_message_count,
+            MIN(timestamp) FILTER (WHERE NOT is_sidechain) AS started_at,
+            MAX(timestamp) FILTER (WHERE NOT is_sidechain) AS ended_at,
+            COUNT(*) FILTER (WHERE NOT is_sidechain) AS message_count,
+            CAST(COALESCE(SUM(tool_count) FILTER (WHERE NOT is_sidechain), 0) AS BIGINT) AS tool_call_count,
+            COUNT(*) FILTER (WHERE type = 'user' AND NOT is_sidechain) AS user_message_count,
+            COUNT(DISTINCT agent_id) AS subagent_count,
             (SELECT text FROM messages m2
              WHERE m2.session_id = m1.session_id
              AND m2.type = 'user'
+             AND NOT m2.is_sidechain
              AND m2.text IS NOT NULL
              AND m2.text != ''
              AND m2.text NOT LIKE '<%'
@@ -301,6 +307,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             CAST(0 AS BIGINT) AS message_count,
             CAST(0 AS BIGINT) AS tool_call_count,
             CAST(0 AS BIGINT) AS user_message_count,
+            CAST(0 AS BIGINT) AS subagent_count,
             NULL::VARCHAR AS first_user_message
         WHERE 1=0"
     ).context("Failed to create empty sessions view")?;

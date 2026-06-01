@@ -394,6 +394,32 @@ fn tool_results_tag_sidechain_rows() {
     assert!(is_side);
 }
 
+#[test]
+fn sessions_counts_exclude_sidechains() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let (msgs, tools, users, subs): (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT message_count, tool_call_count, user_message_count, subagent_count
+             FROM sessions WHERE session_id = 'sess-mix'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(msgs, 2, "only main-loop messages counted");
+    assert_eq!(tools, 1, "only the main-loop Task call counted");
+    assert_eq!(users, 1, "only the main-loop user turn counted");
+    assert_eq!(subs, 1, "one distinct subagent (agentAAA)");
+
+    let first: String = conn
+        .query_row(
+            "SELECT first_user_message FROM sessions WHERE session_id = 'sess-mix'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(first, "run the analysis");
+}
+
 // ---- empty files ----
 
 #[test]
