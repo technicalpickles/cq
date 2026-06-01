@@ -319,6 +319,20 @@ fn collect_jsonl(dir: &Path, files: &mut HashMap<PathBuf, FileInfo>) -> Result<(
     Ok(())
 }
 
+/// Read `agentType` from the sibling `agent-<id>.meta.json`, if this file is a
+/// subagent transcript and the sidecar exists.
+fn read_agent_type(file: &Path) -> Option<String> {
+    let name = file.file_name()?.to_str()?;
+    if !name.starts_with("agent-") {
+        return None;
+    }
+    let stem = file.file_stem()?.to_str()?;
+    let meta = file.with_file_name(format!("{stem}.meta.json"));
+    let data = std::fs::read_to_string(&meta).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
+    value.get("agentType")?.as_str().map(|s| s.to_string())
+}
+
 /// A `.jsonl` transcript we should index. Excludes workflow `journal.jsonl`
 /// ledgers, which are resume bookkeeping, not transcripts.
 fn is_indexable_jsonl(path: &Path) -> bool {
@@ -371,6 +385,8 @@ fn index_files(conn: &Connection, files: &[PathBuf]) -> Result<()> {
             )
             .ok();
 
+        let agent_type = read_agent_type(file);
+
         let metadata = std::fs::metadata(file)?;
         let mtime_ns = metadata
             .modified()
@@ -381,8 +397,8 @@ fn index_files(conn: &Connection, files: &[PathBuf]) -> Result<()> {
         let file_size = metadata.len() as i64;
 
         conn.execute(
-            "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd) VALUES (?, ?, ?, ?)",
-            duckdb::params![path_str, mtime_ns, file_size, cwd],
+            "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type) VALUES (?, ?, ?, ?, ?)",
+            duckdb::params![path_str, mtime_ns, file_size, cwd, agent_type],
         )?;
     }
     Ok(())

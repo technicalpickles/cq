@@ -1406,3 +1406,23 @@ fn messages_fields_conflicts_with_context() {
         "expected conflict error mentioning --fields and -A, got: {stderr}"
     );
 }
+
+#[test]
+fn populates_agent_type_from_meta() {
+    let env = setup_subagent_env();
+    cq_cmd(&env)
+        .args(["sql", "SELECT agent_type FROM tool_calls WHERE name = 'Read'"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("general-purpose"));
+}
+
+#[test]
+fn agent_type_null_for_main_loop() {
+    let env = setup_subagent_env();
+    cq_cmd(&env)
+        .args(["sql", "SELECT COUNT(*) FROM tool_calls WHERE name = 'Bash' AND agent_type IS NULL"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1"));
+}
