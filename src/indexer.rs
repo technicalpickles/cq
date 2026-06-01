@@ -201,29 +201,15 @@ fn max_dir_mtime(projects_dir: &Path, scope: &SyncScope) -> Result<i64> {
         }
         SyncScope::Projects(dirs) => dirs.clone(),
         SyncScope::File(f) => {
-            if let Ok(meta) = std::fs::metadata(f) {
-                let mtime = meta.modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos() as i64)
-                    .unwrap_or(0);
-                return Ok(mtime);
-            }
-            return Ok(0);
+            return Ok(dir_mtime(f));
         }
     };
 
     let mut max_mtime: i64 = 0;
     for dir in &dirs_to_check {
-        if let Ok(meta) = std::fs::metadata(dir) {
-            let mtime = meta.modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos() as i64)
-                .unwrap_or(0);
-            if mtime > max_mtime {
-                max_mtime = mtime;
-            }
+        let m = max_mtime_recursive(dir);
+        if m > max_mtime {
+            max_mtime = m;
         }
     }
 
@@ -340,6 +326,34 @@ fn is_indexable_jsonl(path: &Path) -> bool {
         && path.file_name().map(|n| n != "journal.jsonl").unwrap_or(false)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync_scope::SyncScope;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    #[test]
+    fn max_dir_mtime_detects_deep_new_file() {
+        let tmp = TempDir::new().unwrap();
+        let proj = tmp.path().join("-Users-test-myproject");
+        let sub = proj.join("sess-1").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let scope = SyncScope::All;
+        let before = max_dir_mtime(tmp.path(), &scope).unwrap();
+
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(sub.join("agent-new.jsonl"), "{}\n").unwrap();
+
+        let after = max_dir_mtime(tmp.path(), &scope).unwrap();
+        assert!(
+            after > before,
+            "a new deep subagent file must advance max_dir_mtime (before={before}, after={after})"
+        );
+    }
+}
+
 /// Load the current file registry from the database.
 fn load_registry(conn: &Connection) -> Result<HashMap<String, FileInfo>> {
     let mut stmt = conn.prepare(
@@ -354,6 +368,34 @@ fn load_registry(conn: &Connection) -> Result<HashMap<String, FileInfo>> {
         registry.insert(path, FileInfo { mtime_ns, file_size });
     }
     Ok(registry)
+}
+
+fn dir_mtime(p: &Path) -> i64 {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0)
+}
+
+/// Max mtime of `dir` and all of its subdirectories (recursively). Creating any
+/// new file bumps its immediate parent dir's mtime, so this catches new sessions,
+/// subagents, and workflow agents. It does not catch pure appends (no directory
+/// mtime changes on append); `--reindex` covers that case.
+fn max_mtime_recursive(dir: &Path) -> i64 {
+    let mut max = dir_mtime(dir);
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let m = max_mtime_recursive(&entry.path());
+                if m > max {
+                    max = m;
+                }
+            }
+        }
+    }
+    max
 }
 
 /// Parse JSONL files with DuckDB's read_json and insert into raw_records.
