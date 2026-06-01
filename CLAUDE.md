@@ -20,10 +20,10 @@ style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
 views.rs          SQL view definitions (messages, tool_calls, tool_results, sessions) over the cached raw_records table
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
-indexer.rs        Incremental sync: file_registry + mtime/size fast-path, fs2 file lock for concurrency
+indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, fs2 file lock; recurses into <session>/subagents/** and captures agentType from meta.json
 sync_scope.rs     SyncScope: narrows which files the indexer touches (derived from --project etc.)
 provider.rs       TranscriptProvider trait
-claude_provider.rs  ClaudeProvider: discovers JSONL files from ~/.claude/projects/
+claude_provider.rs  ClaudeProvider: recursively discovers JSONL files (incl. subagents) from ~/.claude/projects/
 scope.rs          QueryScope: --project, --session, --since parsing
 ```
 
@@ -34,7 +34,7 @@ CQ is a query tool, not a monitoring tool. Default is auto-scope to the current 
 ## Key patterns
 
 - **Commands build SQL + params, output renders.** Each command constructs a WHERE clause with `?` placeholders, collects params in a `Vec<Box<dyn ToSql>>`, and passes both to `output::print_results`.
-- **Persistent cache + incremental sync.** `cache.rs` opens the cache DB and handles schema versioning. `indexer.rs` walks files, checks mtime + size against `file_registry`, and only re-parses what changed. `fs2` file locking serializes concurrent writers; readers fall back to cached data when the lock is busy.
+- **Persistent cache + incremental sync.** `cache.rs` opens the cache DB and handles schema versioning. `indexer.rs` walks files, checks mtime + size against `file_registry`, and only re-parses what changed. `fs2` file locking serializes concurrent writers; readers fall back to cached data when the lock is busy. The scan recurses into `<session>/subagents/**` (excluding `journal.jsonl`); subagent rows carry the parent `session_id` plus `is_sidechain`/`agent_id`/`agent_type`/`workflow_id` tags. The Auto mtime fast-path is a recursive max so new deep files are detected.
 - **SyncMode is explicit over smart.** `Auto` (default) does mtime fast-path + try-lock + skip-if-busy. `Force` (`--reindex`) waits for the lock and re-parses everything. `Skip` (`--no-reindex`) bypasses sync entirely. User flags always beat smart behavior.
 - **SyncScope narrows sync work.** A `--project` filter also restricts which files the indexer touches, not just which rows the query returns. Derived in `main.rs` from the CLI flags, passed through `db::setup_connection` into `indexer::sync`.
 - **Provider trait** abstracts file discovery. Only `ClaudeProvider` exists today but the trait allows other transcript sources.

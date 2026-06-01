@@ -38,13 +38,15 @@ user_invocable: true
 
 ## View Schemas
 
-**sessions**: session_id, project, started_at, ended_at, message_count, tool_call_count, user_message_count, first_user_message
+**sessions**: session_id, project, started_at, ended_at, message_count, tool_call_count, user_message_count, subagent_count, first_user_message (counts are main-loop only)
 
-**messages**: session_id, project, uuid, parent_uuid, type, timestamp, text, tool_count, model
+**messages**: session_id, project, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id
 
-**tool_calls**: session_id, project, message_uuid, tool_use_id, name, input (JSON), timestamp
+**tool_calls**: session_id, project, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id
 
-**tool_results**: session_id, project, tool_use_id, is_error, content
+**tool_results**: session_id, project, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id
+
+Subagent rows carry the parent `session_id`. Filter with `WHERE NOT is_sidechain` (main loop), `WHERE is_sidechain` (subagents), `WHERE agent_type = 'Explore'`, or `WHERE workflow_id IS NOT NULL`.
 
 ## Querying JSON Input Fields
 
