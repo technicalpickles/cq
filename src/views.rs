@@ -10,6 +10,23 @@ const PROJECT_EXPR: &str =
         '/' || replace(regexp_extract(source_file, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')
     )";
 
+/// SQL expression for the subagent identity (NULL for main-loop rows).
+const AGENT_ID_EXPR: &str = "json_extract_string(json, '$.agentId')";
+
+/// SQL expression for the sidechain flag (always non-null; false for main loop).
+const IS_SIDECHAIN_EXPR: &str =
+    "COALESCE(CAST(json_extract(json, '$.isSidechain') AS BOOLEAN), false)";
+
+/// SQL expression for the workflow run id, parsed from the file path.
+/// NULL for plain subagents and main-loop rows.
+const WORKFLOW_ID_EXPR: &str =
+    "NULLIF(regexp_extract(source_file, 'workflows/(wf_[^/]+)/', 1), '')";
+
+/// SQL expression for the subagent type, read from the sidecar meta.json at
+/// index time and stored in file_registry. NULL for main-loop rows.
+const AGENT_TYPE_EXPR: &str =
+    "(SELECT fr.agent_type FROM file_registry fr WHERE fr.file_path = source_file)";
+
 /// Register all queryable views against the given JSONL transcript files.
 ///
 /// Creates four views:
@@ -88,7 +105,11 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
                 json_extract_string(json, '$.timestamp') AS timestamp,
                 json_extract_string(json, '$.message.content') AS text,
                 CAST(0 AS BIGINT) AS tool_count,
-                json_extract_string(json, '$.message.model') AS model
+                json_extract_string(json, '$.message.model') AS model,
+                {AGENT_ID_EXPR} AS agent_id,
+                {IS_SIDECHAIN_EXPR} AS is_sidechain,
+                {AGENT_TYPE_EXPR} AS agent_type,
+                {WORKFLOW_ID_EXPR} AS workflow_id
             FROM raw_records
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'VARCHAR'
@@ -111,7 +132,11 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
                      WHERE json_extract_string(item, '$.type') = 'tool_use')
                 ELSE CAST(0 AS BIGINT)
                 END AS tool_count,
-                json_extract_string(json, '$.message.model') AS model
+                json_extract_string(json, '$.message.model') AS model,
+                {AGENT_ID_EXPR} AS agent_id,
+                {IS_SIDECHAIN_EXPR} AS is_sidechain,
+                {AGENT_TYPE_EXPR} AS agent_type,
+                {WORKFLOW_ID_EXPR} AS workflow_id
             FROM raw_records
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
@@ -137,7 +162,11 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
             json_extract_string(item, '$.id') AS tool_use_id,
             json_extract_string(item, '$.name') AS name,
             json_extract(item, '$.input') AS input,
-            json_extract_string(json, '$.timestamp') AS timestamp
+            json_extract_string(json, '$.timestamp') AS timestamp,
+            {AGENT_ID_EXPR} AS agent_id,
+            {IS_SIDECHAIN_EXPR} AS is_sidechain,
+            {AGENT_TYPE_EXPR} AS agent_type,
+            {WORKFLOW_ID_EXPR} AS workflow_id
         FROM raw_records,
         LATERAL (
             SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
@@ -161,7 +190,11 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
             {PROJECT_EXPR} AS project,
             json_extract_string(item, '$.tool_use_id') AS tool_use_id,
             COALESCE(CAST(json_extract(item, '$.is_error') AS BOOLEAN), false) AS is_error,
-            json_extract_string(item, '$.content') AS content
+            json_extract_string(item, '$.content') AS content,
+            {AGENT_ID_EXPR} AS agent_id,
+            {IS_SIDECHAIN_EXPR} AS is_sidechain,
+            {AGENT_TYPE_EXPR} AS agent_type,
+            {WORKFLOW_ID_EXPR} AS workflow_id
         FROM raw_records,
         LATERAL (
             SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
@@ -177,19 +210,28 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
 /// Create the sessions view.
 ///
 /// Aggregates from the messages view to provide session-level metrics.
+/// Counts (message_count, tool_call_count, user_message_count) include only
+/// main-loop rows (is_sidechain = false). subagent_count is the number of
+/// distinct subagent IDs seen in the session (NULL agent_id for main-loop rows
+/// is ignored by COUNT(DISTINCT)).
 fn register_sessions_view(conn: &Connection) -> Result<()> {
     let sql = "CREATE OR REPLACE VIEW sessions AS
         SELECT
             session_id,
-            project,
-            MIN(timestamp) AS started_at,
-            MAX(timestamp) AS ended_at,
-            COUNT(*) AS message_count,
-            CAST(SUM(tool_count) AS BIGINT) AS tool_call_count,
-            COUNT(CASE WHEN type = 'user' THEN 1 END) AS user_message_count,
+            COALESCE(
+                MAX(project) FILTER (WHERE NOT is_sidechain),
+                MAX(project)
+            ) AS project,
+            MIN(timestamp) FILTER (WHERE NOT is_sidechain) AS started_at,
+            MAX(timestamp) FILTER (WHERE NOT is_sidechain) AS ended_at,
+            COUNT(*) FILTER (WHERE NOT is_sidechain) AS message_count,
+            CAST(COALESCE(SUM(tool_count) FILTER (WHERE NOT is_sidechain), 0) AS BIGINT) AS tool_call_count,
+            COUNT(*) FILTER (WHERE type = 'user' AND NOT is_sidechain) AS user_message_count,
+            COUNT(DISTINCT agent_id) AS subagent_count,
             (SELECT text FROM messages m2
              WHERE m2.session_id = m1.session_id
              AND m2.type = 'user'
+             AND NOT m2.is_sidechain
              AND m2.text IS NOT NULL
              AND m2.text != ''
              AND m2.text NOT LIKE '<%'
@@ -197,7 +239,7 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
              AND m2.text NOT LIKE '#%'
              ORDER BY m2.timestamp LIMIT 1) AS first_user_message
         FROM messages m1
-        GROUP BY session_id, project";
+        GROUP BY session_id";
     conn.execute_batch(sql)
         .context("Failed to create sessions view")?;
     Ok(())
@@ -218,7 +260,11 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             NULL::VARCHAR AS timestamp,
             NULL::VARCHAR AS text,
             CAST(0 AS BIGINT) AS tool_count,
-            NULL::VARCHAR AS model
+            NULL::VARCHAR AS model,
+            NULL::VARCHAR AS agent_id,
+            false AS is_sidechain,
+            NULL::VARCHAR AS agent_type,
+            NULL::VARCHAR AS workflow_id
         WHERE 1=0"
     ).context("Failed to create empty messages view")?;
 
@@ -231,7 +277,11 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             NULL::VARCHAR AS tool_use_id,
             NULL::VARCHAR AS name,
             NULL::JSON AS input,
-            NULL::VARCHAR AS timestamp
+            NULL::VARCHAR AS timestamp,
+            NULL::VARCHAR AS agent_id,
+            false AS is_sidechain,
+            NULL::VARCHAR AS agent_type,
+            NULL::VARCHAR AS workflow_id
         WHERE 1=0"
     ).context("Failed to create empty tool_calls view")?;
 
@@ -242,7 +292,11 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS tool_use_id,
             false AS is_error,
-            NULL::VARCHAR AS content
+            NULL::VARCHAR AS content,
+            NULL::VARCHAR AS agent_id,
+            false AS is_sidechain,
+            NULL::VARCHAR AS agent_type,
+            NULL::VARCHAR AS workflow_id
         WHERE 1=0"
     ).context("Failed to create empty tool_results view")?;
 
@@ -256,6 +310,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             CAST(0 AS BIGINT) AS message_count,
             CAST(0 AS BIGINT) AS tool_call_count,
             CAST(0 AS BIGINT) AS user_message_count,
+            CAST(0 AS BIGINT) AS subagent_count,
             NULL::VARCHAR AS first_user_message
         WHERE 1=0"
     ).context("Failed to create empty sessions view")?;

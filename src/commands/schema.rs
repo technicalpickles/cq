@@ -35,7 +35,11 @@ const MESSAGES_SCHEMA: &str = r#"messages
   timestamp           VARCHAR   ISO 8601 timestamp string
   text                VARCHAR   Text content of the message (first text block for assistant)
   tool_count          BIGINT    Number of tool calls in this message (assistant only)
-  model               VARCHAR   Model used (assistant messages only)"#;
+  model               VARCHAR   Model used (assistant messages only)
+  agent_id            VARCHAR   Subagent id; NULL for main-loop rows
+  is_sidechain        BOOLEAN   true if this row is from a subagent
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL"#;
 
 const TOOL_CALLS_SCHEMA: &str = r#"tool_calls
 ----------
@@ -46,6 +50,10 @@ const TOOL_CALLS_SCHEMA: &str = r#"tool_calls
   name                VARCHAR   Tool name (e.g. 'Bash', 'Read', 'Edit', 'Skill')
   input               JSON      Tool input as JSON object
   timestamp           VARCHAR   ISO 8601 timestamp string
+  agent_id            VARCHAR   Subagent id; NULL for main-loop rows
+  is_sidechain        BOOLEAN   true if this row is from a subagent
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
 
   Note: query input fields with json_extract_string(input, '$.field_name')
   Example: json_extract_string(input, '$.command') for Bash commands"#;
@@ -56,7 +64,11 @@ const TOOL_RESULTS_SCHEMA: &str = r#"tool_results
   project             VARCHAR   Project name
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
-  content             VARCHAR   Tool result content (text)"#;
+  content             VARCHAR   Tool result content (text)
+  agent_id            VARCHAR   Subagent id; NULL for main-loop rows
+  is_sidechain        BOOLEAN   true if this row is from a subagent
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL"#;
 
 const SESSIONS_SCHEMA: &str = r#"sessions
 --------
@@ -67,6 +79,7 @@ const SESSIONS_SCHEMA: &str = r#"sessions
   message_count       BIGINT    Total messages in session
   tool_call_count     BIGINT    Total tool calls in session
   user_message_count  BIGINT    Number of user turns
+  subagent_count      BIGINT    Distinct subagents spawned in this session
   first_user_message  VARCHAR   Text of the first user message"#;
 
 const EXAMPLE_QUERIES: &str = r#"Example Queries
@@ -114,6 +127,13 @@ Docker-related Bash commands:
   AND CAST(input AS VARCHAR) ILIKE '%docker%'
   ORDER BY timestamp DESC;
 
+Subagent tool calls in a session:
+  SELECT agent_type, name, COUNT(*) AS count
+  FROM tool_calls
+  WHERE session_id = 'SESSION_ID' AND is_sidechain
+  GROUP BY agent_type, name
+  ORDER BY count DESC;
+
 Recent sessions:
   SELECT session_id, project, started_at, message_count, tool_call_count, first_user_message
   FROM sessions
@@ -134,6 +154,10 @@ messages
   text                VARCHAR   Text content of the message (first text block for assistant)
   tool_count          BIGINT    Number of tool calls in this message (assistant only)
   model               VARCHAR   Model used (assistant messages only)
+  agent_id            VARCHAR   Subagent id; NULL for main-loop rows
+  is_sidechain        BOOLEAN   true if this row is from a subagent
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
 
 tool_calls
 ----------
@@ -144,6 +168,10 @@ tool_calls
   name                VARCHAR   Tool name (e.g. 'Bash', 'Read', 'Edit', 'Skill')
   input               JSON      Tool input as JSON object
   timestamp           VARCHAR   ISO 8601 timestamp string
+  agent_id            VARCHAR   Subagent id; NULL for main-loop rows
+  is_sidechain        BOOLEAN   true if this row is from a subagent
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
 
   Note: query input fields with json_extract_string(input, '$.field_name')
   Example: json_extract_string(input, '$.command') for Bash commands
@@ -155,6 +183,10 @@ tool_results
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
   content             VARCHAR   Tool result content (text)
+  agent_id            VARCHAR   Subagent id; NULL for main-loop rows
+  is_sidechain        BOOLEAN   true if this row is from a subagent
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
 
 sessions
 --------
@@ -165,6 +197,7 @@ sessions
   message_count       BIGINT    Total messages in session
   tool_call_count     BIGINT    Total tool calls in session
   user_message_count  BIGINT    Number of user turns
+  subagent_count      BIGINT    Distinct subagents spawned in this session
   first_user_message  VARCHAR   Text of the first user message
 
 
@@ -212,6 +245,13 @@ Docker-related Bash commands:
   WHERE name = 'Bash'
   AND CAST(input AS VARCHAR) ILIKE '%docker%'
   ORDER BY timestamp DESC;
+
+Subagent tool calls in a session:
+  SELECT agent_type, name, COUNT(*) AS count
+  FROM tool_calls
+  WHERE session_id = 'SESSION_ID' AND is_sidechain
+  GROUP BY agent_type, name
+  ORDER BY count DESC;
 
 Recent sessions:
   SELECT session_id, project, started_at, message_count, tool_call_count, first_user_message

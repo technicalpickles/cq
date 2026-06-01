@@ -201,29 +201,15 @@ fn max_dir_mtime(projects_dir: &Path, scope: &SyncScope) -> Result<i64> {
         }
         SyncScope::Projects(dirs) => dirs.clone(),
         SyncScope::File(f) => {
-            if let Ok(meta) = std::fs::metadata(f) {
-                let mtime = meta.modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos() as i64)
-                    .unwrap_or(0);
-                return Ok(mtime);
-            }
-            return Ok(0);
+            return Ok(dir_mtime(f));
         }
     };
 
     let mut max_mtime: i64 = 0;
     for dir in &dirs_to_check {
-        if let Ok(meta) = std::fs::metadata(dir) {
-            let mtime = meta.modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos() as i64)
-                .unwrap_or(0);
-            if mtime > max_mtime {
-                max_mtime = mtime;
-            }
+        let m = max_mtime_recursive(dir);
+        if m > max_mtime {
+            max_mtime = m;
         }
     }
 
@@ -285,12 +271,20 @@ fn scan_all(projects_dir: &Path) -> Result<HashMap<PathBuf, FileInfo>> {
 
 fn scan_directory(dir: &Path) -> Result<HashMap<PathBuf, FileInfo>> {
     let mut files = HashMap::new();
+    collect_jsonl(dir, &mut files)?;
+    Ok(files)
+}
+
+/// Recursively collect indexable JSONL transcripts under `dir`.
+fn collect_jsonl(dir: &Path, files: &mut HashMap<PathBuf, FileInfo>) -> Result<()> {
     if !dir.exists() {
-        return Ok(files);
+        return Ok(());
     }
-    for file_entry in std::fs::read_dir(dir)?.filter_map(|e| e.ok()) {
-        let path = file_entry.path();
-        if path.extension().map(|e| e == "jsonl").unwrap_or(false) && path.is_file() {
+    for entry in std::fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            collect_jsonl(&path, files)?;
+        } else if is_indexable_jsonl(&path) {
             if let Ok(metadata) = std::fs::metadata(&path) {
                 let mtime_ns = metadata
                     .modified()
@@ -308,7 +302,28 @@ fn scan_directory(dir: &Path) -> Result<HashMap<PathBuf, FileInfo>> {
             }
         }
     }
-    Ok(files)
+    Ok(())
+}
+
+/// Read `agentType` from the sibling `agent-<id>.meta.json`, if this file is a
+/// subagent transcript and the sidecar exists.
+fn read_agent_type(file: &Path) -> Option<String> {
+    let name = file.file_name()?.to_str()?;
+    if !name.starts_with("agent-") {
+        return None;
+    }
+    let stem = file.file_stem()?.to_str()?;
+    let meta = file.with_file_name(format!("{stem}.meta.json"));
+    let data = std::fs::read_to_string(&meta).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
+    value.get("agentType")?.as_str().map(|s| s.to_string())
+}
+
+/// A `.jsonl` transcript we should index. Excludes workflow `journal.jsonl`
+/// ledgers, which are resume bookkeeping, not transcripts.
+fn is_indexable_jsonl(path: &Path) -> bool {
+    path.extension().map(|e| e == "jsonl").unwrap_or(false)
+        && path.file_name().map(|n| n != "journal.jsonl").unwrap_or(false)
 }
 
 /// Load the current file registry from the database.
@@ -325,6 +340,34 @@ fn load_registry(conn: &Connection) -> Result<HashMap<String, FileInfo>> {
         registry.insert(path, FileInfo { mtime_ns, file_size });
     }
     Ok(registry)
+}
+
+fn dir_mtime(p: &Path) -> i64 {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0)
+}
+
+/// Max mtime of `dir` and all of its subdirectories (recursively). Creating any
+/// new file bumps its immediate parent dir's mtime, so this catches new sessions,
+/// subagents, and workflow agents. It does not catch pure appends (no directory
+/// mtime changes on append); `--reindex` covers that case.
+fn max_mtime_recursive(dir: &Path) -> i64 {
+    let mut max = dir_mtime(dir);
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let m = max_mtime_recursive(&entry.path());
+                if m > max {
+                    max = m;
+                }
+            }
+        }
+    }
+    max
 }
 
 /// Parse JSONL files with DuckDB's read_json and insert into raw_records.
@@ -356,6 +399,8 @@ fn index_files(conn: &Connection, files: &[PathBuf]) -> Result<()> {
             )
             .ok();
 
+        let agent_type = read_agent_type(file);
+
         let metadata = std::fs::metadata(file)?;
         let mtime_ns = metadata
             .modified()
@@ -366,9 +411,37 @@ fn index_files(conn: &Connection, files: &[PathBuf]) -> Result<()> {
         let file_size = metadata.len() as i64;
 
         conn.execute(
-            "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd) VALUES (?, ?, ?, ?)",
-            duckdb::params![path_str, mtime_ns, file_size, cwd],
+            "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type) VALUES (?, ?, ?, ?, ?)",
+            duckdb::params![path_str, mtime_ns, file_size, cwd, agent_type],
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync_scope::SyncScope;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    #[test]
+    fn max_dir_mtime_detects_deep_new_file() {
+        let tmp = TempDir::new().unwrap();
+        let proj = tmp.path().join("-Users-test-myproject");
+        let sub = proj.join("sess-1").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let scope = SyncScope::All;
+        let before = max_dir_mtime(tmp.path(), &scope).unwrap();
+
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(sub.join("agent-new.jsonl"), "{}\n").unwrap();
+
+        let after = max_dir_mtime(tmp.path(), &scope).unwrap();
+        assert!(
+            after > before,
+            "a new deep subagent file must advance max_dir_mtime (before={before}, after={after})"
+        );
+    }
 }

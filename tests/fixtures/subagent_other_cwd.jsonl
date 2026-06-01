@@ -1,0 +1,1 @@
+{"type":"assistant","message":{"id":"z1","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"tool_use","id":"toolu_z1","name":"Read","input":{"file_path":"/other/x"}}]},"uuid":"za1","parentUuid":null,"isSidechain":true,"agentId":"agentZ","timestamp":"2026-04-13T10:05:00.000Z","sessionId":"sess-001","cwd":"/Users/other/repo"}

@@ -993,6 +993,68 @@ fn count_by_and_fields_conflict() {
     );
 }
 
+// --- subagent recursive indexing tests ---
+
+fn write_file(path: &std::path::Path, body: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+}
+
+fn setup_subagent_env() -> TestEnv {
+    let projects = TempDir::new().unwrap();
+    let proj = projects.path().join("-Users-test-myproject");
+    let sess = "11111111-1111-1111-1111-111111111111";
+
+    // Top-level main-loop session.
+    write_file(&proj.join(format!("{sess}.jsonl")),
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"m1\",\"role\":\"assistant\",\"model\":\"claude-opus-4-8\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\",\"input\":{\"command\":\"ls\"}}]},\"uuid\":\"a1\",\"parentUuid\":null,\"isSidechain\":false,\"timestamp\":\"2026-05-01T10:00:00.000Z\",\"sessionId\":\"11111111-1111-1111-1111-111111111111\",\"cwd\":\"/Users/test/myproject\"}\n");
+
+    // Plain subagent.
+    let sub = proj.join(sess).join("subagents");
+    write_file(&sub.join("agent-aaa.jsonl"),
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"m2\",\"role\":\"assistant\",\"model\":\"claude-haiku-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"Read\",\"input\":{\"file_path\":\"/x\"}}]},\"uuid\":\"a2\",\"parentUuid\":null,\"isSidechain\":true,\"agentId\":\"aaa\",\"timestamp\":\"2026-05-01T10:00:01.000Z\",\"sessionId\":\"11111111-1111-1111-1111-111111111111\",\"cwd\":\"/Users/test/myproject\"}\n");
+    std::fs::write(sub.join("agent-aaa.meta.json"), "{\"agentType\":\"general-purpose\"}").unwrap();
+
+    // Workflow subagent + journal ledger (must be excluded).
+    let wf = sub.join("workflows").join("wf_xyz");
+    write_file(&wf.join("agent-bbb.jsonl"),
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"m3\",\"role\":\"assistant\",\"model\":\"claude-haiku-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t3\",\"name\":\"Glob\",\"input\":{\"pattern\":\"*\"}}]},\"uuid\":\"a3\",\"parentUuid\":null,\"isSidechain\":true,\"agentId\":\"bbb\",\"timestamp\":\"2026-05-01T10:00:02.000Z\",\"sessionId\":\"11111111-1111-1111-1111-111111111111\",\"cwd\":\"/Users/test/myproject\"}\n");
+    std::fs::write(wf.join("agent-bbb.meta.json"), "{\"agentType\":\"Explore\"}").unwrap();
+    std::fs::write(wf.join("journal.jsonl"), "{\"type\":\"started\",\"key\":\"v2:abc\",\"agentId\":\"bbb\"}\n").unwrap();
+
+    TestEnv { projects, cache: TempDir::new().unwrap() }
+}
+
+#[test]
+fn indexes_subagent_tool_calls() {
+    let env = setup_subagent_env();
+    cq_cmd(&env)
+        .args(["sql", "SELECT COUNT(*) FROM tool_calls WHERE is_sidechain"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2")); // Read + Glob
+}
+
+#[test]
+fn excludes_journal_jsonl() {
+    let env = setup_subagent_env();
+    cq_cmd(&env)
+        .args(["sql", "SELECT COUNT(*) FROM raw_records WHERE source_file LIKE '%journal.jsonl%'"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0"));
+}
+
+#[test]
+fn workflow_id_visible_end_to_end() {
+    let env = setup_subagent_env();
+    cq_cmd(&env)
+        .args(["sql", "SELECT workflow_id FROM tool_calls WHERE name = 'Glob'"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("wf_xyz"));
+}
+
 // --- timeline tests ---
 
 fn timeline_env() -> TestEnv {
@@ -1343,4 +1405,24 @@ fn messages_fields_conflicts_with_context() {
         stderr.contains("--fields") && stderr.contains("-A"),
         "expected conflict error mentioning --fields and -A, got: {stderr}"
     );
+}
+
+#[test]
+fn populates_agent_type_from_meta() {
+    let env = setup_subagent_env();
+    cq_cmd(&env)
+        .args(["sql", "SELECT agent_type FROM tool_calls WHERE name = 'Read'"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("general-purpose"));
+}
+
+#[test]
+fn agent_type_null_for_main_loop() {
+    let env = setup_subagent_env();
+    cq_cmd(&env)
+        .args(["sql", "SELECT COUNT(*) FROM tool_calls WHERE name = 'Bash' AND agent_type IS NULL"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1"));
 }

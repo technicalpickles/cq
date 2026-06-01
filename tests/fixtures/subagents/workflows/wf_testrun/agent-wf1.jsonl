@@ -1,0 +1,1 @@
+{"type":"assistant","message":{"id":"w1","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"tool_use","id":"toolu_w1","name":"Glob","input":{"pattern":"**/*.rs"}}]},"uuid":"wa1","parentUuid":null,"isSidechain":true,"agentId":"agentWF","timestamp":"2026-05-01T11:00:00.000Z","sessionId":"sess-wf","cwd":"/Users/test/myproject"}

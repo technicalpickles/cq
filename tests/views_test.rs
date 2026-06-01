@@ -18,6 +18,7 @@ fn setup_db(fixture: &str) -> Connection {
             mtime_ns BIGINT,
             file_size BIGINT,
             cwd TEXT,
+            agent_type TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )"
     ).unwrap();
@@ -36,6 +37,7 @@ fn setup_db_multi(fixtures: &[&str]) -> Connection {
             mtime_ns BIGINT,
             file_size BIGINT,
             cwd TEXT,
+            agent_type TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )"
     ).unwrap();
@@ -319,6 +321,235 @@ fn multi_file_sessions() {
         .query_row("SELECT COUNT(DISTINCT session_id) FROM sessions", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 2, "two files should produce two sessions");
+}
+
+// ---- subagent tagging ----
+
+#[test]
+fn messages_tag_sidechain_rows() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 5, "all main-loop and sidechain messages are queryable");
+
+    let (is_side, agent): (bool, Option<String>) = conn
+        .query_row(
+            "SELECT is_sidechain, agent_id FROM messages WHERE uuid = 'su1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(is_side);
+    assert_eq!(agent.as_deref(), Some("agentAAA"));
+
+    let (is_side, agent): (bool, Option<String>) = conn
+        .query_row(
+            "SELECT is_sidechain, agent_id FROM messages WHERE uuid = 'mu1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(!is_side);
+    assert_eq!(agent, None);
+}
+
+#[test]
+fn tool_calls_tag_sidechain_rows() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tool_calls", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(total, 3, "Task + Read + Grep");
+
+    let main_only: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE NOT is_sidechain",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(main_only, 1, "only the Task call is main-loop");
+
+    let agent: Option<String> = conn
+        .query_row(
+            "SELECT agent_id FROM tool_calls WHERE name = 'Read'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(agent.as_deref(), Some("agentAAA"));
+}
+
+#[test]
+fn tool_results_tag_sidechain_rows() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let is_side: bool = conn
+        .query_row(
+            "SELECT is_sidechain FROM tool_results WHERE tool_use_id = 'toolu_s1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(is_side);
+}
+
+#[test]
+fn sessions_counts_exclude_sidechains() {
+    let conn = setup_db("mixed_sidechain_session.jsonl");
+    let (msgs, tools, users, subs): (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT message_count, tool_call_count, user_message_count, subagent_count
+             FROM sessions WHERE session_id = 'sess-mix'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(msgs, 2, "only main-loop messages counted");
+    assert_eq!(tools, 1, "only the main-loop Task call counted");
+    assert_eq!(users, 1, "only the main-loop user turn counted");
+    assert_eq!(subs, 1, "one distinct subagent (agentAAA)");
+
+    let first: String = conn
+        .query_row(
+            "SELECT first_user_message FROM sessions WHERE session_id = 'sess-mix'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(first, "run the analysis");
+}
+
+// ---- workflow_id extraction ----
+
+#[test]
+fn workflow_id_extracted_from_path() {
+    let conn = setup_db("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+    let wf: Option<String> = conn
+        .query_row(
+            "SELECT workflow_id FROM tool_calls WHERE name = 'Glob'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(wf.as_deref(), Some("wf_testrun"));
+}
+
+#[test]
+fn workflow_id_null_for_non_workflow() {
+    let conn = setup_db("multi_tool_session.jsonl");
+    let nulls: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE workflow_id IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(nulls, 0);
+}
+
+// ---- agent_type propagation ----
+
+#[test]
+fn agent_type_flows_from_registry() {
+    use std::path::PathBuf;
+    let conn = duckdb::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            agent_type TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+
+    let wf_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+    let wf_str = wf_path.display().to_string();
+
+    // Register the subagent's agent_type as the indexer would.
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type)
+         VALUES (?, 0, 0, NULL, 'Explore')",
+        [&wf_str],
+    )
+    .unwrap();
+
+    cq::views::register_views(&conn, &[wf_path]).unwrap();
+
+    let at: Option<String> = conn
+        .query_row(
+            "SELECT agent_type FROM tool_calls WHERE name = 'Glob'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(at.as_deref(), Some("Explore"));
+}
+
+// ---- cross-cwd subagent de-duplication ----
+
+#[test]
+fn sessions_single_row_across_cwds() {
+    use std::path::PathBuf;
+    let conn = duckdb::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            agent_type TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+
+    let main_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("simple_session.jsonl");
+    let sub_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("subagent_other_cwd.jsonl");
+
+    // Main session file's home is /Users/test/myproject; the subagent ran in /Users/other/repo.
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type)
+         VALUES (?, 0, 0, '/Users/test/myproject', NULL)",
+        [&main_path.display().to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type)
+         VALUES (?, 0, 0, '/Users/other/repo', 'Explore')",
+        [&sub_path.display().to_string()],
+    )
+    .unwrap();
+
+    cq::views::register_views(&conn, &[main_path, sub_path]).unwrap();
+
+    let rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE session_id = 'sess-001'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 1, "one row per session even when subagents ran in another cwd");
+
+    let (project, subs): (String, i64) = conn
+        .query_row(
+            "SELECT project, subagent_count FROM sessions WHERE session_id = 'sess-001'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(project, "/Users/test/myproject", "project is the main-loop home, not the subagent cwd");
+    assert_eq!(subs, 1, "the other-cwd subagent is still counted");
 }
 
 // ---- empty files ----
