@@ -285,12 +285,20 @@ fn scan_all(projects_dir: &Path) -> Result<HashMap<PathBuf, FileInfo>> {
 
 fn scan_directory(dir: &Path) -> Result<HashMap<PathBuf, FileInfo>> {
     let mut files = HashMap::new();
+    collect_jsonl(dir, &mut files)?;
+    Ok(files)
+}
+
+/// Recursively collect indexable JSONL transcripts under `dir`.
+fn collect_jsonl(dir: &Path, files: &mut HashMap<PathBuf, FileInfo>) -> Result<()> {
     if !dir.exists() {
-        return Ok(files);
+        return Ok(());
     }
-    for file_entry in std::fs::read_dir(dir)?.filter_map(|e| e.ok()) {
-        let path = file_entry.path();
-        if path.extension().map(|e| e == "jsonl").unwrap_or(false) && path.is_file() {
+    for entry in std::fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            collect_jsonl(&path, files)?;
+        } else if is_indexable_jsonl(&path) {
             if let Ok(metadata) = std::fs::metadata(&path) {
                 let mtime_ns = metadata
                     .modified()
@@ -308,7 +316,14 @@ fn scan_directory(dir: &Path) -> Result<HashMap<PathBuf, FileInfo>> {
             }
         }
     }
-    Ok(files)
+    Ok(())
+}
+
+/// A `.jsonl` transcript we should index. Excludes workflow `journal.jsonl`
+/// ledgers, which are resume bookkeeping, not transcripts.
+fn is_indexable_jsonl(path: &Path) -> bool {
+    path.extension().map(|e| e == "jsonl").unwrap_or(false)
+        && path.file_name().map(|n| n != "journal.jsonl").unwrap_or(false)
 }
 
 /// Load the current file registry from the database.
