@@ -81,15 +81,27 @@ it is populated only for workflow-spawned agents.
 
 ### sessions view
 
+The sessions view groups by `session_id` only, producing exactly one row per
+session. `project` is taken from the main-loop rows (the session's home directory)
+via `MAX(project) FILTER (WHERE NOT is_sidechain)`, with a fallback to
+`MAX(project)` for the hypothetical case of an all-sidechain session.
+
+Subagents commonly start in a different `cwd` than their parent session (for
+example, when Claude Code launches from a workspace root and dispatches agents into
+individual repo worktrees). Grouping by `session_id` only ensures those agents do
+not split the session into multiple rows. The row-level views (`messages`,
+`tool_calls`, `tool_results`) keep each subagent's own `project`, so
+`WHERE session_id = ... GROUP BY project` still reveals where each subagent ran.
+
 Counts (`message_count`, `tool_call_count`, `user_message_count`, `first_user_message`,
 `started_at`, `ended_at`) are computed over main-loop rows only (`WHERE NOT
-is_sidechain`), so the overview stays honest and one-row-per-session.
+is_sidechain`), so the overview stays honest.
 
 One new column, `subagent_count` = `COUNT(DISTINCT agent_id)` for that session
-(across all rows, sidechain or not). It is a "there is hidden depth here" signal:
-a session that fanned out 37 agents reads differently from one that did not,
-without inflating the main counts. Detailed per-agent rollups remain a `GROUP BY
-agent_id` away in the row-level views.
+(across all rows, sidechain or not, regardless of the directory they ran in). It
+is a "there is hidden depth here" signal: a session that fanned out 37 agents reads
+differently from one that did not, without inflating the main counts. Detailed
+per-agent rollups remain a `GROUP BY agent_id` away in the row-level views.
 
 ## SQL surface
 

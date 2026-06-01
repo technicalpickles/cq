@@ -218,7 +218,10 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
     let sql = "CREATE OR REPLACE VIEW sessions AS
         SELECT
             session_id,
-            project,
+            COALESCE(
+                MAX(project) FILTER (WHERE NOT is_sidechain),
+                MAX(project)
+            ) AS project,
             MIN(timestamp) FILTER (WHERE NOT is_sidechain) AS started_at,
             MAX(timestamp) FILTER (WHERE NOT is_sidechain) AS ended_at,
             COUNT(*) FILTER (WHERE NOT is_sidechain) AS message_count,
@@ -236,7 +239,7 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
              AND m2.text NOT LIKE '#%'
              ORDER BY m2.timestamp LIMIT 1) AS first_user_message
         FROM messages m1
-        GROUP BY session_id, project";
+        GROUP BY session_id";
     conn.execute_batch(sql)
         .context("Failed to create sessions view")?;
     Ok(())

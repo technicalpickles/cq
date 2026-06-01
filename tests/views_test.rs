@@ -491,6 +491,67 @@ fn agent_type_flows_from_registry() {
     assert_eq!(at.as_deref(), Some("Explore"));
 }
 
+// ---- cross-cwd subagent de-duplication ----
+
+#[test]
+fn sessions_single_row_across_cwds() {
+    use std::path::PathBuf;
+    let conn = duckdb::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            agent_type TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+
+    let main_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("simple_session.jsonl");
+    let sub_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("subagent_other_cwd.jsonl");
+
+    // Main session file's home is /Users/test/myproject; the subagent ran in /Users/other/repo.
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type)
+         VALUES (?, 0, 0, '/Users/test/myproject', NULL)",
+        [&main_path.display().to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type)
+         VALUES (?, 0, 0, '/Users/other/repo', 'Explore')",
+        [&sub_path.display().to_string()],
+    )
+    .unwrap();
+
+    cq::views::register_views(&conn, &[main_path, sub_path]).unwrap();
+
+    let rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE session_id = 'sess-001'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 1, "one row per session even when subagents ran in another cwd");
+
+    let (project, subs): (String, i64) = conn
+        .query_row(
+            "SELECT project, subagent_count FROM sessions WHERE session_id = 'sess-001'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(project, "/Users/test/myproject", "project is the main-loop home, not the subagent cwd");
+    assert_eq!(subs, 1, "the other-cwd subagent is still counted");
+}
+
 // ---- empty files ----
 
 #[test]
