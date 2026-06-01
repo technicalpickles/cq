@@ -420,6 +420,34 @@ fn sessions_counts_exclude_sidechains() {
     assert_eq!(first, "run the analysis");
 }
 
+// ---- workflow_id extraction ----
+
+#[test]
+fn workflow_id_extracted_from_path() {
+    let conn = setup_db("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+    let wf: Option<String> = conn
+        .query_row(
+            "SELECT workflow_id FROM tool_calls WHERE name = 'Glob'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(wf.as_deref(), Some("wf_testrun"));
+}
+
+#[test]
+fn workflow_id_null_for_non_workflow() {
+    let conn = setup_db("multi_tool_session.jsonl");
+    let nulls: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE workflow_id IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(nulls, 0);
+}
+
 // ---- empty files ----
 
 #[test]
