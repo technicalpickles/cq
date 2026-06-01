@@ -105,31 +105,29 @@ impl TranscriptProvider for ClaudeProvider {
             return Ok(files);
         }
 
-        let entries: Vec<_> = std::fs::read_dir(&self.base_dir)?
+        let project_dirs: Vec<_> = std::fs::read_dir(&self.base_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
             .collect();
 
-        for entry in entries {
+        for entry in project_dirs {
             let dir_name = entry.file_name().to_string_lossy().to_string();
             if let Some(ref project) = scope.project {
                 if !self.matches_project(&dir_name, project) {
                     continue;
                 }
             }
-            if let Ok(dir_entries) = std::fs::read_dir(entry.path()) {
-                for file_entry in dir_entries.filter_map(|e| e.ok()) {
-                    let path = file_entry.path();
-                    if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                        if let Some(ref session) = scope.session {
-                            let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-                            if !stem.starts_with(session.as_str()) {
-                                continue;
-                            }
-                        }
-                        files.push(path);
+            let project_path = entry.path();
+            let mut found = Vec::new();
+            collect_jsonl_paths(&project_path, &mut found);
+            for path in found {
+                if let Some(ref session) = scope.session {
+                    let sid = session_id_for_file(&project_path, &path);
+                    if !sid.starts_with(session.as_str()) {
+                        continue;
                     }
                 }
+                files.push(path);
             }
         }
         Ok(files)
@@ -164,6 +162,39 @@ impl TranscriptProvider for ClaudeProvider {
         }
         projects.sort_by(|a, b| b.file_count.cmp(&a.file_count));
         Ok(projects)
+    }
+}
+
+/// Recursively collect indexable `.jsonl` files under `dir`, excluding
+/// workflow `journal.jsonl` ledgers.
+fn collect_jsonl_paths(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            collect_jsonl_paths(&path, out);
+        } else if path.extension().map(|e| e == "jsonl").unwrap_or(false)
+            && path.file_name().map(|n| n != "journal.jsonl").unwrap_or(false)
+        {
+            out.push(path);
+        }
+    }
+}
+
+/// The session a transcript belongs to: the first path component under the
+/// project dir, with any `.jsonl` extension stripped. For a top-level file
+/// `<project>/<uuid>.jsonl` this is `<uuid>`; for a nested subagent file
+/// `<project>/<uuid>/subagents/agent-x.jsonl` it is also `<uuid>`.
+fn session_id_for_file(project_dir: &Path, file: &Path) -> String {
+    let rel = file.strip_prefix(project_dir).unwrap_or(file);
+    match rel.components().next() {
+        Some(first) => {
+            let s = first.as_os_str().to_string_lossy();
+            s.strip_suffix(".jsonl").unwrap_or(&s).to_string()
+        }
+        None => String::new(),
     }
 }
 
@@ -319,6 +350,30 @@ mod tests {
         let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
         let result = provider.project_for_cwd("/Users/test/other");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn discover_files_includes_subagents() {
+        let tmp = TempDir::new().unwrap();
+        let proj = tmp.path().join("-Users-alice-myproject");
+        let sess = "abc12345-0000-0000-0000-000000000000";
+        let sub = proj.join(sess).join("subagents");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(proj.join(format!("{sess}.jsonl")), "{}").unwrap();
+        fs::write(sub.join("agent-x.jsonl"), "{}").unwrap();
+        fs::write(sub.join("journal.jsonl"), "{}").unwrap();
+
+        let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
+
+        // No filter: top-level + subagent, but not the journal ledger.
+        let all = provider.discover_files(&QueryScope::new(None, None, None)).unwrap();
+        assert_eq!(all.len(), 2, "session file + subagent file, journal excluded");
+
+        // Session filter matches the parent session dir for the nested file.
+        let scoped = provider
+            .discover_files(&QueryScope::new(None, Some("abc12345".to_string()), None))
+            .unwrap();
+        assert_eq!(scoped.len(), 2);
     }
 
     #[test]
