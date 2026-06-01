@@ -448,6 +448,49 @@ fn workflow_id_null_for_non_workflow() {
     assert_eq!(nulls, 0);
 }
 
+// ---- agent_type propagation ----
+
+#[test]
+fn agent_type_flows_from_registry() {
+    use std::path::PathBuf;
+    let conn = duckdb::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            agent_type TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+
+    let wf_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+    let wf_str = wf_path.display().to_string();
+
+    // Register the subagent's agent_type as the indexer would.
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type)
+         VALUES (?, 0, 0, NULL, 'Explore')",
+        [&wf_str],
+    )
+    .unwrap();
+
+    cq::views::register_views(&conn, &[wf_path]).unwrap();
+
+    let at: Option<String> = conn
+        .query_row(
+            "SELECT agent_type FROM tool_calls WHERE name = 'Glob'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(at.as_deref(), Some("Explore"));
+}
+
 // ---- empty files ----
 
 #[test]
