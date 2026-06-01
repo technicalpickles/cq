@@ -326,34 +326,6 @@ fn is_indexable_jsonl(path: &Path) -> bool {
         && path.file_name().map(|n| n != "journal.jsonl").unwrap_or(false)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sync_scope::SyncScope;
-    use std::time::Duration;
-    use tempfile::TempDir;
-
-    #[test]
-    fn max_dir_mtime_detects_deep_new_file() {
-        let tmp = TempDir::new().unwrap();
-        let proj = tmp.path().join("-Users-test-myproject");
-        let sub = proj.join("sess-1").join("subagents");
-        std::fs::create_dir_all(&sub).unwrap();
-
-        let scope = SyncScope::All;
-        let before = max_dir_mtime(tmp.path(), &scope).unwrap();
-
-        std::thread::sleep(Duration::from_millis(20));
-        std::fs::write(sub.join("agent-new.jsonl"), "{}\n").unwrap();
-
-        let after = max_dir_mtime(tmp.path(), &scope).unwrap();
-        assert!(
-            after > before,
-            "a new deep subagent file must advance max_dir_mtime (before={before}, after={after})"
-        );
-    }
-}
-
 /// Load the current file registry from the database.
 fn load_registry(conn: &Connection) -> Result<HashMap<String, FileInfo>> {
     let mut stmt = conn.prepare(
@@ -444,4 +416,32 @@ fn index_files(conn: &Connection, files: &[PathBuf]) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync_scope::SyncScope;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    #[test]
+    fn max_dir_mtime_detects_deep_new_file() {
+        let tmp = TempDir::new().unwrap();
+        let proj = tmp.path().join("-Users-test-myproject");
+        let sub = proj.join("sess-1").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let scope = SyncScope::All;
+        let before = max_dir_mtime(tmp.path(), &scope).unwrap();
+
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(sub.join("agent-new.jsonl"), "{}\n").unwrap();
+
+        let after = max_dir_mtime(tmp.path(), &scope).unwrap();
+        assert!(
+            after > before,
+            "a new deep subagent file must advance max_dir_mtime (before={before}, after={after})"
+        );
+    }
 }
