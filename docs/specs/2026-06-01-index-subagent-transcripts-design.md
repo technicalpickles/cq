@@ -153,11 +153,38 @@ A subagent file written under `<session>/subagents/` does not bump that mtime, s
 the Auto fast-path would skip re-indexing and miss new subagent transcripts until
 the next `--reindex`.
 
-Fix: extend `max_dir_mtime` so that, for each project directory in scope, it also
-stats the immediate `<session>/` subdirectories and their `subagents/` subtree, and
-folds those mtimes into the max. This costs a handful of extra `stat()` calls per
-sync (proportional to sessions in scope) and keeps live `cq tools --session P`
-fresh without forcing `--reindex`.
+Fix: make `max_dir_mtime` take the max mtime over **all** directories in scope
+recursively (project dirs, session dirs, `subagents/`, and `workflows/wf_*/`),
+rather than special-casing one level. Creating any new transcript file bumps its
+immediate parent directory's mtime, so a recursive max uniformly catches a new
+session, a new subagent, or a new workflow agent.
+
+### Measured cost (this corpus: 45 project dirs, 534 sessions, 636 agent files)
+
+- Stat'ing all 179 session + `subagents/` dirs: ~3.5 ms.
+- A full recursive walk of the entire tree: ~20-30 ms.
+
+The tree is hundreds of directories, not millions, so the deepened walk is
+single-digit to low-tens of milliseconds. There is no meaningful budget the
+shallow fast-path was protecting; the expensive part of a real sync is the DuckDB
+reparse of changed files, which the mtime gate still avoids when nothing changed.
+
+### Append-blindness is pre-existing, not introduced
+
+Measured directory-mtime behavior on this filesystem:
+
+| Action | Bumps parent dir mtime? |
+|---|---|
+| Append to existing file | no |
+| Create a new file | yes (immediate parent only) |
+| Create a new subdir | yes (immediate parent only) |
+
+Appending to a file bumps no directory's mtime at any level, so the current
+top-level fast-path **already** misses growth of an existing session file; it only
+catches newly-created files. The recursive `max_dir_mtime` inherits exactly this
+property: it catches a new `agent-*.jsonl` appearing (the common case when a
+workflow fans out) and does not catch pure appends, the same as today for the main
+session. `--reindex` (Force mode) remains the way to force a full re-parse.
 
 ## Cache migration
 
