@@ -8,7 +8,12 @@ repository = "https://github.com/technicalpickles/cq"
 authors = ["Josh Nichols <josh@technicalpickles.com>"]
 
 [dependencies]
-duckdb = { version = "1", features = ["bundled", "json"] }
+# Pinned exactly: the duckdb crate tracks DuckDB's own release versioning, and a
+# bump within the old `"1"` caret range (late May -> early June 2026) silently
+# tightened TIMESTAMPTZ arithmetic, dropping the `-(TIMESTAMPTZ, INTERVAL)`
+# overload that `now() - INTERVAL N DAY` relied on. Pin so behavior stays
+# predictable; bump deliberately and re-check timestamp date math when you do.
+duckdb = { version = "=1.10501.0", features = ["bundled", "json"] }
 fs2 = "0.4"
 clap = { version = "4", features = ["derive"] }
 owo-colors = { version = "4", features = ["supports-colors"] }
