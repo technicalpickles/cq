@@ -291,6 +291,11 @@ fn main() -> Result<()> {
         }
         Command::Sql { query } => {
             if let Err(e) = sql::run(&conn, &query, &format, wide) {
+                // Display ({e}), not Debug ({e:?}): the top-level message is the
+                // useful DuckDB error (with the `LINE N: ... ^` pointer). The
+                // cause chain only adds "Error code 1: Unknown error code" noise,
+                // and nothing in sql::run attaches .context worth surfacing. We
+                // catch here only to append the timestamp hint after the error.
                 eprintln!("Error: {e}");
                 if let Some(hint) = sql::timestamp_error_hint(&e.to_string()) {
                     eprintln!("{}", cq::style::hint(hint));

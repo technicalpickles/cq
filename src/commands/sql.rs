@@ -21,19 +21,28 @@ pub fn run(conn: &Connection, query: &str, format: &OutputFormat, wide: bool) ->
 ///   - `Cannot compare values of type VARCHAR and type TIMESTAMP` from
 ///     comparing a column directly against a `TIMESTAMP '...'` literal.
 ///
+/// The match strings are the verbatim phrasings DuckDB emits on the pinned
+/// version (=1.10501.0). If you bump the pin, re-run the tests below: a reworded
+/// DuckDB error makes the hint silently stop appearing (the safe failure
+/// direction, but worth knowing). The binder case anchors on the full operator
+/// signature so an unrelated error that merely echoes the offending query text
+/// (DuckDB echoes the SQL) can't trip it.
+///
 /// Returns `None` for any other error so we never editorialize on unrelated SQL.
 pub fn timestamp_error_hint(message: &str) -> Option<&'static str> {
-    let now_minus_interval =
-        message.contains("TIMESTAMP WITH TIME ZONE") && message.contains("INTERVAL");
-    let varchar_timestamp_compare = message.contains("Cannot compare values")
+    let now_minus_interval = message.contains("-(TIMESTAMP WITH TIME ZONE, INTERVAL)");
+    let varchar_timestamp_compare = message.contains("Cannot compare values of type")
         && message.contains("VARCHAR")
         && message.contains("TIMESTAMP");
 
     if now_minus_interval || varchar_timestamp_compare {
+        // Note: deliberately does not suggest --since. It only filters the
+        // sessions/messages/tools subcommands; `cq sql` runs the query verbatim
+        // and ignores scope flags entirely.
         Some(
-            "Hint: timestamp columns are VARCHAR ISO strings. Use --since for recency \
-             windows, compare them as strings (timestamp > '2026-06-01'), or cast with \
-             now()::TIMESTAMP.",
+            "Hint: timestamp columns are VARCHAR ISO strings. Compare them as strings \
+             (timestamp > '2026-06-01') or cast with now()::TIMESTAMP. For recency windows, \
+             the sessions/messages/tools commands take --since.",
         )
     } else {
         None
