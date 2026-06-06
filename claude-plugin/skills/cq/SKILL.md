@@ -24,7 +24,7 @@ user_invocable: true
 - `--project <NAME>` - Substring match on project name
 - `--session <ID>` - Session ID (full UUID required, validates format)
 - `--all` - Show all projects (disable auto-scoping to current directory)
-- `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`)
+- `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`); applies to `sessions`/`tools`/`messages`, not `cq sql` (raw SQL ignores scope flags)
 - `--json` - Machine-readable JSON output
 - `--table` - Aligned table with header
 - `--limit <N>` - Max results (default 50, 0 for unlimited)
@@ -64,7 +64,7 @@ json_extract_string(input, '$.pattern')    -- Glob/Grep patterns
 - Use `--json` when parsing output programmatically or piping to other tools.
 - Do not suppress stderr on a cq pipe (`cq ... --json 2>/dev/null | ...`). If the SQL errors, the error goes to stderr and stdout is empty, so the downstream consumer (e.g. `python3 -c json.load`) dies with a confusing `Expecting value: line 1 column 1` instead of the real cq error. Let stderr through, or redirect to a temp file and check it.
 - The convenience subcommands (`sessions`, `tools`, `messages`) cover most needs. Reach for `cq sql` when you need joins or aggregations across views.
-- `--since` applies to all subcommands including `cq sql`. Use it instead of writing time-filter clauses in SQL. cq uses DuckDB, not SQLite, so SQLite functions like `datetime()` will not work. Do NOT reach for `WHERE timestamp > now() - INTERVAL N DAY`: it is redundant with `--since` and currently errors anyway (see Tips below).
+- `--since` filters the convenience subcommands (`sessions`, `tools`, `messages`), but NOT `cq sql`: raw SQL runs verbatim and ignores `--since`/`--project`/`--session`. On `cq sql`, filter time with a string comparison instead, e.g. `WHERE timestamp >= '2026-05-28'`. cq uses DuckDB, not SQLite, so SQLite functions like `datetime()` will not work. Do NOT reach for `WHERE timestamp > now() - INTERVAL N DAY`: it errors (see Tips below).
 - `cq` auto-scopes to the current directory's project. The scope hint shows which path is being matched.
 - Use `--project <name>` to query a different project (substring match, searches all project directories).
 - Use `--all` to disable auto-scoping entirely and query across all projects.
@@ -80,13 +80,13 @@ json_extract_string(input, '$.pattern')    -- Glob/Grep patterns
 
 The `timestamp`, `started_at`, and `ended_at` columns are `VARCHAR` ISO 8601 strings (e.g. `2026-05-21T17:48:17.818Z`), not DuckDB timestamps. The format is fixed-width UTC, so lexical order equals chronological order. That means most of what you want already works on the strings:
 
-- **Time windows:** use `--since 7d`. Don't write date math.
+- **Time windows:** filter on the string directly, e.g. `WHERE timestamp >= '2026-05-28'` (lexical order is chronological). `--since` does NOT apply to `cq sql`; it only filters the `sessions`/`tools`/`messages` subcommands.
 - **Explicit ranges:** compare against a string literal, e.g. `WHERE timestamp >= '2026-05-28'`. Comparing against a `TIMESTAMP '...'` literal fails with `Cannot compare VARCHAR and TIMESTAMP`.
 - **Sort / bucket by day:** `ORDER BY timestamp` works; `substr(timestamp, 1, 10)` gives the date for `GROUP BY`.
 
 What does NOT work on the raw columns:
 
-- `now() - INTERVAL N DAY` errors with `No function matches '-(TIMESTAMP WITH TIME ZONE, INTERVAL)'`. Use `--since` instead.
+- `now() - INTERVAL N DAY` errors with `No function matches '-(TIMESTAMP WITH TIME ZONE, INTERVAL)'`. Compare against a string literal, or cast with `now()::TIMESTAMP - INTERVAL N DAY`. cq surfaces this hint automatically when the query fails.
 - `strftime(...)`, `date_trunc(...)`, `extract(...)` need a real timestamp. For genuine per-row date math (e.g. correlating events within a window), cast inline: `timestamp::TIMESTAMP`.
 
 ## Error Recovery
