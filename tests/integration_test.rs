@@ -122,6 +122,78 @@ fn sql_raw_query() {
 }
 
 #[test]
+fn sql_now_minus_interval_shows_timestamp_hint() {
+    // `now() - INTERVAL N DAY` errors on the pinned DuckDB (TIMESTAMPTZ
+    // arithmetic was tightened). cq should append a hint pointing at the fix.
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["sql", "SELECT now() - INTERVAL 2 DAY"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "Should exit 1 on SQL error");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The hint is additive: the original DuckDB error must still be surfaced.
+    assert!(
+        stderr.contains("Error:") && stderr.contains("INTERVAL"),
+        "Should still print the underlying DuckDB error, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("timestamp columns are VARCHAR ISO strings"),
+        "Should hint about VARCHAR timestamp columns, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("now()::TIMESTAMP"),
+        "Should suggest the cast fix, got: {stderr}"
+    );
+    // Must not steer raw-SQL users to --since, which cq sql ignores.
+    assert!(
+        !stderr.contains("Use --since"),
+        "Hint should not tell raw-SQL users to use --since, got: {stderr}"
+    );
+}
+
+#[test]
+fn sql_varchar_timestamp_compare_shows_hint() {
+    // Comparing a VARCHAR column against a TIMESTAMP literal is the other half
+    // of the same gotcha.
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["sql", "SELECT * FROM sessions WHERE started_at >= TIMESTAMP '2026-01-01'"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "Should exit 1 on SQL error");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Error:") && stderr.contains("Cannot compare"),
+        "Should still print the underlying DuckDB error, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("timestamp columns are VARCHAR ISO strings"),
+        "Should hint about VARCHAR timestamp columns, got: {stderr}"
+    );
+}
+
+#[test]
+fn sql_unrelated_error_has_no_timestamp_hint() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["sql", "SELECT * FROM no_such_table"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "Should exit 1 on SQL error");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Confirm we actually hit the SQL error path (not a vacuous pass).
+    assert!(
+        stderr.contains("does not exist"),
+        "Expected a catalog error for the missing table, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("timestamp columns are VARCHAR"),
+        "Unrelated errors should not get the timestamp hint, got: {stderr}"
+    );
+}
+
+#[test]
 fn json_output() {
     let env = setup_env(&["simple_session.jsonl"]);
     cq_cmd(&env)
