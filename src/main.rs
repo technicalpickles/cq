@@ -9,7 +9,7 @@ use cq::output::OutputFormat;
 use cq::scope::QueryScope;
 
 #[derive(Parser)]
-#[command(name = "cq", about = "Query AI agent session transcripts with SQL")]
+#[command(name = "cq", version, about = "Query AI agent session transcripts with SQL")]
 struct Cli {
     /// Scope to a project (substring match, e.g. 'myproject')
     #[arg(short = 'p', long, global = true)]
