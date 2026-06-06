@@ -62,8 +62,9 @@ json_extract_string(input, '$.pattern')    -- Glob/Grep patterns
 ## Working With cq
 
 - Use `--json` when parsing output programmatically or piping to other tools.
+- Do not suppress stderr on a cq pipe (`cq ... --json 2>/dev/null | ...`). If the SQL errors, the error goes to stderr and stdout is empty, so the downstream consumer (e.g. `python3 -c json.load`) dies with a confusing `Expecting value: line 1 column 1` instead of the real cq error. Let stderr through, or redirect to a temp file and check it.
 - The convenience subcommands (`sessions`, `tools`, `messages`) cover most needs. Reach for `cq sql` when you need joins or aggregations across views.
-- `--since` applies to all subcommands including `cq sql`. Use it instead of writing time-filter clauses in SQL. cq uses DuckDB, not SQLite, so SQLite functions like `datetime()` will not work.
+- `--since` applies to all subcommands including `cq sql`. Use it instead of writing time-filter clauses in SQL. cq uses DuckDB, not SQLite, so SQLite functions like `datetime()` will not work. Do NOT reach for `WHERE timestamp > now() - INTERVAL N DAY`: it is redundant with `--since` and currently errors anyway (see Tips below).
 - `cq` auto-scopes to the current directory's project. The scope hint shows which path is being matched.
 - Use `--project <name>` to query a different project (substring match, searches all project directories).
 - Use `--all` to disable auto-scoping entirely and query across all projects.
@@ -75,6 +76,19 @@ json_extract_string(input, '$.pattern')    -- Glob/Grep patterns
 - Use `<>` instead of `!=` in SQL queries. The shell can mangle `!=` into `\!=`, causing DuckDB parse errors.
 - Avoid shell metacharacters in query strings where possible. Single-quote the SQL string to prevent expansion.
 
+### Timestamps are strings
+
+The `timestamp`, `started_at`, and `ended_at` columns are `VARCHAR` ISO 8601 strings (e.g. `2026-05-21T17:48:17.818Z`), not DuckDB timestamps. The format is fixed-width UTC, so lexical order equals chronological order. That means most of what you want already works on the strings:
+
+- **Time windows:** use `--since 7d`. Don't write date math.
+- **Explicit ranges:** compare against a string literal, e.g. `WHERE timestamp >= '2026-05-28'`. Comparing against a `TIMESTAMP '...'` literal fails with `Cannot compare VARCHAR and TIMESTAMP`.
+- **Sort / bucket by day:** `ORDER BY timestamp` works; `substr(timestamp, 1, 10)` gives the date for `GROUP BY`.
+
+What does NOT work on the raw columns:
+
+- `now() - INTERVAL N DAY` errors with `No function matches '-(TIMESTAMP WITH TIME ZONE, INTERVAL)'`. Use `--since` instead.
+- `strftime(...)`, `date_trunc(...)`, `extract(...)` need a real timestamp. For genuine per-row date math (e.g. correlating events within a window), cast inline: `timestamp::TIMESTAMP`.
+
 ## Error Recovery
 
 When a query fails, returns unexpected results, or a column/view doesn't exist:
@@ -82,3 +96,5 @@ When a query fails, returns unexpected results, or a column/view doesn't exist:
 1. Run `cq schema` to check the current view definitions and example queries. This skill's inline schemas may be out of date with the installed version of cq.
 2. Do not guess at column names or view structures. Check `cq schema` first.
 3. If `cq schema` shows different schemas than what's documented here, trust `cq schema` and use what it shows.
+
+If cq fails with `Cannot open file ".../cq/index.duckdb": Operation not permitted`, the cache DB is outside the agent sandbox's writable paths. Retry the command with the sandbox disabled (Claude Code: `dangerouslyDisableSandbox: true`).
