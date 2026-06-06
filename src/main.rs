@@ -290,7 +290,13 @@ fn main() -> Result<()> {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;
         }
         Command::Sql { query } => {
-            sql::run(&conn, &query, &format, wide)?;
+            if let Err(e) = sql::run(&conn, &query, &format, wide) {
+                eprintln!("Error: {e}");
+                if let Some(hint) = sql::timestamp_error_hint(&e.to_string()) {
+                    eprintln!("{}", cq::style::hint(hint));
+                }
+                std::process::exit(1);
+            }
         }
         Command::Schema { .. } => unreachable!(),
     }
