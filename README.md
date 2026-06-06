@@ -97,6 +97,7 @@ Run `cq schema --examples` for a query cookbook.
 | `--no-color` | | Disable colored output |
 | `--limit <n>` | | Max results (default: 50, 0 for unlimited) |
 | `--offset <n>` | | Skip first N results |
+| `--version` | `-V` | Print the cq version |
 | `-A N` | | Show N messages after each match (messages, tools) |
 | `-B N` | | Show N messages before each match (messages, tools) |
 | `-C N` | | Shorthand for `-A N -B N` (messages, tools) |
