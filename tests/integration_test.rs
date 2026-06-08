@@ -1501,3 +1501,231 @@ fn agent_type_null_for_main_loop() {
         .success()
         .stdout(predicate::str::contains("1"));
 }
+
+// ---- multi-source output (Task 9: source column + per-source grouping/skills) ----
+
+/// Build an env with a main source (CQ_PROJECTS_DIR) plus one cenv source
+/// (CENV_BASE/<env_name>/projects). Both carry the SAME project path so we can
+/// prove grouping by (source, project) and per-source skill correctness.
+///
+/// `main_jsonl` and `cenv_jsonl` are raw JSONL bodies written into a project dir
+/// named to match their embedded cwd ("/Users/test/myproject").
+struct MultiSourceEnv {
+    projects: TempDir,
+    cenv_base: TempDir,
+    cache: TempDir,
+    env_name: String,
+}
+
+fn setup_multi_source(env_name: &str, main_jsonl: &str, cenv_jsonl: &str) -> MultiSourceEnv {
+    let projects = TempDir::new().unwrap();
+    let cenv_base = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
+
+    // main source: CQ_PROJECTS_DIR/-Users-test-myproject/
+    let main_proj = projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&main_proj).unwrap();
+    std::fs::write(main_proj.join("main-sess.jsonl"), main_jsonl).unwrap();
+
+    // cenv source: CENV_BASE/<env_name>/projects/-Users-test-myproject/
+    let cenv_proj = cenv_base
+        .path()
+        .join(env_name)
+        .join("projects")
+        .join("-Users-test-myproject");
+    std::fs::create_dir_all(&cenv_proj).unwrap();
+    std::fs::write(cenv_proj.join("cenv-sess.jsonl"), cenv_jsonl).unwrap();
+
+    MultiSourceEnv {
+        projects,
+        cenv_base,
+        cache,
+        env_name: env_name.to_string(),
+    }
+}
+
+fn multi_cmd(env: &MultiSourceEnv) -> Command {
+    let mut cmd = Command::cargo_bin("cq").unwrap();
+    cmd.env("CQ_PROJECTS_DIR", env.projects.path());
+    cmd.env("CQ_CACHE_DIR", env.cache.path());
+    cmd.env("CENV_BASE", env.cenv_base.path());
+    cmd.env("NO_COLOR", "1");
+    cmd
+}
+
+// A user+assistant pair in /Users/test/myproject with one Skill call.
+// Caller supplies a distinct sessionId and skill name.
+fn session_with_skill(session_id: &str, skill: &str, tool_id: &str) -> String {
+    format!(
+        "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"do a thing\"}},\"uuid\":\"u-{session_id}\",\"parentUuid\":null,\"isSidechain\":false,\"timestamp\":\"2026-04-13T10:00:00.000Z\",\"sessionId\":\"{session_id}\",\"cwd\":\"/Users/test/myproject\"}}\n\
+         {{\"type\":\"assistant\",\"message\":{{\"id\":\"m-{session_id}\",\"role\":\"assistant\",\"model\":\"claude-opus-4-6\",\"content\":[{{\"type\":\"tool_use\",\"id\":\"{tool_id}\",\"name\":\"Skill\",\"input\":{{\"skill\":\"{skill}\"}}}}]}},\"uuid\":\"a-{session_id}\",\"parentUuid\":\"u-{session_id}\",\"isSidechain\":false,\"timestamp\":\"2026-04-13T10:00:05.000Z\",\"sessionId\":\"{session_id}\",\"cwd\":\"/Users/test/myproject\"}}\n"
+    )
+}
+
+#[test]
+fn projects_unscoped_groups_by_source() {
+    // Same project path under two sources -> two rows when unscoped (--all).
+    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
+    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    let output = multi_cmd(&env)
+        .args(["--json", "--all", "projects"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+
+    // myproject appears under both 'main' and 'pinwheel': two rows.
+    let myproject_rows: Vec<&serde_json::Value> = parsed
+        .iter()
+        .filter(|r| r["project"].as_str() == Some("/Users/test/myproject"))
+        .collect();
+    assert_eq!(
+        myproject_rows.len(),
+        2,
+        "same project path under two sources should produce two rows, got: {stdout}"
+    );
+    let sources: std::collections::HashSet<&str> = myproject_rows
+        .iter()
+        .filter_map(|r| r["source"].as_str())
+        .collect();
+    assert!(sources.contains("main"), "expected a 'main' source row, got: {sources:?}");
+    assert!(sources.contains("pinwheel"), "expected a 'pinwheel' source row, got: {sources:?}");
+}
+
+#[test]
+fn projects_scoped_groups_by_project_only() {
+    // Scoped to one source -> a single row for the project (no per-source split).
+    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
+    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    let output = multi_cmd(&env)
+        .args(["--json", "--source", "main", "projects"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+
+    let myproject_rows: Vec<&serde_json::Value> = parsed
+        .iter()
+        .filter(|r| r["project"].as_str() == Some("/Users/test/myproject"))
+        .collect();
+    assert_eq!(
+        myproject_rows.len(),
+        1,
+        "scoped to one source the project should be a single row, got: {stdout}"
+    );
+    assert_eq!(myproject_rows[0]["source"].as_str(), Some("main"));
+}
+
+#[test]
+fn projects_skill_count_is_per_source() {
+    // Each source has a distinct Skill call for the same project path.
+    // --source main must reflect only main's skill, not the cenv source's.
+    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
+    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    // Scoped to main: skills = ["sanitation"], count 1 (NOT 2, which would mean
+    // it counted the cenv source's skill too).
+    let output = multi_cmd(&env)
+        .args(["--json", "--source", "main", "projects"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let row = parsed
+        .iter()
+        .find(|r| r["project"].as_str() == Some("/Users/test/myproject"))
+        .expect("myproject row");
+    assert_eq!(row["skill_count"].as_i64(), Some(1), "main should count only its own skill, got: {stdout}");
+    let skills: Vec<&str> = row["skills"].as_array().unwrap().iter().filter_map(|s| s.as_str()).collect();
+    assert_eq!(skills, vec!["sanitation"], "main should list only its own skill, got: {skills:?}");
+
+    // Scoped to the cenv source: skills = ["obsidian"].
+    let output = multi_cmd(&env)
+        .args(["--json", "--source", &env.env_name, "projects"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    let row = parsed
+        .iter()
+        .find(|r| r["project"].as_str() == Some("/Users/test/myproject"))
+        .expect("myproject row");
+    let skills: Vec<&str> = row["skills"].as_array().unwrap().iter().filter_map(|s| s.as_str()).collect();
+    assert_eq!(skills, vec!["obsidian"], "cenv source should list only its own skill, got: {skills:?}");
+}
+
+#[test]
+fn projects_display_skill_count_per_source() {
+    // Default (non-JSON) display: per-source skill counts must not bleed across
+    // sources. Each source has exactly one distinct skill for the same project.
+    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
+    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    let output = multi_cmd(&env)
+        .args(["--source", "main", "projects", "--skills"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // main's skill appears; the cenv source's skill must NOT.
+    assert!(stdout.contains("sanitation"), "main's skill should show, got: {stdout}");
+    assert!(!stdout.contains("obsidian"), "cenv source's skill must not leak into main, got: {stdout}");
+    assert!(stdout.contains("1 skills"), "main should count exactly 1 skill, got: {stdout}");
+}
+
+#[test]
+fn sessions_source_column_by_flag() {
+    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
+    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    // --all (unscoped): SOURCE column present in table output.
+    let output = multi_cmd(&env)
+        .args(["--table", "--all", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("source"), "SOURCE column should appear under --all, got: {stdout}");
+    assert!(stdout.contains("main"), "main source value should appear, got: {stdout}");
+    assert!(stdout.contains("pinwheel"), "pinwheel source value should appear, got: {stdout}");
+
+    // --source main: SOURCE column omitted (redundant).
+    let output = multi_cmd(&env)
+        .args(["--table", "--source", "main", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Header row is the column names; "source" must not be a header.
+    let header_line = stdout.lines().find(|l| l.contains("project") && l.contains("session")).unwrap_or("");
+    assert!(!header_line.contains("source"), "SOURCE column should be omitted when scoped, header: {header_line}");
+}
+
+#[test]
+fn sessions_json_always_includes_source() {
+    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
+    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    // Even scoped to one source, JSON carries the source field.
+    let output = multi_cmd(&env)
+        .args(["--json", "--source", "main", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert!(!parsed.is_empty(), "expected at least one session, got: {stdout}");
+    assert_eq!(parsed[0]["source"].as_str(), Some("main"), "JSON should carry source, got: {stdout}");
+}
