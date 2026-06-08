@@ -27,6 +27,10 @@ const WORKFLOW_ID_EXPR: &str =
 const AGENT_TYPE_EXPR: &str =
     "(SELECT fr.agent_type FROM file_registry fr WHERE fr.file_path = source_file)";
 
+/// SQL expression for the source name, read from file_registry at index time.
+const SOURCE_EXPR: &str =
+    "(SELECT fr.source FROM file_registry fr WHERE fr.file_path = source_file)";
+
 /// Register all queryable views against the given JSONL transcript files.
 ///
 /// Creates four views:
@@ -99,6 +103,7 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
             SELECT
                 json_extract_string(json, '$.sessionId') AS session_id,
                 {PROJECT_EXPR} AS project,
+                {SOURCE_EXPR} AS source,
                 json_extract_string(json, '$.uuid') AS uuid,
                 json_extract_string(json, '$.parentUuid') AS parent_uuid,
                 json_extract_string(json, '$.type') AS type,
@@ -118,6 +123,7 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
             SELECT
                 json_extract_string(json, '$.sessionId') AS session_id,
                 {PROJECT_EXPR} AS project,
+                {SOURCE_EXPR} AS source,
                 json_extract_string(json, '$.uuid') AS uuid,
                 json_extract_string(json, '$.parentUuid') AS parent_uuid,
                 json_extract_string(json, '$.type') AS type,
@@ -158,6 +164,7 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
         SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
+            {SOURCE_EXPR} AS source,
             json_extract_string(json, '$.uuid') AS message_uuid,
             json_extract_string(item, '$.id') AS tool_use_id,
             json_extract_string(item, '$.name') AS name,
@@ -188,6 +195,7 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
         SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
+            {SOURCE_EXPR} AS source,
             json_extract_string(item, '$.tool_use_id') AS tool_use_id,
             COALESCE(CAST(json_extract(item, '$.is_error') AS BOOLEAN), false) AS is_error,
             json_extract_string(item, '$.content') AS content,
@@ -222,6 +230,10 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
                 MAX(project) FILTER (WHERE NOT is_sidechain),
                 MAX(project)
             ) AS project,
+            COALESCE(
+                MAX(source) FILTER (WHERE NOT is_sidechain),
+                MAX(source)
+            ) AS source,
             MIN(timestamp) FILTER (WHERE NOT is_sidechain) AS started_at,
             MAX(timestamp) FILTER (WHERE NOT is_sidechain) AS ended_at,
             COUNT(*) FILTER (WHERE NOT is_sidechain) AS message_count,
@@ -254,6 +266,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
+            NULL::VARCHAR AS source,
             NULL::VARCHAR AS uuid,
             NULL::VARCHAR AS parent_uuid,
             NULL::VARCHAR AS type,
@@ -273,6 +286,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
+            NULL::VARCHAR AS source,
             NULL::VARCHAR AS message_uuid,
             NULL::VARCHAR AS tool_use_id,
             NULL::VARCHAR AS name,
@@ -290,6 +304,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
+            NULL::VARCHAR AS source,
             NULL::VARCHAR AS tool_use_id,
             false AS is_error,
             NULL::VARCHAR AS content,
@@ -305,6 +320,7 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
         SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
+            NULL::VARCHAR AS source,
             NULL::VARCHAR AS started_at,
             NULL::VARCHAR AS ended_at,
             CAST(0 AS BIGINT) AS message_count,
