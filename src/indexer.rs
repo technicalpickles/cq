@@ -86,7 +86,24 @@ pub fn sync_sources(
 
     let mut agg = SyncStats::default();
     for (name, dir) in sources {
-        let s = do_sync(conn, dir, &scope, name)?;
+        // Restrict each source to the project dirs that physically live under it,
+        // so a project-scoped sync tags files with their own source (not whichever
+        // source's pass ran first). See sync_scope_projects_attributes_per_source.
+        let per_source_scope = match &scope {
+            SyncScope::All => SyncScope::All,
+            SyncScope::Projects(dirs) => SyncScope::Projects(
+                dirs.iter().filter(|d| d.starts_with(dir)).cloned().collect()
+            ),
+            SyncScope::File(f) => {
+                if f.starts_with(dir) {
+                    SyncScope::File(f.clone())
+                } else {
+                    // This source owns none of the requested file.
+                    SyncScope::Projects(Vec::new())
+                }
+            }
+        };
+        let s = do_sync(conn, dir, &per_source_scope, name)?;
         agg.added += s.added;
         agg.removed += s.removed;
         agg.changed += s.changed;
@@ -429,6 +446,42 @@ mod tests {
             .unwrap();
         assert_eq!(n_pinwheel, 1);
         assert_eq!(n_main, 1);
+    }
+
+    #[test]
+    fn sync_scope_projects_attributes_per_source() {
+        // Two sources each have a project dir of the SAME encoded name. Under a
+        // Projects scope that unions both dirs (as project_dirs_for_query would),
+        // each file must be tagged with its OWN source, not whichever ran first.
+        use crate::cache;
+        let cache_tmp = TempDir::new().unwrap();
+        let conn = cache::open(cache_tmp.path(), true).unwrap();
+
+        let main_tmp = TempDir::new().unwrap();
+        let env_tmp = TempDir::new().unwrap();
+        let main_proj = main_tmp.path().join("-Users-josh-shared");
+        let env_proj = env_tmp.path().join("-Users-josh-shared");
+        std::fs::create_dir_all(&main_proj).unwrap();
+        std::fs::create_dir_all(&env_proj).unwrap();
+        std::fs::write(main_proj.join("s1.jsonl"), "{\"cwd\":\"/x\"}\n").unwrap();
+        std::fs::write(env_proj.join("s2.jsonl"), "{\"cwd\":\"/x\"}\n").unwrap();
+
+        let sources = vec![
+            ("main".to_string(), main_tmp.path().to_path_buf()),
+            ("pinwheel".to_string(), env_tmp.path().to_path_buf()),
+        ];
+        // Union of both project dirs, the shape project_dirs_for_query produces.
+        let scope = SyncScope::Projects(vec![main_proj.clone(), env_proj.clone()]);
+        sync_sources(&conn, &sources, SyncMode::Force, scope, cache_tmp.path()).unwrap();
+
+        let n_main: i64 = conn
+            .query_row("SELECT COUNT(*) FROM file_registry WHERE source = 'main'", [], |r| r.get(0))
+            .unwrap();
+        let n_pinwheel: i64 = conn
+            .query_row("SELECT COUNT(*) FROM file_registry WHERE source = 'pinwheel'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n_main, 1, "main's file must be tagged 'main', not the other source");
+        assert_eq!(n_pinwheel, 1, "pinwheel's file must be tagged 'pinwheel', not 'main'");
     }
 
     #[test]
