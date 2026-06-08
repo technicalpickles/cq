@@ -9,3 +9,4 @@ pub mod db;
 pub mod output;
 pub mod style;
 pub mod commands;
+pub mod source;
