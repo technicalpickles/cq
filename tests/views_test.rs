@@ -622,6 +622,86 @@ fn sessions_filter_by_source() {
     assert_eq!(main_n, 1, "the other source is excluded by the filter");
 }
 
+// ---- tool_calls source filtering (summary mode) ----
+
+#[test]
+fn tool_calls_filter_by_source() {
+    use std::path::PathBuf;
+    let conn = duckdb::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            agent_type TEXT,
+            source TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+
+    // simple_session.jsonl has 1 tool call; multi_tool_session.jsonl has 4.
+    // Tag them with different sources to verify source filtering on tool_calls.
+    let main_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("simple_session.jsonl");
+    let pinwheel_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("multi_tool_session.jsonl");
+
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type, source)
+         VALUES (?, 0, 0, '/Users/test/myproject', NULL, 'main')",
+        [&main_path.display().to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type, source)
+         VALUES (?, 0, 0, '/Users/test/pinwheel', NULL, 'pinwheel')",
+        [&pinwheel_path.display().to_string()],
+    )
+    .unwrap();
+
+    cq::views::register_views(&conn, &[main_path, pinwheel_path]).unwrap();
+
+    // Baseline: all tool calls present across both sources.
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tool_calls", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(total, 5, "1 from simple_session + 4 from multi_tool_session");
+
+    // Source filter restricts to pinwheel's 4 tool calls.
+    let pinwheel_n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE source = ?",
+            duckdb::params!["pinwheel"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(pinwheel_n, 4, "source='pinwheel' returns only pinwheel tool calls");
+
+    // Source filter restricts to main's 1 tool call.
+    let main_n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE source = ?",
+            duckdb::params!["main"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(main_n, 1, "source='main' returns only main tool calls");
+
+    // Nonexistent source returns 0 (matches run_summary behavior with --source nonexistent).
+    let none_n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE source = ?",
+            duckdb::params!["nonexistent"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(none_n, 0, "nonexistent source returns no tool calls");
+}
+
 // ---- empty files ----
 
 #[test]

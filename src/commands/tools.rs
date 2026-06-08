@@ -588,6 +588,11 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wid
         params.push(Box::new(session.clone()));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("timestamp >= '{formatted}'"));
