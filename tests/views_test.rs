@@ -556,6 +556,72 @@ fn sessions_single_row_across_cwds() {
     assert_eq!(subs, 1, "the other-cwd subagent is still counted");
 }
 
+#[test]
+fn sessions_filter_by_source() {
+    use std::path::PathBuf;
+    let conn = duckdb::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY,
+            mtime_ns BIGINT,
+            file_size BIGINT,
+            cwd TEXT,
+            agent_type TEXT,
+            source TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+
+    // Two distinct sessions, each tagged with a different source.
+    let main_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("simple_session.jsonl");
+    let pinwheel_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join("multi_tool_session.jsonl");
+
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type, source)
+         VALUES (?, 0, 0, '/Users/test/myproject', NULL, 'main')",
+        [&main_path.display().to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type, source)
+         VALUES (?, 0, 0, '/Users/test/pinwheel', NULL, 'pinwheel')",
+        [&pinwheel_path.display().to_string()],
+    )
+    .unwrap();
+
+    cq::views::register_views(&conn, &[main_path, pinwheel_path]).unwrap();
+
+    // Both sources are present across all sessions.
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(total, 2, "both sessions are indexed");
+
+    // The source = ? predicate (as built by the command scope WHERE sites) restricts to one.
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE source = ?",
+            duckdb::params!["pinwheel"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1, "source filter restricts sessions to the matching source");
+
+    let main_n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE source = ?",
+            duckdb::params!["main"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(main_n, 1, "the other source is excluded by the filter");
+}
+
 // ---- empty files ----
 
 #[test]

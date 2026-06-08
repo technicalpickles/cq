@@ -111,6 +111,11 @@ pub fn run(
         params.push(Box::new(session.clone()));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("started_at >= '{formatted}'"));
@@ -210,6 +215,11 @@ fn run_with_fields(
         params.push(Box::new(session.clone()));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("started_at >= '{formatted}'"));
@@ -260,6 +270,11 @@ fn run_count_by(
     if let Some(session) = &scope.session {
         conditions.push("session_id = ?".to_string());
         params.push(Box::new(session.clone()));
+    }
+
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
     }
 
     if let Some(ts) = scope.since_timestamp()? {

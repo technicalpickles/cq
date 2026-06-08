@@ -65,6 +65,11 @@ pub fn run(
         params.push(Box::new(format!("%{project}%")));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("s.source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("s.started_at >= '{formatted}'"));
