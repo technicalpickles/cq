@@ -29,6 +29,7 @@ const MESSAGES_SCHEMA: &str = r#"messages
 --------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name (directory containing the JSONL file)
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   uuid                VARCHAR   Message UUID
   parent_uuid         VARCHAR   Parent message UUID
   type                VARCHAR   'user' or 'assistant'
@@ -45,6 +46,7 @@ const TOOL_CALLS_SCHEMA: &str = r#"tool_calls
 ----------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   message_uuid        VARCHAR   UUID of the containing assistant message
   tool_use_id         VARCHAR   Unique tool use ID (matches tool_results.tool_use_id)
   name                VARCHAR   Tool name (e.g. 'Bash', 'Read', 'Edit', 'Skill')
@@ -62,6 +64,7 @@ const TOOL_RESULTS_SCHEMA: &str = r#"tool_results
 ------------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
   content             VARCHAR   Tool result content (text)
@@ -74,6 +77,7 @@ const SESSIONS_SCHEMA: &str = r#"sessions
 --------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   started_at          VARCHAR   Timestamp of first message
   ended_at            VARCHAR   Timestamp of last message
   message_count       BIGINT    Total messages in session
@@ -147,6 +151,7 @@ messages
 --------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name (directory containing the JSONL file)
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   uuid                VARCHAR   Message UUID
   parent_uuid         VARCHAR   Parent message UUID
   type                VARCHAR   'user' or 'assistant'
@@ -163,6 +168,7 @@ tool_calls
 ----------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   message_uuid        VARCHAR   UUID of the containing assistant message
   tool_use_id         VARCHAR   Unique tool use ID (matches tool_results.tool_use_id)
   name                VARCHAR   Tool name (e.g. 'Bash', 'Read', 'Edit', 'Skill')
@@ -180,6 +186,7 @@ tool_results
 ------------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
   content             VARCHAR   Tool result content (text)
@@ -192,6 +199,7 @@ sessions
 --------
   session_id          VARCHAR   Session identifier
   project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   started_at          VARCHAR   Timestamp of first message
   ended_at            VARCHAR   Timestamp of last message
   message_count       BIGINT    Total messages in session
