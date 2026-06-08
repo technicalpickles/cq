@@ -19,6 +19,7 @@ fn setup_db(fixture: &str) -> Connection {
             file_size BIGINT,
             cwd TEXT,
             agent_type TEXT,
+            source TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )"
     ).unwrap();
@@ -38,6 +39,7 @@ fn setup_db_multi(fixtures: &[&str]) -> Connection {
             file_size BIGINT,
             cwd TEXT,
             agent_type TEXT,
+            source TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )"
     ).unwrap();
@@ -461,6 +463,7 @@ fn agent_type_flows_from_registry() {
             file_size BIGINT,
             cwd TEXT,
             agent_type TEXT,
+            source TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -504,6 +507,7 @@ fn sessions_single_row_across_cwds() {
             file_size BIGINT,
             cwd TEXT,
             agent_type TEXT,
+            source TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )

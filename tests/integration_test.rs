@@ -31,6 +31,8 @@ fn cq_cmd(env: &TestEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
     cmd.env("CQ_CACHE_DIR", env.cache.path());
+    // Isolate from any real cenv envs on the host so only CQ_PROJECTS_DIR is indexed.
+    cmd.env("CENV_BASE", env.cache.path().join("no-such-cenv-base"));
     cmd.env("NO_COLOR", "1");
     cmd
 }
@@ -273,6 +275,7 @@ fn no_color_flag() {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
     cmd.env("CQ_CACHE_DIR", env.cache.path());
+    cmd.env("CENV_BASE", env.cache.path().join("no-such-cenv-base"));
     // Explicitly unset NO_COLOR so we're testing the flag, not the env var
     cmd.env_remove("NO_COLOR");
 
