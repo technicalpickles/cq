@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use duckdb::OptionalExt;
 
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// Open or create the cache database. Creates tables if missing,
 /// rebuilds if schema version mismatches or force_rebuild is true.
@@ -80,6 +80,7 @@ fn rebuild(conn: &Connection) -> Result<()> {
             file_size BIGINT NOT NULL,
             cwd TEXT,
             agent_type TEXT,
+            source TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         );
 
