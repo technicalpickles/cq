@@ -23,7 +23,8 @@ user_invocable: true
 
 - `--project <NAME>` - Substring match on project name
 - `--session <ID>` - Session ID (full UUID required, validates format)
-- `--all` - Show all projects (disable auto-scoping to current directory)
+- `--source <NAME>` - Scope to a named source (`main`, or a cenv env name); use `--all` to span every source. Every row carries a `source` column.
+- `--all` - Show all projects and all sources (disable auto-scoping)
 - `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`)
 - `--json` - Machine-readable JSON output
 - `--table` - Aligned table with header
