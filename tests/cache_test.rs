@@ -30,7 +30,7 @@ fn index_new_files() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
     assert_eq!(result.stats.added, 1);
     assert_eq!(result.stats.removed, 0);
     assert_eq!(result.stats.changed, 0);
@@ -52,8 +52,8 @@ fn no_changes_is_noop() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
-    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
     assert_eq!(result.stats.added, 0);
     assert_eq!(result.stats.removed, 0);
     assert_eq!(result.stats.changed, 0);
@@ -65,12 +65,12 @@ fn detects_deleted_files() {
     let projects = setup_projects(&["simple_session.jsonl", "error_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
 
     let project_dir = projects.path().join("-Users-test-myproject");
     std::fs::remove_file(project_dir.join("error_session.jsonl")).unwrap();
 
-    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
     assert_eq!(result.stats.removed, 1);
 
     let reg_count: i64 = conn
@@ -85,7 +85,7 @@ fn detects_changed_files() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
 
     let project_dir = projects.path().join("-Users-test-myproject");
     let file_path = project_dir.join("simple_session.jsonl");
@@ -93,7 +93,7 @@ fn detects_changed_files() {
     use std::io::Write;
     writeln!(f, "{{}}").unwrap();
 
-    let result = cq::indexer::sync(&conn, projects.path(), cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
     assert_eq!(result.stats.changed, 1);
 }
 
@@ -166,9 +166,10 @@ fn auto_sync_skips_when_nothing_changed() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    let result = cq::indexer::sync(
+    let sources = vec![("main".to_string(), projects.path().to_path_buf())];
+    let result = cq::indexer::sync_sources(
         &conn,
-        projects.path(),
+        &sources,
         cq::db::SyncMode::Auto,
         cq::sync_scope::SyncScope::All,
         cache.path(),
@@ -176,9 +177,9 @@ fn auto_sync_skips_when_nothing_changed() {
     assert_eq!(result.stats.added, 1);
     assert!(!result.skipped);
 
-    let result = cq::indexer::sync(
+    let result = cq::indexer::sync_sources(
         &conn,
-        projects.path(),
+        &sources,
         cq::db::SyncMode::Auto,
         cq::sync_scope::SyncScope::All,
         cache.path(),
@@ -194,17 +195,18 @@ fn force_sync_always_scans() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync(
+    let sources = vec![("main".to_string(), projects.path().to_path_buf())];
+    cq::indexer::sync_sources(
         &conn,
-        projects.path(),
+        &sources,
         cq::db::SyncMode::Force,
         cq::sync_scope::SyncScope::All,
         cache.path(),
     ).unwrap();
 
-    let result = cq::indexer::sync(
+    let result = cq::indexer::sync_sources(
         &conn,
-        projects.path(),
+        &sources,
         cq::db::SyncMode::Force,
         cq::sync_scope::SyncScope::All,
         cache.path(),
@@ -218,9 +220,10 @@ fn skip_sync_returns_immediately() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    let result = cq::indexer::sync(
+    let sources = vec![("main".to_string(), projects.path().to_path_buf())];
+    let result = cq::indexer::sync_sources(
         &conn,
-        projects.path(),
+        &sources,
         cq::db::SyncMode::Skip,
         cq::sync_scope::SyncScope::All,
         cache.path(),
