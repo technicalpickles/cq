@@ -28,11 +28,18 @@ pub struct QueryScope {
     pub project: Option<String>,
     pub session: Option<String>,
     pub since: Option<String>,
+    pub source: Option<String>,
 }
 
 impl QueryScope {
     pub fn new(project: Option<String>, session: Option<String>, since: Option<String>) -> Self {
-        Self { project, session, since }
+        Self { project, session, since, source: None }
+    }
+
+    /// Set the source filter (builder style so existing `new` callers are untouched).
+    pub fn with_source(mut self, source: Option<String>) -> Self {
+        self.source = source;
+        self
     }
 
     /// Parse --since into an absolute timestamp cutoff.

@@ -51,6 +51,10 @@ struct Cli {
     #[arg(long, global = true)]
     all: bool,
 
+    /// Scope to a named source (e.g. 'main', or a cenv env name). Spans all sources with --all.
+    #[arg(long, global = true)]
+    source: Option<String>,
+
     /// Maximum number of results (0 for unlimited)
     #[arg(long, global = true, default_value_t = 50)]
     limit: usize,
@@ -228,7 +232,32 @@ fn main() -> Result<()> {
         }
     }
 
-    let scope = QueryScope::new(project, cli.session, cli.since);
+    // Source scope: explicit --source wins; else auto-scope to the active source
+    // (the one matching CLAUDE_CONFIG_DIR), unless --all/--json/projects.
+    let (source, source_auto) = if cli.source.is_some() {
+        (cli.source.clone(), false)
+    } else if cli.all || cli.json || is_projects_cmd {
+        (None, false)
+    } else {
+        let active = std::env::var("CLAUDE_CONFIG_DIR")
+            .ok()
+            .and_then(|d| provider.source_for_config_dir(std::path::Path::new(&d)))
+            .unwrap_or_else(|| "main".to_string());
+        (Some(active), true)
+    };
+    if source_auto && !cli.json {
+        if let Some(ref s) = source {
+            let others = provider.sources().len().saturating_sub(1);
+            eprintln!(
+                "{}",
+                cq::style::hint(&format!(
+                    "Scoped to source '{s}' ({others} other sources; --all to span, --source <name> to target)"
+                ))
+            );
+        }
+    }
+
+    let scope = QueryScope::new(project, cli.session, cli.since).with_source(source);
 
     let sync_mode = if cli.reindex {
         db::SyncMode::Force
@@ -242,6 +271,12 @@ fn main() -> Result<()> {
         sync_mode,
         ..Default::default()
     };
+
+    let sources: Vec<(String, std::path::PathBuf)> = provider
+        .sources()
+        .iter()
+        .map(|s| (s.name.clone(), s.projects_dir.clone()))
+        .collect();
 
     let sync_scope = if cli.reindex {
         cq::sync_scope::SyncScope::All
@@ -257,7 +292,7 @@ fn main() -> Result<()> {
     };
 
     let start = std::time::Instant::now();
-    let db_setup = db::setup_connection(provider.base_dir(), &options, sync_scope)?;
+    let db_setup = db::setup_connection(&sources, &options, sync_scope)?;
     let elapsed = start.elapsed();
     if db_setup.lock_busy {
         eprintln!("index busy, using cached data (re-run with --reindex to force)");

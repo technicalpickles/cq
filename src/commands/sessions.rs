@@ -9,6 +9,7 @@ use crate::style;
 struct SessionRow {
     session_id: String,
     project: String,
+    source: String,
     started_at: String,
     ended_at: String,
     message_count: i64,
@@ -111,6 +112,11 @@ pub fn run(
         params.push(Box::new(session.clone()));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("started_at >= '{formatted}'"));
@@ -126,7 +132,7 @@ pub fn run(
     let offset_clause = super::offset_clause(offset);
 
     let sql = format!(
-        "SELECT session_id, project, started_at, ended_at, message_count, tool_call_count, first_user_message
+        "SELECT session_id, project, source, started_at, ended_at, message_count, tool_call_count, first_user_message
          FROM sessions
          WHERE {where_clause}
          ORDER BY started_at DESC
@@ -137,23 +143,28 @@ pub fn run(
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
 
+    // Show the SOURCE column only when results can span multiple sources
+    // (i.e. the user did not scope to one). Scoped to a single source it is redundant.
+    let show_source = scope.source.is_none();
+
     match format {
         OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format, wide),
         _ => {
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut session_rows: Vec<SessionRow> = Vec::new();
             while let Some(row) = rows_iter.next()? {
-                let values: Vec<Value> = (0..7)
+                let values: Vec<Value> = (0..8)
                     .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
                     .collect();
                 session_rows.push(SessionRow {
                     session_id: val_str(&values[0]),
                     project: val_str(&values[1]),
-                    started_at: val_str(&values[2]),
-                    ended_at: val_str(&values[3]),
-                    message_count: val_i64(&values[4]),
-                    tool_call_count: val_i64(&values[5]),
-                    first_user_message: val_str(&values[6]),
+                    source: val_str(&values[2]),
+                    started_at: val_str(&values[3]),
+                    ended_at: val_str(&values[4]),
+                    message_count: val_i64(&values[5]),
+                    tool_call_count: val_i64(&values[6]),
+                    first_user_message: val_str(&values[7]),
                 });
             }
 
@@ -169,8 +180,8 @@ pub fn run(
             }
 
             match format {
-                OutputFormat::Table => render_table(&session_rows, wide),
-                _ => render_oneline(&session_rows, wide),
+                OutputFormat::Table => render_table(&session_rows, wide, show_source),
+                _ => render_oneline(&session_rows, wide, show_source),
             }
 
             super::print_truncation_hint(
@@ -208,6 +219,11 @@ fn run_with_fields(
     if let Some(session) = &scope.session {
         conditions.push("session_id = ?".to_string());
         params.push(Box::new(session.clone()));
+    }
+
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
     }
 
     if let Some(ts) = scope.since_timestamp()? {
@@ -262,6 +278,11 @@ fn run_count_by(
         params.push(Box::new(session.clone()));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("started_at >= '{formatted}'"));
@@ -313,8 +334,9 @@ fn run_count_by(
     }
 }
 
-fn render_oneline(rows: &[SessionRow], wide: bool) {
-    // Build plain text rows (no color) for width calculation
+fn render_oneline(rows: &[SessionRow], wide: bool, show_source: bool) {
+    // Build plain text rows (no color) for width calculation.
+    // Column order: started, project, [source], session_id, dur, msgs, tools, first_msg.
     let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let time_ago = if r.started_at.is_empty() {
             style::null_display().to_string()
@@ -351,11 +373,20 @@ fn render_oneline(rows: &[SessionRow], wide: bool) {
             style::truncate(&r.first_user_message, 60)
         };
 
-        vec![time_ago, project, session_id, duration, msg_count, tool_count, first_msg]
+        let mut cols = vec![time_ago, project];
+        if show_source {
+            cols.push(if r.source.is_empty() {
+                style::null_display().to_string()
+            } else {
+                r.source.clone()
+            });
+        }
+        cols.extend([session_id, duration, msg_count, tool_count, first_msg]);
+        cols
     }).collect();
 
     // Calculate column widths from plain text
-    let ncols = 7;
+    let ncols = if show_source { 8 } else { 7 };
     let mut widths = vec![0usize; ncols];
     for row in &plain_rows {
         for (i, cell) in row.iter().enumerate() {
@@ -365,6 +396,18 @@ fn render_oneline(rows: &[SessionRow], wide: bool) {
         }
     }
 
+    // Color index per logical column. The source column (when shown) sits at
+    // index 2 and uses the same Primary tone as project; the rest shift by one.
+    let color_for = |i: usize| -> style::Color {
+        let logical = if show_source && i >= 2 { if i == 2 { return style::Color::Primary; } i - 1 } else { i };
+        match logical {
+            0 => style::Color::Dim,        // started
+            1 => style::Color::Primary,    // project
+            2 => style::Color::Secondary,  // session_id
+            _ => style::Color::Dim,        // dur, msgs, tools
+        }
+    };
+
     // Print each row with color applied after padding
     for row in &plain_rows {
         let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
@@ -373,22 +416,22 @@ fn render_oneline(rows: &[SessionRow], wide: bool) {
             } else {
                 style::pad_right(cell, widths[i])
             };
-            match i {
-                0 => style::color(&padded, style::Color::Dim),
-                1 => style::color(&padded, style::Color::Primary),
-                2 => style::color(&padded, style::Color::Secondary),
-                3 => style::color(&padded, style::Color::Dim),
-                4 => style::color(&padded, style::Color::Dim),
-                5 => style::color(&padded, style::Color::Dim),
-                _ => padded, // last column, no color
+            if i == ncols - 1 {
+                padded // last column (first_user_message), no color
+            } else {
+                style::color(&padded, color_for(i))
             }
         }).collect();
         println!("{}", cols.join("  "));
     }
 }
 
-fn render_table(rows: &[SessionRow], wide: bool) {
-    let headers = ["started", "project", "session_id", "dur", "msgs", "tools", "first_user_message"];
+fn render_table(rows: &[SessionRow], wide: bool, show_source: bool) {
+    let headers: Vec<&str> = if show_source {
+        vec!["started", "project", "source", "session_id", "dur", "msgs", "tools", "first_user_message"]
+    } else {
+        vec!["started", "project", "session_id", "dur", "msgs", "tools", "first_user_message"]
+    };
 
     let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
         let started = if r.started_at.is_empty() {
@@ -426,7 +469,16 @@ fn render_table(rows: &[SessionRow], wide: bool) {
             style::truncate(&r.first_user_message, 60)
         };
 
-        vec![started, project, session_id, duration, msg_count, tool_count, first_msg]
+        let mut row = vec![started, project];
+        if show_source {
+            row.push(if r.source.is_empty() {
+                style::null_display().to_string()
+            } else {
+                r.source.clone()
+            });
+        }
+        row.extend([session_id, duration, msg_count, tool_count, first_msg]);
+        row
     }).collect();
 
     style::print_light_table(&headers, &string_rows);

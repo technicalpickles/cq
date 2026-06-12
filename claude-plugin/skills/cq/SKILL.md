@@ -23,7 +23,8 @@ user_invocable: true
 
 - `--project <NAME>` - Substring match on project name
 - `--session <ID>` - Session ID (full UUID required, validates format)
-- `--all` - Show all projects (disable auto-scoping to current directory)
+- `--source <NAME>` - Scope to a named source (`main`, or a cenv env name); use `--all` to span every source. Every row carries a `source` column.
+- `--all` - Show all projects and all sources (disable auto-scoping)
 - `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`); applies to `sessions`/`tools`/`messages`, not `cq sql` (raw SQL ignores scope flags)
 - `--json` - Machine-readable JSON output
 - `--table` - Aligned table with header
@@ -38,13 +39,13 @@ user_invocable: true
 
 ## View Schemas
 
-**sessions**: session_id, project, started_at, ended_at, message_count, tool_call_count, user_message_count, subagent_count, first_user_message (counts are main-loop only)
+**sessions**: session_id, project, source, started_at, ended_at, message_count, tool_call_count, user_message_count, subagent_count, first_user_message (counts are main-loop only)
 
-**messages**: session_id, project, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id
+**messages**: session_id, project, source, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id
 
-**tool_calls**: session_id, project, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id
+**tool_calls**: session_id, project, source, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id
 
-**tool_results**: session_id, project, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id
+**tool_results**: session_id, project, source, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id
 
 Subagent rows carry the parent `session_id`. Filter with `WHERE NOT is_sidechain` (main loop), `WHERE is_sidechain` (subagents), `WHERE agent_type = 'Explore'`, or `WHERE workflow_id IS NOT NULL`.
 

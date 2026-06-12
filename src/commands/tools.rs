@@ -91,6 +91,11 @@ pub fn run(
         params.push(Box::new(session.clone()));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("tc.source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("tc.timestamp >= '{formatted}'"));
@@ -238,6 +243,9 @@ fn run_with_context(
     if scope.session.is_some() {
         scope_conditions.push("session_id = ?".to_string());
     }
+    if scope.source.is_some() {
+        scope_conditions.push("source = ?".to_string());
+    }
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         scope_conditions.push(format!("timestamp >= '{formatted}'"));
@@ -253,6 +261,9 @@ fn run_with_context(
     }
     if scope.session.is_some() {
         tool_conditions.push("tc.session_id = ?".to_string());
+    }
+    if scope.source.is_some() {
+        tool_conditions.push("tc.source = ?".to_string());
     }
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -491,6 +502,11 @@ fn run_count_by(
         params.push(Box::new(session.clone()));
     }
 
+    if let Some(source) = &scope.source {
+        conditions.push("tc.source = ?".to_string());
+        params.push(Box::new(source.clone()));
+    }
+
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         conditions.push(format!("tc.timestamp >= '{formatted}'"));
@@ -570,6 +586,11 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wid
     if let Some(session) = &scope.session {
         conditions.push("session_id = ?".to_string());
         params.push(Box::new(session.clone()));
+    }
+
+    if let Some(source) = &scope.source {
+        conditions.push("source = ?".to_string());
+        params.push(Box::new(source.clone()));
     }
 
     if let Some(ts) = scope.since_timestamp()? {

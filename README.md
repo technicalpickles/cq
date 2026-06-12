@@ -102,6 +102,18 @@ Run `cq schema --examples` for a query cookbook.
 | `-B N` | | Show N messages before each match (messages, tools) |
 | `-C N` | | Shorthand for `-A N -B N` (messages, tools) |
 
+## Sources
+
+cq indexes multiple transcript **sources**: the main config dir (`~/.claude/projects`, or `$CQ_PROJECTS_DIR`) plus every cenv env's `projects/` (discovered under `$CENV_BASE`, default `~/.local/share/cenv`). A cenv env is one kind of source; cq never shells out to cenv.
+
+By default cq scopes to the **active** source (the one matching `$CLAUDE_CONFIG_DIR`, else `main`), mirroring how it auto-scopes to the current directory. Use `--all` to span every source and `--source <name>` to target one. Every row carries a `source` column; compose with `--since` to weigh results by age.
+
+| Flag | What it does |
+|------|-------------|
+| _(default)_ | Scope to the active source |
+| `--source <name>` | Target one source by name (e.g. `main`, or a cenv env name) |
+| `--all` | Span all sources |
+
 ## Views
 
 Four SQL views, all queryable with `cq sql`:

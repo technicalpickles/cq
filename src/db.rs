@@ -38,7 +38,7 @@ impl Default for DbOptions {
 ///
 /// Uses the persistent cache for fast incremental startup.
 pub fn setup_connection(
-    projects_dir: &std::path::Path,
+    sources: &[(String, std::path::PathBuf)],
     options: &DbOptions,
     scope: SyncScope,
 ) -> Result<DbSetup> {
@@ -46,7 +46,7 @@ pub fn setup_connection(
     let force_rebuild = options.sync_mode == SyncMode::Force;
     let conn = cache::open(&cache_dir, force_rebuild)?;
 
-    let result = indexer::sync(&conn, projects_dir, options.sync_mode, scope, &cache_dir)?;
+    let result = indexer::sync_sources(&conn, sources, options.sync_mode, scope, &cache_dir)?;
     let file_count = result.stats.added + result.stats.changed;
 
     views::register_derived_views(&conn)?;
