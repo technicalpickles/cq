@@ -23,6 +23,10 @@ chrono = "0.4"
 anyhow = "1"
 dirs = "5"
 
+[[example]]
+name = "opencode_spike"
+path = "examples/opencode_spike.rs"
+
 [dev-dependencies]
 tempfile = "3"
 assert_cmd = "2"
