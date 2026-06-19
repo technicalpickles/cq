@@ -292,7 +292,9 @@ fn main() -> Result<()> {
     };
 
     let start = std::time::Instant::now();
-    let db_setup = db::setup_connection(&sources, &options, sync_scope)?;
+    let providers: Vec<Box<dyn cq::provider::TranscriptProvider>> =
+        vec![Box::new(cq::claude_provider::ClaudeProvider::new()?)];
+    let db_setup = db::setup_connection(&providers, &sources, &options, sync_scope)?;
     let elapsed = start.elapsed();
     if db_setup.lock_busy {
         eprintln!("index busy, using cached data (re-run with --reindex to force)");
