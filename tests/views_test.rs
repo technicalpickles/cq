@@ -729,3 +729,51 @@ fn empty_files_no_error() {
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[test]
+fn views_expose_claude_harness() {
+    let conn = setup_db("simple_session.jsonl");
+    for view in ["messages", "tool_calls", "tool_results", "sessions"] {
+        // Every non-empty view's rows are tagged harness='claude'.
+        let distinct: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM (SELECT DISTINCT harness FROM {view} WHERE harness IS NOT NULL)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(distinct <= 1, "{view} should have at most one harness value");
+        let claude: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {view} WHERE harness = 'claude'"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let total: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {view}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(claude, total, "all {view} rows should be harness='claude'");
+    }
+}
+
+#[test]
+fn empty_views_have_harness_column() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY, mtime_ns BIGINT, file_size BIGINT,
+            cwd TEXT, agent_type TEXT, source TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+    cq::views::register_views(&conn, &[]).unwrap();
+    // Selecting harness from each empty view must not error (column exists).
+    for view in ["messages", "tool_calls", "tool_results", "sessions"] {
+        let n: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {view} WHERE harness IS NULL"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "{view} should be empty");
+    }
+}
