@@ -17,7 +17,7 @@ commands/
   schema.rs       View schema docs + example queries (pure text, no DB needed)
 output.rs         Shared rendering: table (comfy-table) or JSON, accepts params
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
-views.rs          SQL view definitions (messages, tool_calls, tool_results, sessions) over the cached raw_records table
+views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the four views; every row carries a `harness` column
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
 indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, fs2 file lock; recurses into <session>/subagents/** and captures agentType from meta.json
@@ -37,7 +37,7 @@ CQ is a query tool, not a monitoring tool. Default is auto-scope to the current 
 - **Persistent cache + incremental sync.** `cache.rs` opens the cache DB and handles schema versioning. `indexer.rs` walks files, checks mtime + size against `file_registry`, and only re-parses what changed. `fs2` file locking serializes concurrent writers; readers fall back to cached data when the lock is busy. The scan recurses into `<session>/subagents/**` (excluding `journal.jsonl`); subagent rows carry the parent `session_id` plus `is_sidechain`/`agent_id`/`agent_type`/`workflow_id` tags. The Auto mtime fast-path is a recursive max so new deep files are detected.
 - **SyncMode is explicit over smart.** `Auto` (default) does mtime fast-path + try-lock + skip-if-busy. `Force` (`--reindex`) waits for the lock and re-parses everything. `Skip` (`--no-reindex`) bypasses sync entirely. User flags always beat smart behavior.
 - **SyncScope narrows sync work.** A `--project` filter also restricts which files the indexer touches, not just which rows the query returns. Derived in `main.rs` from the CLI flags, passed through `db::setup_connection` into `indexer::sync`.
-- **Provider trait** abstracts file discovery. Only `ClaudeProvider` exists today but the trait allows other transcript sources.
+- **Provider trait** abstracts a transcript *harness*. Beyond file discovery, a provider has `prepare(conn) -> bool` (is it active?) and `contribute_view_sql(view)` (a SELECT body); `views::compose_views` UNION ALLs the active providers' contributions, tagging rows with a `harness` column. Only `ClaudeProvider` exists today (always active; its bodies read `raw_records`); the seam is built for a second harness to plug in.
 - **stderr for progress, stdout for data.** "Scanned N files" and "No results." go to stderr so piped output stays clean.
 - **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-alice-myproject`) back to paths (`/Users/alice/myproject`).
 - **ILIKE for project filtering.** `--project` does substring match, not exact.

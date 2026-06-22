@@ -180,6 +180,22 @@ impl TranscriptProvider for ClaudeProvider {
         projects.sort_by(|a, b| b.file_count.cmp(&a.file_count));
         Ok(projects)
     }
+
+    fn prepare(&self, _conn: &Connection) -> Result<bool> {
+        // Claude's JSONL->raw_records sync happens in db::setup_connection /
+        // indexer; nothing extra to prepare here. Always active.
+        Ok(true)
+    }
+
+    fn contribute_view_sql(&self, view: crate::provider::View) -> Option<String> {
+        use crate::provider::View;
+        Some(match view {
+            View::Messages => crate::views::claude_messages_sql(),
+            View::ToolCalls => crate::views::claude_tool_calls_sql(),
+            View::ToolResults => crate::views::claude_tool_results_sql(),
+            View::Sessions => crate::views::claude_sessions_sql(),
+        })
+    }
 }
 
 /// Recursively collect indexable `.jsonl` files under `dir`, excluding

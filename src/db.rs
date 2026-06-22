@@ -3,6 +3,7 @@ use duckdb::Connection;
 use crate::cache;
 use crate::indexer;
 use crate::views;
+use crate::provider::TranscriptProvider;
 use crate::sync_scope::SyncScope;
 
 pub struct DbSetup {
@@ -38,6 +39,7 @@ impl Default for DbOptions {
 ///
 /// Uses the persistent cache for fast incremental startup.
 pub fn setup_connection(
+    providers: &[Box<dyn TranscriptProvider>],
     sources: &[(String, std::path::PathBuf)],
     options: &DbOptions,
     scope: SyncScope,
@@ -49,7 +51,14 @@ pub fn setup_connection(
     let result = indexer::sync_sources(&conn, sources, options.sync_mode, scope, &cache_dir)?;
     let file_count = result.stats.added + result.stats.changed;
 
-    views::register_derived_views(&conn)?;
+    // Ask each provider to prepare and report whether it is active, then compose.
+    let mut active: Vec<&dyn TranscriptProvider> = Vec::new();
+    for p in providers {
+        if p.prepare(&conn)? {
+            active.push(p.as_ref());
+        }
+    }
+    views::compose_views(&conn, &active)?;
 
     Ok(DbSetup {
         conn,

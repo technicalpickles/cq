@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::PathBuf;
+use crate::provider::{TranscriptProvider, View};
 
 /// SQL expression to get the project path. Uses cwd from file_registry if
 /// available, falls back to decoding the directory name from source_file.
@@ -43,25 +44,21 @@ const SOURCE_EXPR: &str =
 /// don't error.
 pub fn register_views(conn: &Connection, files: &[PathBuf]) -> Result<()> {
     if files.is_empty() {
-        return register_empty_views(conn);
+        // No raw_records source; compose with no active providers -> empty views.
+        return compose_views(conn, &[]);
     }
 
     let file_list = build_file_list(files);
     register_raw_view(conn, &file_list)?;
-    register_derived_views(conn)?;
-
-    Ok(())
+    register_derived_views(conn)
 }
 
-/// Register only the derived views (messages, tool_calls, tool_results, sessions).
-/// Assumes raw_records already exists (either as a view from read_json or as a
-/// persistent table from the cache).
+/// Register the derived views over an existing `raw_records`. Composes from the
+/// Claude provider (the only provider that reads `raw_records`).
 pub fn register_derived_views(conn: &Connection) -> Result<()> {
-    register_messages_view(conn)?;
-    register_tool_calls_view(conn)?;
-    register_tool_results_view(conn)?;
-    register_sessions_view(conn)?;
-    Ok(())
+    let claude = crate::claude_provider::ClaudeProvider::new_with_base(std::path::PathBuf::new());
+    let providers: [&dyn TranscriptProvider; 1] = [&claude];
+    compose_views(conn, &providers)
 }
 
 /// Build a DuckDB list literal from file paths: ['path1', 'path2', ...]
@@ -89,21 +86,14 @@ fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
     Ok(())
 }
 
-/// Create the messages view.
-///
-/// User messages can have string content (human text) or array content (tool results).
-/// Assistant messages always have array content (text blocks + tool_use blocks).
-///
-/// We use UNION ALL to handle both cases separately, avoiding DuckDB's eagerness
-/// to evaluate CAST(content AS JSON[]) even inside a CASE WHEN branch where
-/// content is a string.
-fn register_messages_view(conn: &Connection) -> Result<()> {
-    let sql = format!("CREATE OR REPLACE VIEW messages AS
-        WITH string_msgs AS (
+/// The Claude `messages` view body (SELECT only, no CREATE VIEW wrapper).
+pub fn claude_messages_sql() -> String {
+    format!("WITH string_msgs AS (
             SELECT
                 json_extract_string(json, '$.sessionId') AS session_id,
                 {PROJECT_EXPR} AS project,
                 {SOURCE_EXPR} AS source,
+                'claude' AS harness,
                 json_extract_string(json, '$.uuid') AS uuid,
                 json_extract_string(json, '$.parentUuid') AS parent_uuid,
                 json_extract_string(json, '$.type') AS type,
@@ -124,6 +114,7 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
                 json_extract_string(json, '$.sessionId') AS session_id,
                 {PROJECT_EXPR} AS project,
                 {SOURCE_EXPR} AS source,
+                'claude' AS harness,
                 json_extract_string(json, '$.uuid') AS uuid,
                 json_extract_string(json, '$.parentUuid') AS parent_uuid,
                 json_extract_string(json, '$.type') AS type,
@@ -149,22 +140,16 @@ fn register_messages_view(conn: &Connection) -> Result<()> {
         )
         SELECT * FROM string_msgs
         UNION ALL
-        SELECT * FROM array_msgs");
-    conn.execute_batch(&sql)
-        .context("Failed to create messages view")?;
-    Ok(())
+        SELECT * FROM array_msgs")
 }
 
-/// Create the tool_calls view.
-///
-/// Extracts one row per tool_use content block from assistant messages.
-/// Uses LATERAL UNNEST to flatten the content array, then filters for tool_use type.
-fn register_tool_calls_view(conn: &Connection) -> Result<()> {
-    let sql = format!("CREATE OR REPLACE VIEW tool_calls AS
-        SELECT
+/// The Claude `tool_calls` view body.
+pub fn claude_tool_calls_sql() -> String {
+    format!("SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
             {SOURCE_EXPR} AS source,
+            'claude' AS harness,
             json_extract_string(json, '$.uuid') AS message_uuid,
             json_extract_string(item, '$.id') AS tool_use_id,
             json_extract_string(item, '$.name') AS name,
@@ -180,22 +165,16 @@ fn register_tool_calls_view(conn: &Connection) -> Result<()> {
         )
         WHERE json_extract_string(json, '$.type') = 'assistant'
         AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_use'");
-    conn.execute_batch(&sql)
-        .context("Failed to create tool_calls view")?;
-    Ok(())
+        AND json_extract_string(item, '$.type') = 'tool_use'")
 }
 
-/// Create the tool_results view.
-///
-/// Extracts one row per tool_result content block from user messages that have
-/// array content (i.e. messages carrying tool results back from tool execution).
-fn register_tool_results_view(conn: &Connection) -> Result<()> {
-    let sql = format!("CREATE OR REPLACE VIEW tool_results AS
-        SELECT
+/// The Claude `tool_results` view body.
+pub fn claude_tool_results_sql() -> String {
+    format!("SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
             {SOURCE_EXPR} AS source,
+            'claude' AS harness,
             json_extract_string(item, '$.tool_use_id') AS tool_use_id,
             COALESCE(CAST(json_extract(item, '$.is_error') AS BOOLEAN), false) AS is_error,
             json_extract_string(item, '$.content') AS content,
@@ -209,22 +188,14 @@ fn register_tool_results_view(conn: &Connection) -> Result<()> {
         )
         WHERE json_extract_string(json, '$.type') = 'user'
         AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_result'");
-    conn.execute_batch(&sql)
-        .context("Failed to create tool_results view")?;
-    Ok(())
+        AND json_extract_string(item, '$.type') = 'tool_result'")
 }
 
-/// Create the sessions view.
-///
-/// Aggregates from the messages view to provide session-level metrics.
-/// Counts (message_count, tool_call_count, user_message_count) include only
-/// main-loop rows (is_sidechain = false). subagent_count is the number of
-/// distinct subagent IDs seen in the session (NULL agent_id for main-loop rows
-/// is ignored by COUNT(DISTINCT)).
-fn register_sessions_view(conn: &Connection) -> Result<()> {
-    let sql = "CREATE OR REPLACE VIEW sessions AS
-        SELECT
+/// The Claude `sessions` view body. Aggregates over the (possibly multi-provider)
+/// `messages` view, filtered to Claude rows so it never scoops up another harness's
+/// messages once `messages` becomes a UNION.
+pub fn claude_sessions_sql() -> String {
+    "SELECT
             session_id,
             COALESCE(
                 MAX(project) FILTER (WHERE NOT is_sidechain),
@@ -234,6 +205,7 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
                 MAX(source) FILTER (WHERE NOT is_sidechain),
                 MAX(source)
             ) AS source,
+            'claude' AS harness,
             MIN(timestamp) FILTER (WHERE NOT is_sidechain) AS started_at,
             MAX(timestamp) FILTER (WHERE NOT is_sidechain) AS ended_at,
             COUNT(*) FILTER (WHERE NOT is_sidechain) AS message_count,
@@ -242,6 +214,7 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
             COUNT(DISTINCT agent_id) AS subagent_count,
             (SELECT text FROM messages m2
              WHERE m2.session_id = m1.session_id
+             AND m2.harness = 'claude'
              AND m2.type = 'user'
              AND NOT m2.is_sidechain
              AND m2.text IS NOT NULL
@@ -251,22 +224,19 @@ fn register_sessions_view(conn: &Connection) -> Result<()> {
              AND m2.text NOT LIKE '#%'
              ORDER BY m2.timestamp LIMIT 1) AS first_user_message
         FROM messages m1
-        GROUP BY session_id";
-    conn.execute_batch(sql)
-        .context("Failed to create sessions view")?;
-    Ok(())
+        WHERE harness = 'claude'
+        GROUP BY session_id".to_string()
 }
 
-/// Register empty views when no files are provided.
-/// Uses WHERE 1=0 against a VALUES clause so queries return 0 rows
-/// without erroring on missing tables.
-fn register_empty_views(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE OR REPLACE VIEW messages AS
-        SELECT
+/// The empty-view body (correct schema, zero rows) for one view. Used when no
+/// active provider contributes to that view.
+fn empty_view_sql(view: View) -> &'static str {
+    match view {
+        View::Messages => "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
+            NULL::VARCHAR AS harness,
             NULL::VARCHAR AS uuid,
             NULL::VARCHAR AS parent_uuid,
             NULL::VARCHAR AS type,
@@ -278,15 +248,12 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
             NULL::VARCHAR AS workflow_id
-        WHERE 1=0"
-    ).context("Failed to create empty messages view")?;
-
-    conn.execute_batch(
-        "CREATE OR REPLACE VIEW tool_calls AS
-        SELECT
+        WHERE 1=0",
+        View::ToolCalls => "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
+            NULL::VARCHAR AS harness,
             NULL::VARCHAR AS message_uuid,
             NULL::VARCHAR AS tool_use_id,
             NULL::VARCHAR AS name,
@@ -296,15 +263,12 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
             NULL::VARCHAR AS workflow_id
-        WHERE 1=0"
-    ).context("Failed to create empty tool_calls view")?;
-
-    conn.execute_batch(
-        "CREATE OR REPLACE VIEW tool_results AS
-        SELECT
+        WHERE 1=0",
+        View::ToolResults => "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
+            NULL::VARCHAR AS harness,
             NULL::VARCHAR AS tool_use_id,
             false AS is_error,
             NULL::VARCHAR AS content,
@@ -312,15 +276,12 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
             NULL::VARCHAR AS workflow_id
-        WHERE 1=0"
-    ).context("Failed to create empty tool_results view")?;
-
-    conn.execute_batch(
-        "CREATE OR REPLACE VIEW sessions AS
-        SELECT
+        WHERE 1=0",
+        View::Sessions => "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
+            NULL::VARCHAR AS harness,
             NULL::VARCHAR AS started_at,
             NULL::VARCHAR AS ended_at,
             CAST(0 AS BIGINT) AS message_count,
@@ -328,8 +289,29 @@ fn register_empty_views(conn: &Connection) -> Result<()> {
             CAST(0 AS BIGINT) AS user_message_count,
             CAST(0 AS BIGINT) AS subagent_count,
             NULL::VARCHAR AS first_user_message
-        WHERE 1=0"
-    ).context("Failed to create empty sessions view")?;
+        WHERE 1=0",
+    }
+}
 
+/// Compose the four views from the active providers' contributions. Each
+/// contribution is wrapped in parens and `UNION ALL`ed. A view with no
+/// contributors falls back to the empty-view schema. Views are created in
+/// `View::ALL` order so `sessions` (which reads `messages`) comes last.
+pub fn compose_views(conn: &Connection, providers: &[&dyn TranscriptProvider]) -> Result<()> {
+    for view in View::ALL {
+        let parts: Vec<String> = providers
+            .iter()
+            .filter_map(|p| p.contribute_view_sql(view))
+            .map(|body| format!("({body})"))
+            .collect();
+        let body = if parts.is_empty() {
+            empty_view_sql(view).to_string()
+        } else {
+            parts.join("\nUNION ALL\n")
+        };
+        let sql = format!("CREATE OR REPLACE VIEW {} AS {body}", view.name());
+        conn.execute_batch(&sql)
+            .with_context(|| format!("Failed to create {} view", view.name()))?;
+    }
     Ok(())
 }
