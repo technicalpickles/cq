@@ -1,5 +1,5 @@
-use tempfile::TempDir;
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 fn cache_dir() -> TempDir {
     TempDir::new().unwrap()
@@ -30,7 +30,14 @@ fn index_new_files() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
     assert_eq!(result.stats.added, 1);
     assert_eq!(result.stats.removed, 0);
     assert_eq!(result.stats.changed, 0);
@@ -52,8 +59,22 @@ fn no_changes_is_noop() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
-    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
+    let result = cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
     assert_eq!(result.stats.added, 0);
     assert_eq!(result.stats.removed, 0);
     assert_eq!(result.stats.changed, 0);
@@ -65,12 +86,26 @@ fn detects_deleted_files() {
     let projects = setup_projects(&["simple_session.jsonl", "error_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
 
     let project_dir = projects.path().join("-Users-test-myproject");
     std::fs::remove_file(project_dir.join("error_session.jsonl")).unwrap();
 
-    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
     assert_eq!(result.stats.removed, 1);
 
     let reg_count: i64 = conn
@@ -85,15 +120,32 @@ fn detects_changed_files() {
     let projects = setup_projects(&["simple_session.jsonl"]);
     let conn = cq::cache::open(cache.path(), false).unwrap();
 
-    cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
 
     let project_dir = projects.path().join("-Users-test-myproject");
     let file_path = project_dir.join("simple_session.jsonl");
-    let mut f = std::fs::OpenOptions::new().append(true).open(&file_path).unwrap();
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&file_path)
+        .unwrap();
     use std::io::Write;
     writeln!(f, "{{}}").unwrap();
 
-    let result = cq::indexer::sync_sources(&conn, &[("main".to_string(), projects.path().to_path_buf())], cq::db::SyncMode::Force, cq::sync_scope::SyncScope::All, cache.path()).unwrap();
+    let result = cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
     assert_eq!(result.stats.changed, 1);
 }
 
@@ -144,13 +196,15 @@ fn version_mismatch_triggers_rebuild() {
     let conn = cq::cache::open(dir.path(), false).unwrap();
 
     // Tamper with version
-    conn.execute("UPDATE cache_meta SET version = 0", []).unwrap();
+    conn.execute("UPDATE cache_meta SET version = 0", [])
+        .unwrap();
 
     // Insert a row that should disappear after rebuild
     conn.execute(
         "INSERT INTO file_registry (file_path, mtime_ns, file_size) VALUES ('ghost.jsonl', 0, 0)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     drop(conn);
 
     let conn = cq::cache::open(dir.path(), false).unwrap();
@@ -173,7 +227,8 @@ fn auto_sync_skips_when_nothing_changed() {
         cq::db::SyncMode::Auto,
         cq::sync_scope::SyncScope::All,
         cache.path(),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(result.stats.added, 1);
     assert!(!result.skipped);
 
@@ -183,7 +238,8 @@ fn auto_sync_skips_when_nothing_changed() {
         cq::db::SyncMode::Auto,
         cq::sync_scope::SyncScope::All,
         cache.path(),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(result.stats.added, 0);
     assert_eq!(result.stats.changed, 0);
     assert_eq!(result.stats.removed, 0);
@@ -202,7 +258,8 @@ fn force_sync_always_scans() {
         cq::db::SyncMode::Force,
         cq::sync_scope::SyncScope::All,
         cache.path(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let result = cq::indexer::sync_sources(
         &conn,
@@ -210,7 +267,8 @@ fn force_sync_always_scans() {
         cq::db::SyncMode::Force,
         cq::sync_scope::SyncScope::All,
         cache.path(),
-    ).unwrap();
+    )
+    .unwrap();
     assert!(!result.skipped);
 }
 
@@ -227,7 +285,8 @@ fn skip_sync_returns_immediately() {
         cq::db::SyncMode::Skip,
         cq::sync_scope::SyncScope::All,
         cache.path(),
-    ).unwrap();
+    )
+    .unwrap();
     assert!(result.skipped);
     assert_eq!(result.stats.added, 0);
 }

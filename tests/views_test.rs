@@ -21,8 +21,9 @@ fn setup_db(fixture: &str) -> Connection {
             agent_type TEXT,
             source TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
-        )"
-    ).unwrap();
+        )",
+    )
+    .unwrap();
 
     cq::views::register_views(&conn, &[path]).unwrap();
     conn
@@ -41,8 +42,9 @@ fn setup_db_multi(fixtures: &[&str]) -> Connection {
             agent_type TEXT,
             source TEXT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
-        )"
-    ).unwrap();
+        )",
+    )
+    .unwrap();
 
     cq::views::register_views(&conn, &paths).unwrap();
     conn
@@ -126,11 +128,7 @@ fn messages_view_model() {
 fn messages_view_session_id() {
     let conn = setup_db("simple_session.jsonl");
     let session_id: String = conn
-        .query_row(
-            "SELECT DISTINCT session_id FROM messages",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT DISTINCT session_id FROM messages", [], |r| r.get(0))
         .unwrap();
     assert_eq!(session_id, "sess-001");
 }
@@ -181,11 +179,9 @@ fn tool_calls_input_queryable() {
 fn tool_calls_has_tool_use_id() {
     let conn = setup_db("simple_session.jsonl");
     let id: String = conn
-        .query_row(
-            "SELECT tool_use_id FROM tool_calls LIMIT 1",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT tool_use_id FROM tool_calls LIMIT 1", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(id, "toolu_001");
 }
@@ -194,11 +190,9 @@ fn tool_calls_has_tool_use_id() {
 fn tool_calls_has_message_uuid() {
     let conn = setup_db("simple_session.jsonl");
     let uuid: String = conn
-        .query_row(
-            "SELECT message_uuid FROM tool_calls LIMIT 1",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT message_uuid FROM tool_calls LIMIT 1", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(uuid, "a1");
 }
@@ -248,11 +242,9 @@ fn tool_results_non_error() {
 fn tool_results_has_tool_use_id() {
     let conn = setup_db("simple_session.jsonl");
     let id: String = conn
-        .query_row(
-            "SELECT tool_use_id FROM tool_results LIMIT 1",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT tool_use_id FROM tool_results LIMIT 1", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(id, "toolu_001");
 }
@@ -265,7 +257,10 @@ fn mixed_types_filtered_from_messages() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 2, "mixed_types.jsonl has 6 records but only 2 are user/assistant");
+    assert_eq!(
+        count, 2,
+        "mixed_types.jsonl has 6 records but only 2 are user/assistant"
+    );
 }
 
 // ---- sessions view ----
@@ -320,7 +315,9 @@ fn sessions_view_timestamps() {
 fn multi_file_sessions() {
     let conn = setup_db_multi(&["simple_session.jsonl", "error_session.jsonl"]);
     let count: i64 = conn
-        .query_row("SELECT COUNT(DISTINCT session_id) FROM sessions", [], |r| r.get(0))
+        .query_row("SELECT COUNT(DISTINCT session_id) FROM sessions", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(count, 2, "two files should produce two sessions");
 }
@@ -333,7 +330,10 @@ fn messages_tag_sidechain_rows() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 5, "all main-loop and sidechain messages are queryable");
+    assert_eq!(
+        count, 5,
+        "all main-loop and sidechain messages are queryable"
+    );
 
     let (is_side, agent): (bool, Option<String>) = conn
         .query_row(
@@ -543,7 +543,10 @@ fn sessions_single_row_across_cwds() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(rows, 1, "one row per session even when subagents ran in another cwd");
+    assert_eq!(
+        rows, 1,
+        "one row per session even when subagents ran in another cwd"
+    );
 
     let (project, subs): (String, i64) = conn
         .query_row(
@@ -552,7 +555,10 @@ fn sessions_single_row_across_cwds() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(project, "/Users/test/myproject", "project is the main-loop home, not the subagent cwd");
+    assert_eq!(
+        project, "/Users/test/myproject",
+        "project is the main-loop home, not the subagent cwd"
+    );
     assert_eq!(subs, 1, "the other-cwd subagent is still counted");
 }
 
@@ -610,7 +616,10 @@ fn sessions_filter_by_source() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(n, 1, "source filter restricts sessions to the matching source");
+    assert_eq!(
+        n, 1,
+        "source filter restricts sessions to the matching source"
+    );
 
     let main_n: i64 = conn
         .query_row(
@@ -669,7 +678,10 @@ fn tool_calls_filter_by_source() {
     let total: i64 = conn
         .query_row("SELECT COUNT(*) FROM tool_calls", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(total, 5, "1 from simple_session + 4 from multi_tool_session");
+    assert_eq!(
+        total, 5,
+        "1 from simple_session + 4 from multi_tool_session"
+    );
 
     // Source filter restricts to pinwheel's 4 tool calls.
     let pinwheel_n: i64 = conn
@@ -679,7 +691,10 @@ fn tool_calls_filter_by_source() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(pinwheel_n, 4, "source='pinwheel' returns only pinwheel tool calls");
+    assert_eq!(
+        pinwheel_n, 4,
+        "source='pinwheel' returns only pinwheel tool calls"
+    );
 
     // Source filter restricts to main's 1 tool call.
     let main_n: i64 = conn
@@ -742,7 +757,10 @@ fn views_expose_claude_harness() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(distinct <= 1, "{view} should have at most one harness value");
+        assert!(
+            distinct <= 1,
+            "{view} should have at most one harness value"
+        );
         let claude: i64 = conn
             .query_row(
                 &format!("SELECT COUNT(*) FROM {view} WHERE harness = 'claude'"),
@@ -772,7 +790,11 @@ fn empty_views_have_harness_column() {
     // Selecting harness from each empty view must not error (column exists).
     for view in ["messages", "tool_calls", "tool_results", "sessions"] {
         let n: i64 = conn
-            .query_row(&format!("SELECT COUNT(*) FROM {view} WHERE harness IS NULL"), [], |r| r.get(0))
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {view} WHERE harness IS NULL"),
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 0, "{view} should be empty");
     }

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use duckdb::Connection;
 use duckdb::types::Value;
+use duckdb::Connection;
 
 use crate::output::{self, OutputFormat};
 use crate::scope::QueryScope;
@@ -36,7 +36,11 @@ fn val_i64(v: &Value) -> i64 {
 }
 
 fn project_leaf(project: &str) -> String {
-    project.split('/').filter(|s| !s.is_empty()).last().unwrap_or(project).to_string()
+    project
+        .split('/')
+        .rfind(|s| !s.is_empty())
+        .unwrap_or(project)
+        .to_string()
 }
 
 fn duration_mins(started: &str, ended: &str) -> i64 {
@@ -55,12 +59,19 @@ fn duration_mins(started: &str, ended: &str) -> i64 {
 }
 
 const VALID_FIELDS: &[&str] = &[
-    "session_id", "project", "started_at", "ended_at", "message_count",
-    "tool_call_count", "user_message_count", "first_user_message",
+    "session_id",
+    "project",
+    "started_at",
+    "ended_at",
+    "message_count",
+    "tool_call_count",
+    "user_message_count",
+    "first_user_message",
 ];
 
 const VALID_COUNT_BY_COLUMNS: &[&str] = &["project"];
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
@@ -96,7 +107,16 @@ pub fn run(
     if let Some(field_list) = fields {
         let resolved = super::validate_fields(field_list, VALID_FIELDS, "sessions");
         let resolved_refs: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
-        return run_with_fields(conn, scope, grep, &resolved_refs, format, limit, offset, wide);
+        return run_with_fields(
+            conn,
+            scope,
+            grep,
+            &resolved_refs,
+            format,
+            limit,
+            offset,
+            wide,
+        );
     }
 
     let mut conditions = vec!["1=1".to_string()];
@@ -169,12 +189,14 @@ pub fn run(
             }
 
             if session_rows.is_empty() {
-                if scope.session.is_some() {
-                    super::print_session_not_found(scope.session.as_ref().unwrap());
+                if let Some(session) = &scope.session {
+                    super::print_session_not_found(session);
                 } else {
                     let mut extras: Vec<&str> = Vec::new();
-                    if grep.is_some() { extras.push("--grep"); }
-                    super::print_no_results(&scope, &extras);
+                    if grep.is_some() {
+                        extras.push("--grep");
+                    }
+                    super::print_no_results(scope, &extras);
                 }
                 return Ok(());
             }
@@ -198,6 +220,7 @@ pub fn run(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_fields(
     conn: &Connection,
     scope: &QueryScope,
@@ -314,12 +337,11 @@ fn run_count_by(
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut chart_rows: Vec<(String, i64)> = Vec::new();
             while let Some(row) = rows_iter.next()? {
-                let label = row.get::<_, Value>(0)
+                let label = row
+                    .get::<_, Value>(0)
                     .map(|v| val_str(&v))
                     .unwrap_or_default();
-                let count = row.get::<_, Value>(1)
-                    .map(|v| val_i64(&v))
-                    .unwrap_or(0);
+                let count = row.get::<_, Value>(1).map(|v| val_i64(&v)).unwrap_or(0);
                 chart_rows.push((label, count));
             }
 
@@ -337,53 +359,56 @@ fn run_count_by(
 fn render_oneline(rows: &[SessionRow], wide: bool, show_source: bool) {
     // Build plain text rows (no color) for width calculation.
     // Column order: started, project, [source], session_id, dur, msgs, tools, first_msg.
-    let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let time_ago = if r.started_at.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::relative_time(&r.started_at)
-        };
-
-        let project = if r.project.is_empty() {
-            style::null_display().to_string()
-        } else {
-            project_leaf(&r.project)
-        };
-
-        let session_id = if r.session_id.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::short_id(&r.session_id, 8)
-        };
-
-        let duration = if r.ended_at.is_empty() || r.started_at.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::format_duration_mins(duration_mins(&r.started_at, &r.ended_at))
-        };
-
-        let msg_count = r.message_count.to_string();
-        let tool_count = r.tool_call_count.to_string();
-
-        let first_msg = if r.first_user_message.is_empty() {
-            style::null_display().to_string()
-        } else if wide {
-            r.first_user_message.clone()
-        } else {
-            style::truncate(&r.first_user_message, 60)
-        };
-
-        let mut cols = vec![time_ago, project];
-        if show_source {
-            cols.push(if r.source.is_empty() {
+    let plain_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let time_ago = if r.started_at.is_empty() {
                 style::null_display().to_string()
             } else {
-                r.source.clone()
-            });
-        }
-        cols.extend([session_id, duration, msg_count, tool_count, first_msg]);
-        cols
-    }).collect();
+                style::relative_time(&r.started_at)
+            };
+
+            let project = if r.project.is_empty() {
+                style::null_display().to_string()
+            } else {
+                project_leaf(&r.project)
+            };
+
+            let session_id = if r.session_id.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::short_id(&r.session_id, 8)
+            };
+
+            let duration = if r.ended_at.is_empty() || r.started_at.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::format_duration_mins(duration_mins(&r.started_at, &r.ended_at))
+            };
+
+            let msg_count = r.message_count.to_string();
+            let tool_count = r.tool_call_count.to_string();
+
+            let first_msg = if r.first_user_message.is_empty() {
+                style::null_display().to_string()
+            } else if wide {
+                r.first_user_message.clone()
+            } else {
+                style::truncate(&r.first_user_message, 60)
+            };
+
+            let mut cols = vec![time_ago, project];
+            if show_source {
+                cols.push(if r.source.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    r.source.clone()
+                });
+            }
+            cols.extend([session_id, duration, msg_count, tool_count, first_msg]);
+            cols
+        })
+        .collect();
 
     // Calculate column widths from plain text
     let ncols = if show_source { 8 } else { 7 };
@@ -399,87 +424,118 @@ fn render_oneline(rows: &[SessionRow], wide: bool, show_source: bool) {
     // Color index per logical column. The source column (when shown) sits at
     // index 2 and uses the same Primary tone as project; the rest shift by one.
     let color_for = |i: usize| -> style::Color {
-        let logical = if show_source && i >= 2 { if i == 2 { return style::Color::Primary; } i - 1 } else { i };
+        let logical = if show_source && i >= 2 {
+            if i == 2 {
+                return style::Color::Primary;
+            }
+            i - 1
+        } else {
+            i
+        };
         match logical {
-            0 => style::Color::Dim,        // started
-            1 => style::Color::Primary,    // project
-            2 => style::Color::Secondary,  // session_id
-            _ => style::Color::Dim,        // dur, msgs, tools
+            0 => style::Color::Dim,       // started
+            1 => style::Color::Primary,   // project
+            2 => style::Color::Secondary, // session_id
+            _ => style::Color::Dim,       // dur, msgs, tools
         }
     };
 
     // Print each row with color applied after padding
     for row in &plain_rows {
-        let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
-            let padded = if i == ncols - 1 {
-                cell.clone()
-            } else {
-                style::pad_right(cell, widths[i])
-            };
-            if i == ncols - 1 {
-                padded // last column (first_user_message), no color
-            } else {
-                style::color(&padded, color_for(i))
-            }
-        }).collect();
+        let cols: Vec<String> = row
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                let padded = if i == ncols - 1 {
+                    cell.clone()
+                } else {
+                    style::pad_right(cell, widths[i])
+                };
+                if i == ncols - 1 {
+                    padded // last column (first_user_message), no color
+                } else {
+                    style::color(&padded, color_for(i))
+                }
+            })
+            .collect();
         println!("{}", cols.join("  "));
     }
 }
 
 fn render_table(rows: &[SessionRow], wide: bool, show_source: bool) {
     let headers: Vec<&str> = if show_source {
-        vec!["started", "project", "source", "session_id", "dur", "msgs", "tools", "first_user_message"]
+        vec![
+            "started",
+            "project",
+            "source",
+            "session_id",
+            "dur",
+            "msgs",
+            "tools",
+            "first_user_message",
+        ]
     } else {
-        vec!["started", "project", "session_id", "dur", "msgs", "tools", "first_user_message"]
+        vec![
+            "started",
+            "project",
+            "session_id",
+            "dur",
+            "msgs",
+            "tools",
+            "first_user_message",
+        ]
     };
 
-    let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let started = if r.started_at.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::relative_time(&r.started_at)
-        };
-
-        let project = if r.project.is_empty() {
-            style::null_display().to_string()
-        } else {
-            project_leaf(&r.project)
-        };
-
-        let session_id = if r.session_id.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::short_id(&r.session_id, 8)
-        };
-
-        let duration = if r.ended_at.is_empty() || r.started_at.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::format_duration_mins(duration_mins(&r.started_at, &r.ended_at))
-        };
-
-        let msg_count = r.message_count.to_string();
-        let tool_count = r.tool_call_count.to_string();
-
-        let first_msg = if r.first_user_message.is_empty() {
-            style::null_display().to_string()
-        } else if wide {
-            r.first_user_message.clone()
-        } else {
-            style::truncate(&r.first_user_message, 60)
-        };
-
-        let mut row = vec![started, project];
-        if show_source {
-            row.push(if r.source.is_empty() {
+    let string_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let started = if r.started_at.is_empty() {
                 style::null_display().to_string()
             } else {
-                r.source.clone()
-            });
-        }
-        row.extend([session_id, duration, msg_count, tool_count, first_msg]);
-        row
-    }).collect();
+                style::relative_time(&r.started_at)
+            };
+
+            let project = if r.project.is_empty() {
+                style::null_display().to_string()
+            } else {
+                project_leaf(&r.project)
+            };
+
+            let session_id = if r.session_id.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::short_id(&r.session_id, 8)
+            };
+
+            let duration = if r.ended_at.is_empty() || r.started_at.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::format_duration_mins(duration_mins(&r.started_at, &r.ended_at))
+            };
+
+            let msg_count = r.message_count.to_string();
+            let tool_count = r.tool_call_count.to_string();
+
+            let first_msg = if r.first_user_message.is_empty() {
+                style::null_display().to_string()
+            } else if wide {
+                r.first_user_message.clone()
+            } else {
+                style::truncate(&r.first_user_message, 60)
+            };
+
+            let mut row = vec![started, project];
+            if show_source {
+                row.push(if r.source.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    r.source.clone()
+                });
+            }
+            row.extend([session_id, duration, msg_count, tool_count, first_msg]);
+            row
+        })
+        .collect();
 
     style::print_light_table(&headers, &string_rows);
 }
@@ -525,30 +581,34 @@ fn run_timeline(
     ) timeline
     ORDER BY timestamp, CASE WHEN event = 'call' THEN 0 ELSE 1 END";
 
-    let params: Vec<Box<dyn duckdb::types::ToSql>> = vec![
-        Box::new(session_id.clone()),
-        Box::new(session_id.clone()),
-    ];
+    let params: Vec<Box<dyn duckdb::types::ToSql>> =
+        vec![Box::new(session_id.clone()), Box::new(session_id.clone())];
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     let mut stmt = conn.prepare(sql)?;
 
     match format {
-        OutputFormat::Json => {
-            output::print_results(&mut stmt, &param_refs, format, wide)
-        }
+        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format, wide),
         OutputFormat::Table => {
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut rows: Vec<Vec<String>> = Vec::new();
             while let Some(row) = rows_iter.next()? {
-                let event = row.get::<_, duckdb::types::Value>(0)
-                    .map(|v| val_str(&v)).unwrap_or_default();
-                let timestamp = row.get::<_, duckdb::types::Value>(1)
-                    .map(|v| val_str(&v)).unwrap_or_default();
-                let name = row.get::<_, duckdb::types::Value>(2)
-                    .map(|v| val_str(&v)).unwrap_or_default();
-                let detail = row.get::<_, duckdb::types::Value>(3)
-                    .map(|v| val_str(&v)).unwrap_or_default();
+                let event = row
+                    .get::<_, duckdb::types::Value>(0)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let timestamp = row
+                    .get::<_, duckdb::types::Value>(1)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let name = row
+                    .get::<_, duckdb::types::Value>(2)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let detail = row
+                    .get::<_, duckdb::types::Value>(3)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
 
                 let time = extract_time(&timestamp);
                 let detail_display = if wide {
@@ -574,14 +634,22 @@ fn run_timeline(
 
             let mut plain_rows: Vec<Vec<String>> = Vec::new();
             while let Some(row) = rows_iter.next()? {
-                let event = row.get::<_, duckdb::types::Value>(0)
-                    .map(|v| val_str(&v)).unwrap_or_default();
-                let timestamp = row.get::<_, duckdb::types::Value>(1)
-                    .map(|v| val_str(&v)).unwrap_or_default();
-                let name = row.get::<_, duckdb::types::Value>(2)
-                    .map(|v| val_str(&v)).unwrap_or_default();
-                let detail = row.get::<_, duckdb::types::Value>(3)
-                    .map(|v| val_str(&v)).unwrap_or_default();
+                let event = row
+                    .get::<_, duckdb::types::Value>(0)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let timestamp = row
+                    .get::<_, duckdb::types::Value>(1)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let name = row
+                    .get::<_, duckdb::types::Value>(2)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
+                let detail = row
+                    .get::<_, duckdb::types::Value>(3)
+                    .map(|v| val_str(&v))
+                    .unwrap_or_default();
 
                 let time = extract_time(&timestamp);
                 let detail_display = if wide {
@@ -611,20 +679,24 @@ fn run_timeline(
 
             // Print with color
             for row in &plain_rows {
-                let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
-                    let padded = if i == ncols - 1 {
-                        cell.clone()
-                    } else {
-                        style::pad_right(cell, widths[i])
-                    };
-                    match i {
-                        0 => style::color(&padded, style::Color::Dim),      // time
-                        1 => style::color(&padded, style::Color::Primary),   // event (call/result)
-                        2 => style::color(&padded, style::Color::Primary),   // tool name
-                        3 => style::color(&padded, style::Color::Secondary), // detail
-                        _ => padded,
-                    }
-                }).collect();
+                let cols: Vec<String> = row
+                    .iter()
+                    .enumerate()
+                    .map(|(i, cell)| {
+                        let padded = if i == ncols - 1 {
+                            cell.clone()
+                        } else {
+                            style::pad_right(cell, widths[i])
+                        };
+                        match i {
+                            0 => style::color(&padded, style::Color::Dim), // time
+                            1 => style::color(&padded, style::Color::Primary), // event (call/result)
+                            2 => style::color(&padded, style::Color::Primary), // tool name
+                            3 => style::color(&padded, style::Color::Secondary), // detail
+                            _ => padded,
+                        }
+                    })
+                    .collect();
                 println!("{}", cols.join("  "));
             }
 

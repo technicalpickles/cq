@@ -1,5 +1,5 @@
-use owo_colors::{OwoColorize, Stream::Stdout};
 use chrono::{DateTime, Utc};
+use owo_colors::{OwoColorize, Stream::Stdout};
 
 pub fn hint(text: &str) -> String {
     use owo_colors::Stream::Stderr;
@@ -178,17 +178,7 @@ pub fn print_light_table(headers: &[&str], rows: &[Vec<String>]) {
     println!("{}", color(&header_cells.join("  "), Color::Dim));
 
     // Print separator
-    let sep_cells: Vec<String> = widths
-        .iter()
-        .enumerate()
-        .map(|(i, &w)| {
-            if i == ncols - 1 {
-                "\u{2500}".repeat(w)
-            } else {
-                "\u{2500}".repeat(w)
-            }
-        })
-        .collect();
+    let sep_cells: Vec<String> = widths.iter().map(|&w| "\u{2500}".repeat(w)).collect();
     println!("{}", color(&sep_cells.join("  "), Color::Dim));
 
     // Print data rows
@@ -212,7 +202,9 @@ pub fn bar(value: i64, max_value: i64, max_width: usize) -> String {
         return String::new();
     }
     let ratio = value as f64 / max_value as f64;
-    let filled = ((ratio * max_width as f64).round() as usize).max(1).min(max_width);
+    let filled = ((ratio * max_width as f64).round() as usize)
+        .max(1)
+        .min(max_width);
     "\u{2588}".repeat(filled)
 }
 
@@ -226,8 +218,14 @@ mod tests {
         if let Some(home) = dirs::home_dir() {
             let path = format!("{}/projects/myapp", home.display());
             let result = abbreviate_home(&path);
-            assert!(result.starts_with("~/"), "Should start with ~/, got: {result}");
-            assert!(result.ends_with("/projects/myapp"), "Should end with path, got: {result}");
+            assert!(
+                result.starts_with("~/"),
+                "Should start with ~/, got: {result}"
+            );
+            assert!(
+                result.ends_with("/projects/myapp"),
+                "Should end with path, got: {result}"
+            );
         }
     }
 

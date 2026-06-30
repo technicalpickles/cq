@@ -1,19 +1,17 @@
-use std::path::Path;
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use duckdb::OptionalExt;
+use std::path::Path;
 
 pub const SCHEMA_VERSION: i32 = 4;
 
 /// Open or create the cache database. Creates tables if missing,
 /// rebuilds if schema version mismatches or force_rebuild is true.
 pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
-    std::fs::create_dir_all(cache_dir)
-        .context("Failed to create cache directory")?;
+    std::fs::create_dir_all(cache_dir).context("Failed to create cache directory")?;
 
     let db_path = cache_dir.join("index.duckdb");
-    let conn = Connection::open(&db_path)
-        .context("Failed to open cache database")?;
+    let conn = Connection::open(&db_path).context("Failed to open cache database")?;
 
     if force_rebuild || needs_rebuild(&conn)? {
         rebuild(&conn)?;
@@ -34,12 +32,11 @@ pub fn cache_dir() -> Result<std::path::PathBuf> {
 
 fn needs_rebuild(conn: &Connection) -> Result<bool> {
     // Check if cache_meta table exists
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_name = 'cache_meta'",
-            [],
-            |r| r.get(0),
-        )?;
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_name = 'cache_meta'",
+        [],
+        |r| r.get(0),
+    )?;
 
     if !table_exists {
         return Ok(true);
@@ -47,11 +44,7 @@ fn needs_rebuild(conn: &Connection) -> Result<bool> {
 
     // Check version (handle empty table gracefully)
     let version: Option<i32> = conn
-        .query_row(
-            "SELECT version FROM cache_meta LIMIT 1",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT version FROM cache_meta LIMIT 1", [], |r| r.get(0))
         .optional()?;
 
     match version {
@@ -65,7 +58,7 @@ fn rebuild(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "DROP TABLE IF EXISTS raw_records;
          DROP TABLE IF EXISTS file_registry;
-         DROP TABLE IF EXISTS cache_meta;"
+         DROP TABLE IF EXISTS cache_meta;",
     )?;
 
     conn.execute_batch(
@@ -87,7 +80,7 @@ fn rebuild(conn: &Connection) -> Result<()> {
         CREATE TABLE raw_records (
             source_file TEXT NOT NULL,
             json JSON NOT NULL
-        );"
+        );",
     )?;
 
     conn.execute(
@@ -102,7 +95,9 @@ fn rebuild(conn: &Connection) -> Result<()> {
 /// Returns 0 if no value is stored (first run).
 pub fn last_sync_at(conn: &Connection) -> Result<i64> {
     let ts: i64 = conn
-        .query_row("SELECT last_sync_at FROM cache_meta LIMIT 1", [], |r| r.get(0))
+        .query_row("SELECT last_sync_at FROM cache_meta LIMIT 1", [], |r| {
+            r.get(0)
+        })
         .with_context(|| "Failed to read last_sync_at")?;
     Ok(ts)
 }

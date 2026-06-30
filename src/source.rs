@@ -18,7 +18,10 @@ pub fn main_source() -> anyhow::Result<Source> {
         let home = dirs::home_dir().context("Could not determine home directory")?;
         home.join(".claude").join("projects")
     };
-    Ok(Source { name: "main".to_string(), projects_dir: dir })
+    Ok(Source {
+        name: "main".to_string(),
+        projects_dir: dir,
+    })
 }
 
 /// cenv sources: one per `<cenv base>/<name>/projects` that exists on disk.

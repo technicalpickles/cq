@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
-use anyhow::Result;
-use duckdb::Connection;
-use crate::provider::{TranscriptProvider, ProjectInfo};
+use crate::provider::{ProjectInfo, TranscriptProvider};
 use crate::scope::QueryScope;
 use crate::source::{self, Source};
 use crate::views;
+use anyhow::Result;
+use duckdb::Connection;
+use std::path::{Path, PathBuf};
 
 pub struct ClaudeProvider {
     sources: Vec<Source>,
@@ -25,7 +25,12 @@ impl ClaudeProvider {
 
     /// Single-source constructor kept for existing tests. Names the source `main`.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
-        Self { sources: vec![Source { name: "main".to_string(), projects_dir: base_dir }] }
+        Self {
+            sources: vec![Source {
+                name: "main".to_string(),
+                projects_dir: base_dir,
+            }],
+        }
     }
 
     pub fn sources(&self) -> &[Source] {
@@ -34,7 +39,10 @@ impl ClaudeProvider {
 
     /// The directories the indexer should scan, one per source.
     pub fn projects_dirs(&self) -> Vec<PathBuf> {
-        self.sources.iter().map(|s| s.projects_dir.clone()).collect()
+        self.sources
+            .iter()
+            .map(|s| s.projects_dir.clone())
+            .collect()
     }
 
     /// The source name a transcript file belongs to: the source whose
@@ -56,12 +64,12 @@ impl ClaudeProvider {
     }
 
     pub fn encode_path(path: &str) -> String {
-        path.replace('/', "-").replace('.', "-")
+        path.replace(['/', '.'], "-")
     }
 
     pub fn decode_path(encoded: &str) -> String {
-        if encoded.starts_with('-') {
-            format!("/{}", encoded[1..].replace('-', "/"))
+        if let Some(rest) = encoded.strip_prefix('-') {
+            format!("/{}", rest.replace('-', "/"))
         } else {
             encoded.replace('-', "/")
         }
@@ -77,7 +85,9 @@ impl ClaudeProvider {
     pub fn project_dirs_for_query(&self, query: &str) -> Vec<PathBuf> {
         let mut dirs = Vec::new();
         for src in &self.sources {
-            let Ok(entries) = std::fs::read_dir(&src.projects_dir) else { continue };
+            let Ok(entries) = std::fs::read_dir(&src.projects_dir) else {
+                continue;
+            };
             for entry in entries.filter_map(|e| e.ok()) {
                 if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     continue;
@@ -160,7 +170,9 @@ impl TranscriptProvider for ClaudeProvider {
     fn list_projects(&self) -> Result<Vec<ProjectInfo>> {
         let mut projects = Vec::new();
         for src in &self.sources {
-            let Ok(entries) = std::fs::read_dir(&src.projects_dir) else { continue };
+            let Ok(entries) = std::fs::read_dir(&src.projects_dir) else {
+                continue;
+            };
             for entry in entries.filter_map(|e| e.ok()) {
                 if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     continue;
@@ -170,14 +182,23 @@ impl TranscriptProvider for ClaudeProvider {
                 let file_count = std::fs::read_dir(entry.path())
                     .map(|rd| {
                         rd.filter_map(|e| e.ok())
-                            .filter(|e| e.path().extension().map(|ext| ext == "jsonl").unwrap_or(false))
+                            .filter(|e| {
+                                e.path()
+                                    .extension()
+                                    .map(|ext| ext == "jsonl")
+                                    .unwrap_or(false)
+                            })
                             .count()
                     })
                     .unwrap_or(0);
-                projects.push(ProjectInfo { encoded_name, decoded_path, file_count });
+                projects.push(ProjectInfo {
+                    encoded_name,
+                    decoded_path,
+                    file_count,
+                });
             }
         }
-        projects.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+        projects.sort_by_key(|p| std::cmp::Reverse(p.file_count));
         Ok(projects)
     }
 
@@ -209,7 +230,10 @@ fn collect_jsonl_paths(dir: &Path, out: &mut Vec<PathBuf>) {
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             collect_jsonl_paths(&path, out);
         } else if path.extension().map(|e| e == "jsonl").unwrap_or(false)
-            && path.file_name().map(|n| n != "journal.jsonl").unwrap_or(false)
+            && path
+                .file_name()
+                .map(|n| n != "journal.jsonl")
+                .unwrap_or(false)
         {
             out.push(path);
         }
@@ -347,7 +371,8 @@ mod tests {
 
     #[test]
     fn empty_base_dir_returns_empty() {
-        let provider = ClaudeProvider::new_with_base(PathBuf::from("/nonexistent/path/that/does/not/exist"));
+        let provider =
+            ClaudeProvider::new_with_base(PathBuf::from("/nonexistent/path/that/does/not/exist"));
         let scope = QueryScope::new(None, None, None);
         let files = provider.discover_files(&scope).unwrap();
         assert!(files.is_empty());
@@ -399,8 +424,14 @@ mod tests {
         let provider = ClaudeProvider::new_with_base(tmp.path().to_path_buf());
 
         // No filter: top-level + subagent, but not the journal ledger.
-        let all = provider.discover_files(&QueryScope::new(None, None, None)).unwrap();
-        assert_eq!(all.len(), 2, "session file + subagent file, journal excluded");
+        let all = provider
+            .discover_files(&QueryScope::new(None, None, None))
+            .unwrap();
+        assert_eq!(
+            all.len(),
+            2,
+            "session file + subagent file, journal excluded"
+        );
 
         // Session filter matches the parent session dir for the nested file.
         let scoped = provider
@@ -419,19 +450,38 @@ mod tests {
         let env_proj = env_dir.join("-Users-josh-b");
         fs::create_dir_all(&main_proj).unwrap();
         fs::create_dir_all(&env_proj).unwrap();
-        fs::write(main_proj.join("11111111-0000-0000-0000-000000000000.jsonl"), "{}").unwrap();
-        fs::write(env_proj.join("22222222-0000-0000-0000-000000000000.jsonl"), "{}").unwrap();
+        fs::write(
+            main_proj.join("11111111-0000-0000-0000-000000000000.jsonl"),
+            "{}",
+        )
+        .unwrap();
+        fs::write(
+            env_proj.join("22222222-0000-0000-0000-000000000000.jsonl"),
+            "{}",
+        )
+        .unwrap();
 
         let provider = ClaudeProvider::with_sources(vec![
-            Source { name: "main".into(), projects_dir: main_dir.clone() },
-            Source { name: "pinwheel".into(), projects_dir: env_dir.clone() },
+            Source {
+                name: "main".into(),
+                projects_dir: main_dir.clone(),
+            },
+            Source {
+                name: "pinwheel".into(),
+                projects_dir: env_dir.clone(),
+            },
         ]);
 
-        let files = provider.discover_files(&QueryScope::new(None, None, None)).unwrap();
+        let files = provider
+            .discover_files(&QueryScope::new(None, None, None))
+            .unwrap();
         assert_eq!(files.len(), 2);
 
         // source_for_file maps a path back to its source name
-        let f = files.iter().find(|p| p.to_string_lossy().contains("pinwheel")).unwrap();
+        let f = files
+            .iter()
+            .find(|p| p.to_string_lossy().contains("pinwheel"))
+            .unwrap();
         assert_eq!(provider.source_for_file(f).as_deref(), Some("pinwheel"));
     }
 
@@ -447,8 +497,14 @@ mod tests {
         fs::write(env_dir.join("-b").join("s.jsonl"), "{}").unwrap();
 
         let provider = ClaudeProvider::with_sources(vec![
-            Source { name: "main".into(), projects_dir: main_dir },
-            Source { name: "pinwheel".into(), projects_dir: env_dir },
+            Source {
+                name: "main".into(),
+                projects_dir: main_dir,
+            },
+            Source {
+                name: "pinwheel".into(),
+                projects_dir: env_dir,
+            },
         ]);
         let scope = QueryScope::new(None, None, None).with_source(Some("pinwheel".into()));
         let files = provider.discover_files(&scope).unwrap();

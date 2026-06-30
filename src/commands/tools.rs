@@ -1,6 +1,6 @@
 use anyhow::Result;
-use duckdb::Connection;
 use duckdb::types::Value;
+use duckdb::Connection;
 
 use crate::output::{self, OutputFormat};
 use crate::scope::QueryScope;
@@ -43,6 +43,7 @@ fn val_i64(v: &Value) -> i64 {
 
 const VALID_COUNT_BY_COLUMNS: &[&str] = &["name", "session_id", "project"];
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
@@ -64,13 +65,32 @@ pub fn run(
 
     // Dispatch to context mode
     if let Some(window) = ctx {
-        return run_with_context(conn, scope, tool_name, grep, errors_only, window, format, limit, wide);
+        return run_with_context(
+            conn,
+            scope,
+            tool_name,
+            grep,
+            errors_only,
+            window,
+            format,
+            limit,
+            wide,
+        );
     }
 
     // Dispatch to count-by mode
     if let Some(col) = count_by {
         let resolved = super::validate_count_by(col, VALID_COUNT_BY_COLUMNS, "tools");
-        return run_count_by(conn, scope, tool_name, grep, errors_only, &resolved, format, wide);
+        return run_count_by(
+            conn,
+            scope,
+            tool_name,
+            grep,
+            errors_only,
+            &resolved,
+            format,
+            wide,
+        );
     }
 
     // Summary mode: no filters specified (and no fields requested)
@@ -119,7 +139,18 @@ pub fn run(
 
     // When --fields is specified, use extracted columns instead of raw input
     if let Some(field_list) = fields {
-        return run_with_fields(conn, scope, &where_clause, &param_refs, field_list, errors_only, format, limit, offset, wide);
+        return run_with_fields(
+            conn,
+            scope,
+            &where_clause,
+            &param_refs,
+            field_list,
+            errors_only,
+            format,
+            limit,
+            offset,
+            wide,
+        );
     }
 
     // JSON gets full column set for scripting; display gets only what's shown
@@ -187,14 +218,20 @@ pub fn run(
     }
 
     if detail_rows.is_empty() {
-        if scope.session.is_some() {
-            super::print_session_not_found(scope.session.as_ref().unwrap());
+        if let Some(session) = &scope.session {
+            super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
-            if grep.is_some() { extras.push("--grep"); }
-            if errors_only { extras.push("--errors"); }
-            if tool_name.is_some() { extras.push("[name]"); }
-            super::print_no_results(&scope, &extras);
+            if grep.is_some() {
+                extras.push("--grep");
+            }
+            if errors_only {
+                extras.push("--errors");
+            }
+            if tool_name.is_some() {
+                extras.push("[name]");
+            }
+            super::print_no_results(scope, &extras);
         }
         return Ok(());
     }
@@ -224,6 +261,7 @@ pub fn run(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_context(
     conn: &Connection,
     scope: &crate::scope::QueryScope,
@@ -303,23 +341,27 @@ fn run_with_context(
          ORDER BY tc.timestamp \
          {temp_limit_clause}"
     );
-    let tool_param_refs: Vec<&dyn duckdb::types::ToSql> = tool_params.iter().map(|p| p.as_ref()).collect();
+    let tool_param_refs: Vec<&dyn duckdb::types::ToSql> =
+        tool_params.iter().map(|p| p.as_ref()).collect();
     conn.execute(&create_temp_sql, &tool_param_refs[..])?;
 
     // Check for empty results before building the context SQL.
-    let match_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM cq_ctx_matches",
-        [],
-        |r| r.get(0),
-    )?;
+    let match_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM cq_ctx_matches", [], |r| r.get(0))?;
     if match_count == 0 {
-        if scope.session.is_some() {
-            super::print_session_not_found(scope.session.as_ref().unwrap());
+        if let Some(session) = &scope.session {
+            super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
-            if tool_name.is_some() { extras.push("[name]"); }
-            if grep.is_some() { extras.push("--grep"); }
-            if errors_only { extras.push("--errors"); }
+            if tool_name.is_some() {
+                extras.push("[name]");
+            }
+            if grep.is_some() {
+                extras.push("--grep");
+            }
+            if errors_only {
+                extras.push("--errors");
+            }
             super::print_no_results(scope, &extras);
         }
         return Ok(());
@@ -338,7 +380,8 @@ fn run_with_context(
 
     // Only scope params remain for the context SQL.
     let scope_params = super::build_scope_params(scope);
-    let scope_param_refs: Vec<&dyn duckdb::types::ToSql> = scope_params.iter().map(|p| p.as_ref()).collect();
+    let scope_param_refs: Vec<&dyn duckdb::types::ToSql> =
+        scope_params.iter().map(|p| p.as_ref()).collect();
 
     match format {
         OutputFormat::Json => {
@@ -370,6 +413,7 @@ fn run_with_context(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_fields(
     conn: &Connection,
     scope: &QueryScope,
@@ -397,7 +441,11 @@ fn run_with_fields(
     } else {
         ""
     };
-    let error_filter = if errors_only { "AND tr.is_error = true" } else { "" };
+    let error_filter = if errors_only {
+        "AND tr.is_error = true"
+    } else {
+        ""
+    };
 
     // JSON mode: include extra metadata columns
     if matches!(format, OutputFormat::Json) {
@@ -444,11 +492,13 @@ fn run_with_fields(
     }
 
     if rows.is_empty() {
-        if scope.session.is_some() {
-            super::print_session_not_found(scope.session.as_ref().unwrap());
+        if let Some(session) = &scope.session {
+            super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
-            if errors_only { extras.push("--errors"); }
+            if errors_only {
+                extras.push("--errors");
+            }
             super::print_no_results(scope, &extras);
         }
         return Ok(());
@@ -479,6 +529,7 @@ fn run_with_fields(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_count_by(
     conn: &Connection,
     scope: &QueryScope,
@@ -528,7 +579,11 @@ fn run_count_by(
     } else {
         ""
     };
-    let error_filter = if errors_only { "AND tr.is_error = true" } else { "" };
+    let error_filter = if errors_only {
+        "AND tr.is_error = true"
+    } else {
+        ""
+    };
 
     let sql = format!(
         "SELECT tc.{column}, COUNT(*) AS count
@@ -544,22 +599,17 @@ fn run_count_by(
     let mut stmt = conn.prepare(&sql)?;
 
     match format {
-        OutputFormat::Json => {
-            output::print_results(&mut stmt, &param_refs, format, wide)
-        }
-        OutputFormat::Table => {
-            output::print_results(&mut stmt, &param_refs, format, wide)
-        }
+        OutputFormat::Json => output::print_results(&mut stmt, &param_refs, format, wide),
+        OutputFormat::Table => output::print_results(&mut stmt, &param_refs, format, wide),
         _ => {
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut chart_rows: Vec<(String, i64)> = Vec::new();
             while let Some(row) = rows_iter.next()? {
-                let label = row.get::<_, Value>(0)
+                let label = row
+                    .get::<_, Value>(0)
                     .map(|v| val_str(&v))
                     .unwrap_or_default();
-                let count = row.get::<_, Value>(1)
-                    .map(|v| val_i64(&v))
-                    .unwrap_or(0);
+                let count = row.get::<_, Value>(1).map(|v| val_i64(&v)).unwrap_or(0);
                 chart_rows.push((label, count));
             }
 
@@ -574,7 +624,12 @@ fn run_count_by(
     }
 }
 
-fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wide: bool) -> Result<()> {
+fn run_summary(
+    conn: &Connection,
+    scope: &QueryScope,
+    format: &OutputFormat,
+    wide: bool,
+) -> Result<()> {
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
 
@@ -627,10 +682,10 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wid
             }
 
             if summary_rows.is_empty() {
-                if scope.session.is_some() {
-                    super::print_session_not_found(scope.session.as_ref().unwrap());
+                if let Some(session) = &scope.session {
+                    super::print_session_not_found(session);
                 } else {
-                    super::print_no_results(&scope, &[]);
+                    super::print_no_results(scope, &[]);
                 }
                 return Ok(());
             }
@@ -653,37 +708,41 @@ fn run_summary(conn: &Connection, scope: &QueryScope, format: &OutputFormat, wid
 
 fn render_summary_table(rows: &[ToolSummaryRow]) {
     let headers = ["name", "count"];
-    let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        vec![r.name.clone(), r.count.to_string()]
-    }).collect();
+    let string_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| vec![r.name.clone(), r.count.to_string()])
+        .collect();
     style::print_light_table(&headers, &string_rows);
 }
 
 fn render_detail_oneline(rows: &[ToolDetailRow], wide: bool) {
     // Build plain text rows (no color) for width calculation
-    let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let session_id = if r.session_id.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::short_id(&r.session_id, 8)
-        };
+    let plain_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let session_id = if r.session_id.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::short_id(&r.session_id, 8)
+            };
 
-        let name = if r.name.is_empty() {
-            style::null_display().to_string()
-        } else {
-            r.name.clone()
-        };
+            let name = if r.name.is_empty() {
+                style::null_display().to_string()
+            } else {
+                r.name.clone()
+            };
 
-        let input = if r.input.is_empty() {
-            style::null_display().to_string()
-        } else if wide {
-            r.input.clone()
-        } else {
-            style::truncate(&r.input, 60)
-        };
+            let input = if r.input.is_empty() {
+                style::null_display().to_string()
+            } else if wide {
+                r.input.clone()
+            } else {
+                style::truncate(&r.input, 60)
+            };
 
-        vec![session_id, name, input]
-    }).collect();
+            vec![session_id, name, input]
+        })
+        .collect();
 
     // Calculate column widths from plain text
     let ncols = 3;
@@ -698,40 +757,55 @@ fn render_detail_oneline(rows: &[ToolDetailRow], wide: bool) {
 
     // Print each row with color applied after padding
     for row in &plain_rows {
-        let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
-            let padded = if i == ncols - 1 {
-                cell.clone()
-            } else {
-                style::pad_right(cell, widths[i])
-            };
-            match i {
-                0 => style::color(&padded, style::Color::Secondary),
-                1 => style::color(&padded, style::Color::Primary),
-                _ => padded,
-            }
-        }).collect();
+        let cols: Vec<String> = row
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                let padded = if i == ncols - 1 {
+                    cell.clone()
+                } else {
+                    style::pad_right(cell, widths[i])
+                };
+                match i {
+                    0 => style::color(&padded, style::Color::Secondary),
+                    1 => style::color(&padded, style::Color::Primary),
+                    _ => padded,
+                }
+            })
+            .collect();
         println!("{}", cols.join("  "));
     }
 }
 
 fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str], wide: bool) {
     let ncols = 2 + field_names.len(); // session_id, name, then fields
-    let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let mut cols = vec![
-            if r.session_id.is_empty() { style::null_display().to_string() } else { style::short_id(&r.session_id, 8) },
-            if r.name.is_empty() { style::null_display().to_string() } else { r.name.clone() },
-        ];
-        for val in &r.fields {
-            cols.push(if val.is_empty() {
-                style::null_display().to_string()
-            } else if wide {
-                val.clone()
-            } else {
-                style::truncate(val, 80)
-            });
-        }
-        cols
-    }).collect();
+    let plain_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let mut cols = vec![
+                if r.session_id.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    style::short_id(&r.session_id, 8)
+                },
+                if r.name.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    r.name.clone()
+                },
+            ];
+            for val in &r.fields {
+                cols.push(if val.is_empty() {
+                    style::null_display().to_string()
+                } else if wide {
+                    val.clone()
+                } else {
+                    style::truncate(val, 80)
+                });
+            }
+            cols
+        })
+        .collect();
 
     let mut widths = vec![0usize; ncols];
     for row in &plain_rows {
@@ -743,18 +817,22 @@ fn render_fields_oneline(rows: &[ToolFieldsRow], field_names: &[&str], wide: boo
     }
 
     for row in &plain_rows {
-        let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
-            let padded = if i == ncols - 1 {
-                cell.clone()
-            } else {
-                style::pad_right(cell, widths[i])
-            };
-            match i {
-                0 => style::color(&padded, style::Color::Secondary),
-                1 => style::color(&padded, style::Color::Primary),
-                _ => padded,
-            }
-        }).collect();
+        let cols: Vec<String> = row
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                let padded = if i == ncols - 1 {
+                    cell.clone()
+                } else {
+                    style::pad_right(cell, widths[i])
+                };
+                match i {
+                    0 => style::color(&padded, style::Color::Secondary),
+                    1 => style::color(&padded, style::Color::Primary),
+                    _ => padded,
+                }
+            })
+            .collect();
         println!("{}", cols.join("  "));
     }
 }
@@ -763,50 +841,64 @@ fn render_fields_table(rows: &[ToolFieldsRow], field_names: &[&str], wide: bool)
     let mut headers: Vec<&str> = vec!["session", "tool"];
     headers.extend_from_slice(field_names);
 
-    let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let mut cols = vec![
-            if r.session_id.is_empty() { style::null_display().to_string() } else { style::short_id(&r.session_id, 8) },
-            if r.name.is_empty() { style::null_display().to_string() } else { r.name.clone() },
-        ];
-        for val in &r.fields {
-            cols.push(if val.is_empty() {
-                style::null_display().to_string()
-            } else if wide {
-                val.clone()
-            } else {
-                style::truncate(val, 80)
-            });
-        }
-        cols
-    }).collect();
+    let string_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let mut cols = vec![
+                if r.session_id.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    style::short_id(&r.session_id, 8)
+                },
+                if r.name.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    r.name.clone()
+                },
+            ];
+            for val in &r.fields {
+                cols.push(if val.is_empty() {
+                    style::null_display().to_string()
+                } else if wide {
+                    val.clone()
+                } else {
+                    style::truncate(val, 80)
+                });
+            }
+            cols
+        })
+        .collect();
 
     style::print_light_table(&headers, &string_rows);
 }
 
 fn render_detail_table(rows: &[ToolDetailRow], wide: bool) {
     let headers = ["session", "tool", "input"];
-    let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let session_id = if r.session_id.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::short_id(&r.session_id, 8)
-        };
+    let string_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let session_id = if r.session_id.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::short_id(&r.session_id, 8)
+            };
 
-        let name = if r.name.is_empty() {
-            style::null_display().to_string()
-        } else {
-            r.name.clone()
-        };
+            let name = if r.name.is_empty() {
+                style::null_display().to_string()
+            } else {
+                r.name.clone()
+            };
 
-        let input = if r.input.is_empty() {
-            style::null_display().to_string()
-        } else if wide {
-            r.input.clone()
-        } else {
-            style::truncate(&r.input, 60)
-        };
+            let input = if r.input.is_empty() {
+                style::null_display().to_string()
+            } else if wide {
+                r.input.clone()
+            } else {
+                style::truncate(&r.input, 60)
+            };
 
-        vec![session_id, name, input]
-    }).collect();
+            vec![session_id, name, input]
+        })
+        .collect();
     style::print_light_table(&headers, &string_rows);
 }

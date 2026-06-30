@@ -108,8 +108,12 @@ mod tests {
     #[test]
     fn builder_includes_before_and_after_bounds() {
         let b = ContextSqlBuilder {
-            window: ContextWindow { before: 2, after: 3 },
-            matches_subquery: "SELECT session_id, uuid AS message_uuid FROM messages WHERE type = 'user'",
+            window: ContextWindow {
+                before: 2,
+                after: 3,
+            },
+            matches_subquery:
+                "SELECT session_id, uuid AS message_uuid FROM messages WHERE type = 'user'",
             ordered_scope_where: "1=1",
             match_limit: 0,
         };
@@ -123,7 +127,10 @@ mod tests {
     #[test]
     fn builder_includes_match_limit_when_nonzero() {
         let b = ContextSqlBuilder {
-            window: ContextWindow { before: 1, after: 1 },
+            window: ContextWindow {
+                before: 1,
+                after: 1,
+            },
             matches_subquery: "SELECT session_id, uuid AS message_uuid FROM messages",
             ordered_scope_where: "1=1",
             match_limit: 5,

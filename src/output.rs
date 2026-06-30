@@ -103,7 +103,11 @@ pub fn print_context_rows(
             .map(|&i| value_to_string(&values[i], max_width))
             .collect();
 
-        out_rows.push(OutRow { cells, is_match, group });
+        out_rows.push(OutRow {
+            cells,
+            is_match,
+            group,
+        });
     }
 
     let mut prev_group: Option<i64> = None;
@@ -194,7 +198,11 @@ fn value_to_json(v: &Value) -> serde_json::Value {
     }
 }
 
-fn print_light_table_output(column_names: &[String], rows: &[Vec<Value>], max_width: usize) -> Result<()> {
+fn print_light_table_output(
+    column_names: &[String],
+    rows: &[Vec<Value>],
+    max_width: usize,
+) -> Result<()> {
     let headers: Vec<&str> = column_names.iter().map(|s| s.as_str()).collect();
     let string_rows: Vec<Vec<String>> = rows
         .iter()
