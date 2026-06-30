@@ -1,10 +1,10 @@
-use anyhow::Result;
-use duckdb::Connection;
 use crate::cache;
 use crate::indexer;
-use crate::views;
 use crate::provider::TranscriptProvider;
 use crate::sync_scope::SyncScope;
+use crate::views;
+use anyhow::Result;
+use duckdb::Connection;
 
 pub struct DbSetup {
     pub conn: Connection,
@@ -31,7 +31,9 @@ pub struct DbOptions {
 
 impl Default for DbOptions {
     fn default() -> Self {
-        Self { sync_mode: SyncMode::Auto }
+        Self {
+            sync_mode: SyncMode::Auto,
+        }
     }
 }
 

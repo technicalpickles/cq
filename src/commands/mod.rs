@@ -1,10 +1,10 @@
-pub mod sessions;
-pub mod tools;
+pub mod context;
 pub mod messages;
 pub mod projects;
-pub mod sql;
 pub mod schema;
-pub mod context;
+pub mod sessions;
+pub mod sql;
+pub mod tools;
 
 pub use context::ContextSqlBuilder;
 
@@ -51,9 +51,16 @@ impl ContextWindow {
     /// Returns None when no context flag is set.
     /// `--context` (if set) wins over `--after` and `--before` (clap's conflicts_with_all
     /// should already prevent mixing, but we defend anyway).
-    pub fn from_flags(after: Option<usize>, before: Option<usize>, context: Option<usize>) -> Option<Self> {
+    pub fn from_flags(
+        after: Option<usize>,
+        before: Option<usize>,
+        context: Option<usize>,
+    ) -> Option<Self> {
         if let Some(c) = context {
-            return Some(ContextWindow { before: c, after: c });
+            return Some(ContextWindow {
+                before: c,
+                after: c,
+            });
         }
         if after.is_none() && before.is_none() {
             return None;
@@ -107,7 +114,11 @@ pub fn check_count_by_fields_conflict(count_by: Option<&str>, fields: Option<&[&
 pub fn render_bar_chart(rows: &[(String, i64)]) {
     let max_count = rows.iter().map(|r| r.1).max().unwrap_or(1);
     let name_width = rows.iter().map(|r| r.0.len()).max().unwrap_or(0);
-    let count_width = rows.iter().map(|r| r.1.to_string().len()).max().unwrap_or(0);
+    let count_width = rows
+        .iter()
+        .map(|r| r.1.to_string().len())
+        .max()
+        .unwrap_or(0);
 
     for row in rows {
         let name_padded = style::pad_right(&row.0, name_width);
@@ -172,10 +183,7 @@ pub fn offset_clause(offset: usize) -> String {
 /// Print "Session <id> not found." when --session is specified but no results match.
 pub fn print_session_not_found(session_id: &str) {
     let short = &session_id[..std::cmp::min(8, session_id.len())];
-    eprintln!(
-        "Session {}... not found.",
-        short
-    );
+    eprintln!("Session {}... not found.", short);
 }
 
 /// Print "No results." with contextual suggestions based on active filters.
@@ -202,7 +210,10 @@ pub fn print_no_results(scope: &crate::scope::QueryScope, extra_filters: &[&str]
     if !active.is_empty() {
         eprintln!(
             "{}",
-            style::hint(&format!("Active filters: {}. Try broadening or removing one.", active.join(", ")))
+            style::hint(&format!(
+                "Active filters: {}. Try broadening or removing one.",
+                active.join(", ")
+            ))
         );
     }
 }

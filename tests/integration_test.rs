@@ -39,7 +39,8 @@ fn cq_cmd(env: &TestEnv) -> Command {
 
 #[test]
 fn help_shows_commands() {
-    Command::cargo_bin("cq").unwrap()
+    Command::cargo_bin("cq")
+        .unwrap()
         .arg("--help")
         .assert()
         .success()
@@ -51,7 +52,8 @@ fn help_shows_commands() {
 #[test]
 fn schema_shows_views() {
     // schema doesn't need DB connection, no CQ_PROJECTS_DIR needed
-    Command::cargo_bin("cq").unwrap()
+    Command::cargo_bin("cq")
+        .unwrap()
         .arg("schema")
         .assert()
         .success()
@@ -61,7 +63,8 @@ fn schema_shows_views() {
 
 #[test]
 fn schema_examples_shows_sql() {
-    Command::cargo_bin("cq").unwrap()
+    Command::cargo_bin("cq")
+        .unwrap()
         .args(["schema", "--examples"])
         .assert()
         .success()
@@ -160,7 +163,10 @@ fn sql_varchar_timestamp_compare_shows_hint() {
     // of the same gotcha.
     let env = setup_env(&["simple_session.jsonl"]);
     let output = cq_cmd(&env)
-        .args(["sql", "SELECT * FROM sessions WHERE started_at >= TIMESTAMP '2026-01-01'"])
+        .args([
+            "sql",
+            "SELECT * FROM sessions WHERE started_at >= TIMESTAMP '2026-01-01'",
+        ])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1), "Should exit 1 on SQL error");
@@ -232,10 +238,7 @@ fn tools_filter_by_name() {
 #[test]
 fn progress_on_stderr_not_stdout() {
     let env = setup_env(&["simple_session.jsonl"]);
-    let output = cq_cmd(&env)
-        .arg("sessions")
-        .output()
-        .unwrap();
+    let output = cq_cmd(&env).arg("sessions").output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Progress messages go to stderr
@@ -244,8 +247,14 @@ fn progress_on_stderr_not_stdout() {
         "Expected progress on stderr, got: {stderr}"
     );
     // stdout should not have progress messages
-    assert!(!stdout.contains("Synced"), "Progress message leaked to stdout: {stdout}");
-    assert!(!stdout.contains("Loaded"), "Progress message leaked to stdout: {stdout}");
+    assert!(
+        !stdout.contains("Synced"),
+        "Progress message leaked to stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Loaded"),
+        "Progress message leaked to stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -279,10 +288,7 @@ fn no_color_flag() {
     // Explicitly unset NO_COLOR so we're testing the flag, not the env var
     cmd.env_remove("NO_COLOR");
 
-    let output = cmd
-        .args(["--no-color", "tools"])
-        .output()
-        .unwrap();
+    let output = cmd.args(["--no-color", "tools"]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -319,10 +325,7 @@ fn projects_table() {
 #[test]
 fn projects_json() {
     let env = setup_env(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
-    let output = cq_cmd(&env)
-        .args(["--json", "projects"])
-        .output()
-        .unwrap();
+    let output = cq_cmd(&env).args(["--json", "projects"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
@@ -350,10 +353,7 @@ fn projects_skills_flag() {
 #[test]
 fn projects_json_includes_skill_names() {
     let env = setup_env(&["multi_tool_session.jsonl"]);
-    let output = cq_cmd(&env)
-        .args(["--json", "projects"])
-        .output()
-        .unwrap();
+    let output = cq_cmd(&env).args(["--json", "projects"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
@@ -364,7 +364,8 @@ fn projects_json_includes_skill_names() {
 
 #[test]
 fn help_shows_projects_command() {
-    Command::cargo_bin("cq").unwrap()
+    Command::cargo_bin("cq")
+        .unwrap()
         .arg("--help")
         .assert()
         .success()
@@ -381,8 +382,14 @@ fn tools_fields_extracts_command() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should show the extracted command, not raw JSON
-    assert!(stdout.contains("ls"), "Expected extracted command in output, got: {stdout}");
-    assert!(!stdout.contains("{\"command\""), "Should not contain raw JSON, got: {stdout}");
+    assert!(
+        stdout.contains("ls"),
+        "Expected extracted command in output, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("{\"command\""),
+        "Should not contain raw JSON, got: {stdout}"
+    );
 }
 
 #[test]
@@ -417,7 +424,10 @@ fn tools_fields_json_format() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     assert!(!parsed.is_empty());
-    assert!(parsed[0].get("command").is_some(), "JSON should have 'command' field");
+    assert!(
+        parsed[0].get("command").is_some(),
+        "JSON should have 'command' field"
+    );
 }
 
 #[test]
@@ -482,8 +492,16 @@ fn auto_scope_to_current_project() {
     let project_b = projects.path().join("-Users-test-webapp");
     std::fs::create_dir_all(&project_a).unwrap();
     std::fs::create_dir_all(&project_b).unwrap();
-    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
-    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+    std::fs::copy(
+        fixture_path("simple_session.jsonl"),
+        project_a.join("sess-a.jsonl"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture_path("multi_tool_session.jsonl"),
+        project_b.join("sess-b.jsonl"),
+    )
+    .unwrap();
 
     let env = TestEnv { projects, cache };
 
@@ -497,9 +515,18 @@ fn auto_scope_to_current_project() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     // sess-001 is in myproject, sess-002 is in webapp
-    assert!(stdout.contains("sess-001"), "Should show myproject session (sess-001), got: {stdout}");
-    assert!(!stdout.contains("sess-002"), "Should not show webapp session (sess-002), got: {stdout}");
-    assert!(stderr.contains("Scoped to"), "Should show scope notice, got: {stderr}");
+    assert!(
+        stdout.contains("sess-001"),
+        "Should show myproject session (sess-001), got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("sess-002"),
+        "Should not show webapp session (sess-002), got: {stdout}"
+    );
+    assert!(
+        stderr.contains("Scoped to"),
+        "Should show scope notice, got: {stderr}"
+    );
 }
 
 #[test]
@@ -509,7 +536,11 @@ fn auto_scope_hint_shows_path() {
 
     let project_a = projects.path().join("-Users-test-myproject");
     std::fs::create_dir_all(&project_a).unwrap();
-    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
+    std::fs::copy(
+        fixture_path("simple_session.jsonl"),
+        project_a.join("sess-a.jsonl"),
+    )
+    .unwrap();
 
     let env = TestEnv { projects, cache };
 
@@ -566,7 +597,11 @@ fn session_invalid_format_errors() {
 fn session_not_found_errors() {
     let env = setup_env(&["simple_session.jsonl"]);
     let output = cq_cmd(&env)
-        .args(["--session", "00000000-0000-0000-0000-000000000000", "sessions"])
+        .args([
+            "--session",
+            "00000000-0000-0000-0000-000000000000",
+            "sessions",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -586,8 +621,16 @@ fn projects_always_unscoped() {
     let project_b = projects.path().join("-Users-test-webapp");
     std::fs::create_dir_all(&project_a).unwrap();
     std::fs::create_dir_all(&project_b).unwrap();
-    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
-    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+    std::fs::copy(
+        fixture_path("simple_session.jsonl"),
+        project_a.join("sess-a.jsonl"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture_path("multi_tool_session.jsonl"),
+        project_b.join("sess-b.jsonl"),
+    )
+    .unwrap();
 
     let env = TestEnv { projects, cache };
 
@@ -599,8 +642,14 @@ fn projects_always_unscoped() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("myproject"), "Should show myproject, got: {stdout}");
-    assert!(stdout.contains("webapp"), "Should show webapp even when auto-scoped elsewhere, got: {stdout}");
+    assert!(
+        stdout.contains("myproject"),
+        "Should show myproject, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("webapp"),
+        "Should show webapp even when auto-scoped elsewhere, got: {stdout}"
+    );
 }
 
 #[test]
@@ -612,8 +661,16 @@ fn all_flag_overrides_auto_scope() {
     let project_b = projects.path().join("-Users-test-webapp");
     std::fs::create_dir_all(&project_a).unwrap();
     std::fs::create_dir_all(&project_b).unwrap();
-    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
-    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+    std::fs::copy(
+        fixture_path("simple_session.jsonl"),
+        project_a.join("sess-a.jsonl"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture_path("multi_tool_session.jsonl"),
+        project_b.join("sess-b.jsonl"),
+    )
+    .unwrap();
 
     let env = TestEnv { projects, cache };
 
@@ -626,10 +683,19 @@ fn all_flag_overrides_auto_scope() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("Scoped to"), "Should not show scope notice with --all, got: {stderr}");
+    assert!(
+        !stderr.contains("Scoped to"),
+        "Should not show scope notice with --all, got: {stderr}"
+    );
     // Both sessions should appear
-    assert!(stdout.contains("sess-001"), "Should show myproject session with --all, got: {stdout}");
-    assert!(stdout.contains("sess-002"), "Should show webapp session with --all, got: {stdout}");
+    assert!(
+        stdout.contains("sess-001"),
+        "Should show myproject session with --all, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("sess-002"),
+        "Should show webapp session with --all, got: {stdout}"
+    );
 }
 
 #[test]
@@ -717,10 +783,7 @@ fn wide_flag_shows_full_values() {
 #[test]
 fn default_truncates_long_values() {
     let env = setup_env(&["long_values_session.jsonl"]);
-    let output = cq_cmd(&env)
-        .args(["tools", "Bash"])
-        .output()
-        .unwrap();
+    let output = cq_cmd(&env).args(["tools", "Bash"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // The long command from the fixture should be truncated in default mode
@@ -735,7 +798,8 @@ fn default_truncates_long_values() {
 
 #[test]
 fn wide_flag_in_help() {
-    Command::cargo_bin("cq").unwrap()
+    Command::cargo_bin("cq")
+        .unwrap()
         .arg("--help")
         .assert()
         .success()
@@ -760,10 +824,7 @@ fn wide_flag_with_table_format() {
 #[test]
 fn wide_flag_sessions() {
     let env = setup_env(&["long_values_session.jsonl"]);
-    let output = cq_cmd(&env)
-        .args(["--wide", "sessions"])
-        .output()
-        .unwrap();
+    let output = cq_cmd(&env).args(["--wide", "sessions"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // The first_user_message is long, should not be truncated with --wide
@@ -776,10 +837,7 @@ fn wide_flag_sessions() {
 #[test]
 fn wide_flag_messages() {
     let env = setup_env(&["long_values_session.jsonl"]);
-    let output = cq_cmd(&env)
-        .args(["--wide", "messages"])
-        .output()
-        .unwrap();
+    let output = cq_cmd(&env).args(["--wide", "messages"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // The user message text is long, should not be truncated with --wide
@@ -793,7 +851,11 @@ fn wide_flag_messages() {
 fn wide_flag_sql() {
     let env = setup_env(&["long_values_session.jsonl"]);
     let output = cq_cmd(&env)
-        .args(["--wide", "sql", "SELECT name, CAST(input AS VARCHAR) AS input FROM tool_calls LIMIT 1"])
+        .args([
+            "--wide",
+            "sql",
+            "SELECT name, CAST(input AS VARCHAR) AS input FROM tool_calls LIMIT 1",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -806,11 +868,15 @@ fn wide_flag_sql() {
 
 #[test]
 fn schema_unknown_view_error_format() {
-    let output = Command::cargo_bin("cq").unwrap()
+    let output = Command::cargo_bin("cq")
+        .unwrap()
         .args(["schema", "bogus"])
         .output()
         .unwrap();
-    assert!(!output.status.success(), "Should exit with failure for unknown view");
+    assert!(
+        !output.status.success(),
+        "Should exit with failure for unknown view"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("Unknown view 'bogus'"),
@@ -878,10 +944,22 @@ fn messages_fields_json() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     assert!(!parsed.is_empty());
-    assert!(parsed[0].get("text").is_some(), "JSON should have 'text' field, got: {}", parsed[0]);
-    assert!(parsed[0].get("type").is_some(), "JSON should have 'type' field, got: {}", parsed[0]);
+    assert!(
+        parsed[0].get("text").is_some(),
+        "JSON should have 'text' field, got: {}",
+        parsed[0]
+    );
+    assert!(
+        parsed[0].get("type").is_some(),
+        "JSON should have 'type' field, got: {}",
+        parsed[0]
+    );
     // Should NOT have fields that weren't requested
-    assert!(parsed[0].get("session_id").is_none(), "JSON should not have 'session_id' when not requested, got: {}", parsed[0]);
+    assert!(
+        parsed[0].get("session_id").is_none(),
+        "JSON should not have 'session_id' when not requested, got: {}",
+        parsed[0]
+    );
 }
 
 #[test]
@@ -971,8 +1049,14 @@ fn tools_count_by_name() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should produce bar chart with tool names
-    assert!(stdout.contains("Bash"), "Should show Bash tool name, got: {stdout}");
-    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+    assert!(
+        stdout.contains("Bash"),
+        "Should show Bash tool name, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2588}"),
+        "Should show bar chart blocks, got: {stdout}"
+    );
 }
 
 #[test]
@@ -985,9 +1069,18 @@ fn tools_count_by_session() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should produce bar chart with session IDs
-    assert!(stdout.contains("sess-001"), "Should show session ID, got: {stdout}");
-    assert!(stdout.contains("sess-002"), "Should show session ID, got: {stdout}");
-    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+    assert!(
+        stdout.contains("sess-001"),
+        "Should show session ID, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("sess-002"),
+        "Should show session ID, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2588}"),
+        "Should show bar chart blocks, got: {stdout}"
+    );
 }
 
 #[test]
@@ -1019,9 +1112,15 @@ fn tools_count_by_with_filter() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // error_session.jsonl has sess-003 with an error
-    assert!(stdout.contains("sess-003"), "Should show error session, got: {stdout}");
+    assert!(
+        stdout.contains("sess-003"),
+        "Should show error session, got: {stdout}"
+    );
     // simple_session.jsonl sess-001 has no errors, should not appear
-    assert!(!stdout.contains("sess-001"), "Should not show non-error session, got: {stdout}");
+    assert!(
+        !stdout.contains("sess-001"),
+        "Should not show non-error session, got: {stdout}"
+    );
 }
 
 #[test]
@@ -1033,9 +1132,18 @@ fn messages_count_by_type() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("user"), "Should show user type, got: {stdout}");
-    assert!(stdout.contains("assistant"), "Should show assistant type, got: {stdout}");
-    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+    assert!(
+        stdout.contains("user"),
+        "Should show user type, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("assistant"),
+        "Should show assistant type, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2588}"),
+        "Should show bar chart blocks, got: {stdout}"
+    );
 }
 
 #[test]
@@ -1049,8 +1157,16 @@ fn count_by_json_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     assert!(!parsed.is_empty());
-    assert!(parsed[0].get("name").is_some(), "JSON should have 'name' key, got: {}", parsed[0]);
-    assert!(parsed[0].get("count").is_some(), "JSON should have 'count' key, got: {}", parsed[0]);
+    assert!(
+        parsed[0].get("name").is_some(),
+        "JSON should have 'name' key, got: {}",
+        parsed[0]
+    );
+    assert!(
+        parsed[0].get("count").is_some(),
+        "JSON should have 'count' key, got: {}",
+        parsed[0]
+    );
 }
 
 #[test]
@@ -1088,16 +1204,31 @@ fn setup_subagent_env() -> TestEnv {
     let sub = proj.join(sess).join("subagents");
     write_file(&sub.join("agent-aaa.jsonl"),
         "{\"type\":\"assistant\",\"message\":{\"id\":\"m2\",\"role\":\"assistant\",\"model\":\"claude-haiku-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"Read\",\"input\":{\"file_path\":\"/x\"}}]},\"uuid\":\"a2\",\"parentUuid\":null,\"isSidechain\":true,\"agentId\":\"aaa\",\"timestamp\":\"2026-05-01T10:00:01.000Z\",\"sessionId\":\"11111111-1111-1111-1111-111111111111\",\"cwd\":\"/Users/test/myproject\"}\n");
-    std::fs::write(sub.join("agent-aaa.meta.json"), "{\"agentType\":\"general-purpose\"}").unwrap();
+    std::fs::write(
+        sub.join("agent-aaa.meta.json"),
+        "{\"agentType\":\"general-purpose\"}",
+    )
+    .unwrap();
 
     // Workflow subagent + journal ledger (must be excluded).
     let wf = sub.join("workflows").join("wf_xyz");
     write_file(&wf.join("agent-bbb.jsonl"),
         "{\"type\":\"assistant\",\"message\":{\"id\":\"m3\",\"role\":\"assistant\",\"model\":\"claude-haiku-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t3\",\"name\":\"Glob\",\"input\":{\"pattern\":\"*\"}}]},\"uuid\":\"a3\",\"parentUuid\":null,\"isSidechain\":true,\"agentId\":\"bbb\",\"timestamp\":\"2026-05-01T10:00:02.000Z\",\"sessionId\":\"11111111-1111-1111-1111-111111111111\",\"cwd\":\"/Users/test/myproject\"}\n");
-    std::fs::write(wf.join("agent-bbb.meta.json"), "{\"agentType\":\"Explore\"}").unwrap();
-    std::fs::write(wf.join("journal.jsonl"), "{\"type\":\"started\",\"key\":\"v2:abc\",\"agentId\":\"bbb\"}\n").unwrap();
+    std::fs::write(
+        wf.join("agent-bbb.meta.json"),
+        "{\"agentType\":\"Explore\"}",
+    )
+    .unwrap();
+    std::fs::write(
+        wf.join("journal.jsonl"),
+        "{\"type\":\"started\",\"key\":\"v2:abc\",\"agentId\":\"bbb\"}\n",
+    )
+    .unwrap();
 
-    TestEnv { projects, cache: TempDir::new().unwrap() }
+    TestEnv {
+        projects,
+        cache: TempDir::new().unwrap(),
+    }
 }
 
 #[test]
@@ -1114,7 +1245,10 @@ fn indexes_subagent_tool_calls() {
 fn excludes_journal_jsonl() {
     let env = setup_subagent_env();
     cq_cmd(&env)
-        .args(["sql", "SELECT COUNT(*) FROM raw_records WHERE source_file LIKE '%journal.jsonl%'"])
+        .args([
+            "sql",
+            "SELECT COUNT(*) FROM raw_records WHERE source_file LIKE '%journal.jsonl%'",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("0"));
@@ -1124,7 +1258,10 @@ fn excludes_journal_jsonl() {
 fn workflow_id_visible_end_to_end() {
     let env = setup_subagent_env();
     cq_cmd(&env)
-        .args(["sql", "SELECT workflow_id FROM tool_calls WHERE name = 'Glob'"])
+        .args([
+            "sql",
+            "SELECT workflow_id FROM tool_calls WHERE name = 'Glob'",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("wf_xyz"));
@@ -1138,7 +1275,8 @@ fn timeline_env() -> TestEnv {
 
 #[test]
 fn tools_help_shows_context_flags() {
-    Command::cargo_bin("cq").unwrap()
+    Command::cargo_bin("cq")
+        .unwrap()
         .args(["tools", "--help"])
         .assert()
         .success()
@@ -1151,7 +1289,8 @@ fn tools_help_shows_context_flags() {
 
 #[test]
 fn messages_help_shows_context_flags() {
-    Command::cargo_bin("cq").unwrap()
+    Command::cargo_bin("cq")
+        .unwrap()
         .args(["messages", "--help"])
         .assert()
         .success()
@@ -1164,15 +1303,32 @@ fn messages_help_shows_context_flags() {
 fn sessions_timeline_shows_events() {
     let env = timeline_env();
     let output = cq_cmd(&env)
-        .args(["sessions", "--session", "aaaa0000-0000-0000-0000-000000000001", "--timeline"])
+        .args([
+            "sessions",
+            "--session",
+            "aaaa0000-0000-0000-0000-000000000001",
+            "--timeline",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("call"), "Should show 'call' events, got: {stdout}");
-    assert!(stdout.contains("result"), "Should show 'result' events, got: {stdout}");
-    assert!(stdout.contains("Read"), "Should show Read tool, got: {stdout}");
-    assert!(stdout.contains("Bash"), "Should show Bash tool, got: {stdout}");
+    assert!(
+        stdout.contains("call"),
+        "Should show 'call' events, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("result"),
+        "Should show 'result' events, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Read"),
+        "Should show Read tool, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Bash"),
+        "Should show Bash tool, got: {stdout}"
+    );
 }
 
 #[test]
@@ -1198,7 +1354,12 @@ fn sessions_timeline_requires_session() {
 fn sessions_timeline_shows_errors() {
     let env = timeline_env();
     let output = cq_cmd(&env)
-        .args(["sessions", "--session", "aaaa0000-0000-0000-0000-000000000001", "--timeline"])
+        .args([
+            "sessions",
+            "--session",
+            "aaaa0000-0000-0000-0000-000000000001",
+            "--timeline",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1213,13 +1374,19 @@ fn sessions_timeline_shows_errors() {
 fn sessions_timeline_json() {
     let env = timeline_env();
     let output = cq_cmd(&env)
-        .args(["--json", "sessions", "--session", "aaaa0000-0000-0000-0000-000000000001", "--timeline"])
+        .args([
+            "--json",
+            "sessions",
+            "--session",
+            "aaaa0000-0000-0000-0000-000000000001",
+            "--timeline",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout)
-        .expect(&format!("Should be valid JSON, got: {stdout}"));
+    let parsed: Vec<serde_json::Value> =
+        serde_json::from_str(&stdout).expect(&format!("Should be valid JSON, got: {stdout}"));
     assert!(!parsed.is_empty(), "Should have timeline events");
     assert!(
         parsed[0].get("event").is_some(),
@@ -1236,7 +1403,10 @@ fn sessions_timeline_json() {
 #[test]
 fn no_reindex_skips_sync() {
     let mut cmd = Command::cargo_bin("cq").unwrap();
-    cmd.arg("--no-reindex").arg("sessions").arg("--limit").arg("1");
+    cmd.arg("--no-reindex")
+        .arg("sessions")
+        .arg("--limit")
+        .arg("1");
     cmd.assert().success();
 }
 
@@ -1256,8 +1426,16 @@ fn sessions_count_by_project() {
     let project_b = projects.path().join("-Users-test-webapp");
     std::fs::create_dir_all(&project_a).unwrap();
     std::fs::create_dir_all(&project_b).unwrap();
-    std::fs::copy(fixture_path("simple_session.jsonl"), project_a.join("sess-a.jsonl")).unwrap();
-    std::fs::copy(fixture_path("multi_tool_session.jsonl"), project_b.join("sess-b.jsonl")).unwrap();
+    std::fs::copy(
+        fixture_path("simple_session.jsonl"),
+        project_a.join("sess-a.jsonl"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture_path("multi_tool_session.jsonl"),
+        project_b.join("sess-b.jsonl"),
+    )
+    .unwrap();
 
     let env = TestEnv { projects, cache };
     let output = cq_cmd(&env)
@@ -1266,8 +1444,14 @@ fn sessions_count_by_project() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("myproject"), "Should show project name, got: {stdout}");
-    assert!(stdout.contains("\u{2588}"), "Should show bar chart blocks, got: {stdout}");
+    assert!(
+        stdout.contains("myproject"),
+        "Should show project name, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2588}"),
+        "Should show bar chart blocks, got: {stdout}"
+    );
 }
 
 #[test]
@@ -1292,11 +1476,21 @@ fn messages_grep_with_context_a_shows_following_messages() {
         .args(["--json", "messages", "--grep", "NEEDLE", "-A", "2"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     let rows = parsed.as_array().unwrap();
-    assert_eq!(rows.len(), 3, "expected match + 2 after, got {}: {}", rows.len(), stdout);
+    assert_eq!(
+        rows.len(),
+        3,
+        "expected match + 2 after, got {}: {}",
+        rows.len(),
+        stdout
+    );
     assert_eq!(rows[0]["match_kind"], "match");
     assert_eq!(rows[1]["match_kind"], "after");
     assert_eq!(rows[2]["match_kind"], "after");
@@ -1330,13 +1524,18 @@ fn messages_context_does_not_cross_session_boundary() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
-    let match_session = rows.iter()
+    let match_session = rows
+        .iter()
         .find(|r| r["match_kind"] == "match")
         .and_then(|r| r["session_id"].as_str())
         .unwrap()
         .to_string();
     for row in &rows {
-        assert_eq!(row["session_id"].as_str().unwrap(), match_session, "cross-session leak: {row}");
+        assert_eq!(
+            row["session_id"].as_str().unwrap(),
+            match_session,
+            "cross-session leak: {row}"
+        );
     }
 }
 
@@ -1347,20 +1546,33 @@ fn tools_with_context_c_shows_surrounding_messages() {
         .args(["--json", "tools", "Read", "-C", "1"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     // Read tool is at ord 4; -C 1 gives ords 3, 4, 5 -> 3 rows
     assert_eq!(rows.len(), 3);
     // Match row should carry the tool name.
     let match_row = rows.iter().find(|r| r["match_kind"] == "match").unwrap();
-    assert_eq!(match_row["tool_name"], "Read", "match row should carry tool name, got: {match_row}");
+    assert_eq!(
+        match_row["tool_name"], "Read",
+        "match row should carry tool name, got: {match_row}"
+    );
     // Context rows are message-shaped; tool_name should be null.
     let context_rows: Vec<_> = rows.iter().filter(|r| r["match_kind"] != "match").collect();
     assert_eq!(context_rows.len(), 2);
     for ctx_row in &context_rows {
-        assert!(ctx_row["tool_name"].is_null(), "context row should not have tool_name, got: {ctx_row}");
-        assert!(ctx_row["type"].is_string(), "context row should be message-shaped, got: {ctx_row}");
+        assert!(
+            ctx_row["tool_name"].is_null(),
+            "context row should not have tool_name, got: {ctx_row}"
+        );
+        assert!(
+            ctx_row["type"].is_string(),
+            "context row should be message-shaped, got: {ctx_row}"
+        );
     }
 }
 
@@ -1373,11 +1585,18 @@ fn tools_with_context_respects_match_limit() {
         .args(["--json", "tools", "--limit", "1", "-C", "0"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let rows: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     let match_count = rows.iter().filter(|r| r["match_kind"] == "match").count();
-    assert_eq!(match_count, 1, "expected 1 match with --limit 1, rows: {stdout}");
+    assert_eq!(
+        match_count, 1,
+        "expected 1 match with --limit 1, rows: {stdout}"
+    );
 }
 
 #[test]
@@ -1389,7 +1608,11 @@ fn tools_with_context_non_json_does_not_error() {
         .args(["tools", "Read", "-C", "1"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "non-JSON tools context path should not error, stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "non-JSON tools context path should not error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -1401,16 +1624,28 @@ fn tty_context_hides_match_kind_and_group_columns() {
         .args(["messages", "--grep", "NEEDLE", "-C", "1"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let non_blank_lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(non_blank_lines.len(), 3, "expected 3 output rows, got:\n{stdout}");
+    assert_eq!(
+        non_blank_lines.len(),
+        3,
+        "expected 3 output rows, got:\n{stdout}"
+    );
 
     // Each row's cells (split by the two-space delimiter print_context_rows uses) should not
     // include any bare `match_kind` or `match_group` column value.
     for line in &non_blank_lines {
-        let cells: Vec<&str> = line.split("  ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let cells: Vec<&str> = line
+            .split("  ")
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         for cell in &cells {
             assert!(
                 !matches!(*cell, "match" | "before" | "after"),
@@ -1431,7 +1666,10 @@ fn tty_context_single_group_no_separator() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
-    assert_eq!(separator_lines, 0, "single group should not have '--' separator, got:\n{stdout}");
+    assert_eq!(
+        separator_lines, 0,
+        "single group should not have '--' separator, got:\n{stdout}"
+    );
 }
 
 #[test]
@@ -1443,13 +1681,24 @@ fn tty_context_non_contiguous_groups_show_separator() {
         .args(["messages", "--grep", "ne", "-A", "0", "-B", "0"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
-    assert_eq!(separator_lines, 2, "three non-contiguous matches should have exactly 2 '--' separators, got:\n{stdout}");
+    assert_eq!(
+        separator_lines, 2,
+        "three non-contiguous matches should have exactly 2 '--' separators, got:\n{stdout}"
+    );
     // Also verify we got three data rows plus two separators (5 total non-blank lines).
     let non_blank: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(non_blank.len(), 5, "expected 3 match rows + 2 separator lines, got:\n{stdout}");
+    assert_eq!(
+        non_blank.len(),
+        5,
+        "expected 3 match rows + 2 separator lines, got:\n{stdout}"
+    );
 }
 
 #[test]
@@ -1486,7 +1735,10 @@ fn messages_fields_conflicts_with_context() {
 fn populates_agent_type_from_meta() {
     let env = setup_subagent_env();
     cq_cmd(&env)
-        .args(["sql", "SELECT agent_type FROM tool_calls WHERE name = 'Read'"])
+        .args([
+            "sql",
+            "SELECT agent_type FROM tool_calls WHERE name = 'Read'",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("general-purpose"));
@@ -1496,7 +1748,10 @@ fn populates_agent_type_from_meta() {
 fn agent_type_null_for_main_loop() {
     let env = setup_subagent_env();
     cq_cmd(&env)
-        .args(["sql", "SELECT COUNT(*) FROM tool_calls WHERE name = 'Bash' AND agent_type IS NULL"])
+        .args([
+            "sql",
+            "SELECT COUNT(*) FROM tool_calls WHERE name = 'Bash' AND agent_type IS NULL",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("1"));
@@ -1565,15 +1820,27 @@ fn session_with_skill(session_id: &str, skill: &str, tool_id: &str) -> String {
 #[test]
 fn projects_unscoped_groups_by_source() {
     // Same project path under two sources -> two rows when unscoped (--all).
-    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
-    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
     let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
 
     let output = multi_cmd(&env)
         .args(["--json", "--all", "projects"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
 
@@ -1591,22 +1858,40 @@ fn projects_unscoped_groups_by_source() {
         .iter()
         .filter_map(|r| r["source"].as_str())
         .collect();
-    assert!(sources.contains("main"), "expected a 'main' source row, got: {sources:?}");
-    assert!(sources.contains("pinwheel"), "expected a 'pinwheel' source row, got: {sources:?}");
+    assert!(
+        sources.contains("main"),
+        "expected a 'main' source row, got: {sources:?}"
+    );
+    assert!(
+        sources.contains("pinwheel"),
+        "expected a 'pinwheel' source row, got: {sources:?}"
+    );
 }
 
 #[test]
 fn projects_scoped_groups_by_project_only() {
     // Scoped to one source -> a single row for the project (no per-source split).
-    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
-    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
     let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
 
     let output = multi_cmd(&env)
         .args(["--json", "--source", "main", "projects"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
 
@@ -1626,8 +1911,16 @@ fn projects_scoped_groups_by_project_only() {
 fn projects_skill_count_is_per_source() {
     // Each source has a distinct Skill call for the same project path.
     // --source main must reflect only main's skill, not the cenv source's.
-    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
-    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
     let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
 
     // Scoped to main: skills = ["sanitation"], count 1 (NOT 2, which would mean
@@ -1636,57 +1929,116 @@ fn projects_skill_count_is_per_source() {
         .args(["--json", "--source", "main", "projects"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     let row = parsed
         .iter()
         .find(|r| r["project"].as_str() == Some("/Users/test/myproject"))
         .expect("myproject row");
-    assert_eq!(row["skill_count"].as_i64(), Some(1), "main should count only its own skill, got: {stdout}");
-    let skills: Vec<&str> = row["skills"].as_array().unwrap().iter().filter_map(|s| s.as_str()).collect();
-    assert_eq!(skills, vec!["sanitation"], "main should list only its own skill, got: {skills:?}");
+    assert_eq!(
+        row["skill_count"].as_i64(),
+        Some(1),
+        "main should count only its own skill, got: {stdout}"
+    );
+    let skills: Vec<&str> = row["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s.as_str())
+        .collect();
+    assert_eq!(
+        skills,
+        vec!["sanitation"],
+        "main should list only its own skill, got: {skills:?}"
+    );
 
     // Scoped to the cenv source: skills = ["obsidian"].
     let output = multi_cmd(&env)
         .args(["--json", "--source", &env.env_name, "projects"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     let row = parsed
         .iter()
         .find(|r| r["project"].as_str() == Some("/Users/test/myproject"))
         .expect("myproject row");
-    let skills: Vec<&str> = row["skills"].as_array().unwrap().iter().filter_map(|s| s.as_str()).collect();
-    assert_eq!(skills, vec!["obsidian"], "cenv source should list only its own skill, got: {skills:?}");
+    let skills: Vec<&str> = row["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s.as_str())
+        .collect();
+    assert_eq!(
+        skills,
+        vec!["obsidian"],
+        "cenv source should list only its own skill, got: {skills:?}"
+    );
 }
 
 #[test]
 fn projects_display_skill_count_per_source() {
     // Default (non-JSON) display: per-source skill counts must not bleed across
     // sources. Each source has exactly one distinct skill for the same project.
-    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
-    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
     let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
 
     let output = multi_cmd(&env)
         .args(["--source", "main", "projects", "--skills"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     // main's skill appears; the cenv source's skill must NOT.
-    assert!(stdout.contains("sanitation"), "main's skill should show, got: {stdout}");
-    assert!(!stdout.contains("obsidian"), "cenv source's skill must not leak into main, got: {stdout}");
-    assert!(stdout.contains("1 skills"), "main should count exactly 1 skill, got: {stdout}");
+    assert!(
+        stdout.contains("sanitation"),
+        "main's skill should show, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("obsidian"),
+        "cenv source's skill must not leak into main, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("1 skills"),
+        "main should count exactly 1 skill, got: {stdout}"
+    );
 }
 
 #[test]
 fn sessions_source_column_by_flag() {
-    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
-    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
     let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
 
     // --all (unscoped): SOURCE column present in table output.
@@ -1694,28 +2046,59 @@ fn sessions_source_column_by_flag() {
         .args(["--table", "--all", "sessions"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("source"), "SOURCE column should appear under --all, got: {stdout}");
-    assert!(stdout.contains("main"), "main source value should appear, got: {stdout}");
-    assert!(stdout.contains("pinwheel"), "pinwheel source value should appear, got: {stdout}");
+    assert!(
+        stdout.contains("source"),
+        "SOURCE column should appear under --all, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("main"),
+        "main source value should appear, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("pinwheel"),
+        "pinwheel source value should appear, got: {stdout}"
+    );
 
     // --source main: SOURCE column omitted (redundant).
     let output = multi_cmd(&env)
         .args(["--table", "--source", "main", "sessions"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Header row is the column names; "source" must not be a header.
-    let header_line = stdout.lines().find(|l| l.contains("project") && l.contains("session")).unwrap_or("");
-    assert!(!header_line.contains("source"), "SOURCE column should be omitted when scoped, header: {header_line}");
+    let header_line = stdout
+        .lines()
+        .find(|l| l.contains("project") && l.contains("session"))
+        .unwrap_or("");
+    assert!(
+        !header_line.contains("source"),
+        "SOURCE column should be omitted when scoped, header: {header_line}"
+    );
 }
 
 #[test]
 fn sessions_json_always_includes_source() {
-    let main_body = session_with_skill("11111111-1111-1111-1111-111111111111", "sanitation", "toolu_m1");
-    let cenv_body = session_with_skill("22222222-2222-2222-2222-222222222222", "obsidian", "toolu_c1");
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
     let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
 
     // Even scoped to one source, JSON carries the source field.
@@ -1723,9 +2106,20 @@ fn sessions_json_always_includes_source() {
         .args(["--json", "--source", "main", "sessions"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
-    assert!(!parsed.is_empty(), "expected at least one session, got: {stdout}");
-    assert_eq!(parsed[0]["source"].as_str(), Some("main"), "JSON should carry source, got: {stdout}");
+    assert!(
+        !parsed.is_empty(),
+        "expected at least one session, got: {stdout}"
+    );
+    assert_eq!(
+        parsed[0]["source"].as_str(),
+        Some("main"),
+        "JSON should carry source, got: {stdout}"
+    );
 }

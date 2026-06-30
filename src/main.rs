@@ -9,7 +9,11 @@ use cq::output::OutputFormat;
 use cq::scope::QueryScope;
 
 #[derive(Parser)]
-#[command(name = "cq", version, about = "Query AI agent session transcripts with SQL")]
+#[command(
+    name = "cq",
+    version,
+    about = "Query AI agent session transcripts with SQL"
+)]
 struct Cli {
     /// Scope to a project (substring match, e.g. 'myproject')
     #[arg(short = 'p', long, global = true)]
@@ -228,7 +232,10 @@ fn main() -> Result<()> {
     if auto_scoped && !cli.json {
         if let Some(ref p) = project {
             let display = cq::style::abbreviate_home(p);
-            eprintln!("{}", cq::style::hint(&format!("Scoped to {display} (use --all for everything)")));
+            eprintln!(
+                "{}",
+                cq::style::hint(&format!("Scoped to {display} (use --all for everything)"))
+            );
         }
     }
 
@@ -301,27 +308,100 @@ fn main() -> Result<()> {
     } else if db_setup.skipped {
         // --no-reindex: silence
     } else if db_setup.file_count > 0 {
-        eprintln!("Synced {} new files ({} total, {:.1}s)", db_setup.file_count, db_setup.total_files, elapsed.as_secs_f64());
+        eprintln!(
+            "Synced {} new files ({} total, {:.1}s)",
+            db_setup.file_count,
+            db_setup.total_files,
+            elapsed.as_secs_f64()
+        );
     } else {
-        eprintln!("Loaded {} files ({:.1}s)", db_setup.total_files, elapsed.as_secs_f64());
+        eprintln!(
+            "Loaded {} files ({:.1}s)",
+            db_setup.total_files,
+            elapsed.as_secs_f64()
+        );
     }
 
     let conn = db_setup.conn;
 
     match cli.command {
-        Command::Sessions { grep, fields, count_by, timeline } => {
-            let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
-            sessions::run(&conn, &scope, grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), &format, cli.limit, cli.offset, wide, timeline)?;
+        Command::Sessions {
+            grep,
+            fields,
+            count_by,
+            timeline,
+        } => {
+            let field_refs: Option<Vec<&str>> = fields
+                .as_ref()
+                .map(|f| f.iter().map(|s| s.as_str()).collect());
+            sessions::run(
+                &conn,
+                &scope,
+                grep.as_deref(),
+                field_refs.as_deref(),
+                count_by.as_deref(),
+                &format,
+                cli.limit,
+                cli.offset,
+                wide,
+                timeline,
+            )?;
         }
-        Command::Tools { name, grep, errors, fields, count_by, after, before, context } => {
-            let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
+        Command::Tools {
+            name,
+            grep,
+            errors,
+            fields,
+            count_by,
+            after,
+            before,
+            context,
+        } => {
+            let field_refs: Option<Vec<&str>> = fields
+                .as_ref()
+                .map(|f| f.iter().map(|s| s.as_str()).collect());
             let ctx = cq::commands::ContextWindow::from_flags(after, before, context);
-            tools::run(&conn, &scope, name.as_deref(), grep.as_deref(), errors, field_refs.as_deref(), count_by.as_deref(), ctx, &format, cli.limit, cli.offset, wide)?;
+            tools::run(
+                &conn,
+                &scope,
+                name.as_deref(),
+                grep.as_deref(),
+                errors,
+                field_refs.as_deref(),
+                count_by.as_deref(),
+                ctx,
+                &format,
+                cli.limit,
+                cli.offset,
+                wide,
+            )?;
         }
-        Command::Messages { msg_type, grep, fields, count_by, after, before, context } => {
-            let field_refs: Option<Vec<&str>> = fields.as_ref().map(|f| f.iter().map(|s| s.as_str()).collect());
+        Command::Messages {
+            msg_type,
+            grep,
+            fields,
+            count_by,
+            after,
+            before,
+            context,
+        } => {
+            let field_refs: Option<Vec<&str>> = fields
+                .as_ref()
+                .map(|f| f.iter().map(|s| s.as_str()).collect());
             let ctx = cq::commands::ContextWindow::from_flags(after, before, context);
-            messages::run(&conn, &scope, msg_type.as_deref(), grep.as_deref(), field_refs.as_deref(), count_by.as_deref(), ctx, &format, cli.limit, cli.offset, wide)?;
+            messages::run(
+                &conn,
+                &scope,
+                msg_type.as_deref(),
+                grep.as_deref(),
+                field_refs.as_deref(),
+                count_by.as_deref(),
+                ctx,
+                &format,
+                cli.limit,
+                cli.offset,
+                wide,
+            )?;
         }
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;

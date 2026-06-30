@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use crate::scope::QueryScope;
 use anyhow::Result;
 use duckdb::Connection;
-use crate::scope::QueryScope;
+use std::path::PathBuf;
 
 pub trait TranscriptProvider {
     fn name(&self) -> &str;

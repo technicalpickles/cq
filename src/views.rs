@@ -1,12 +1,11 @@
+use crate::provider::{TranscriptProvider, View};
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::PathBuf;
-use crate::provider::{TranscriptProvider, View};
 
 /// SQL expression to get the project path. Uses cwd from file_registry if
 /// available, falls back to decoding the directory name from source_file.
-const PROJECT_EXPR: &str =
-    "COALESCE(
+const PROJECT_EXPR: &str = "COALESCE(
         (SELECT fr.cwd FROM file_registry fr WHERE fr.file_path = source_file),
         '/' || replace(regexp_extract(source_file, '.*/([^/]+)/[^/]+$', 1)[2:], '-', '/')
     )";
@@ -145,7 +144,8 @@ pub fn claude_messages_sql() -> String {
 
 /// The Claude `tool_calls` view body.
 pub fn claude_tool_calls_sql() -> String {
-    format!("SELECT
+    format!(
+        "SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
             {SOURCE_EXPR} AS source,
@@ -165,12 +165,14 @@ pub fn claude_tool_calls_sql() -> String {
         )
         WHERE json_extract_string(json, '$.type') = 'assistant'
         AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_use'")
+        AND json_extract_string(item, '$.type') = 'tool_use'"
+    )
 }
 
 /// The Claude `tool_results` view body.
 pub fn claude_tool_results_sql() -> String {
-    format!("SELECT
+    format!(
+        "SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
             {PROJECT_EXPR} AS project,
             {SOURCE_EXPR} AS source,
@@ -188,7 +190,8 @@ pub fn claude_tool_results_sql() -> String {
         )
         WHERE json_extract_string(json, '$.type') = 'user'
         AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_result'")
+        AND json_extract_string(item, '$.type') = 'tool_result'"
+    )
 }
 
 /// The Claude `sessions` view body. Aggregates over the (possibly multi-provider)
@@ -232,7 +235,8 @@ pub fn claude_sessions_sql() -> String {
 /// active provider contributes to that view.
 fn empty_view_sql(view: View) -> &'static str {
     match view {
-        View::Messages => "SELECT
+        View::Messages => {
+            "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
@@ -248,8 +252,10 @@ fn empty_view_sql(view: View) -> &'static str {
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
             NULL::VARCHAR AS workflow_id
-        WHERE 1=0",
-        View::ToolCalls => "SELECT
+        WHERE 1=0"
+        }
+        View::ToolCalls => {
+            "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
@@ -263,8 +269,10 @@ fn empty_view_sql(view: View) -> &'static str {
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
             NULL::VARCHAR AS workflow_id
-        WHERE 1=0",
-        View::ToolResults => "SELECT
+        WHERE 1=0"
+        }
+        View::ToolResults => {
+            "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
@@ -276,8 +284,10 @@ fn empty_view_sql(view: View) -> &'static str {
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
             NULL::VARCHAR AS workflow_id
-        WHERE 1=0",
-        View::Sessions => "SELECT
+        WHERE 1=0"
+        }
+        View::Sessions => {
+            "SELECT
             NULL::VARCHAR AS session_id,
             NULL::VARCHAR AS project,
             NULL::VARCHAR AS source,
@@ -289,7 +299,8 @@ fn empty_view_sql(view: View) -> &'static str {
             CAST(0 AS BIGINT) AS user_message_count,
             CAST(0 AS BIGINT) AS subagent_count,
             NULL::VARCHAR AS first_user_message
-        WHERE 1=0",
+        WHERE 1=0"
+        }
     }
 }
 

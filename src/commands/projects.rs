@@ -1,6 +1,6 @@
 use anyhow::Result;
-use duckdb::Connection;
 use duckdb::types::Value;
+use duckdb::Connection;
 
 use crate::output::OutputFormat;
 use crate::scope::QueryScope;
@@ -127,9 +127,10 @@ pub fn run(
                 WHERE name = 'Skill' AND project = ? AND source = ?
                 ORDER BY skill";
             let mut skill_stmt = conn.prepare(skill_sql)?;
-            let mut skill_iter = skill_stmt.query(
-                &[&project as &dyn duckdb::types::ToSql, &source as &dyn duckdb::types::ToSql],
-            )?;
+            let mut skill_iter = skill_stmt.query(&[
+                &project as &dyn duckdb::types::ToSql,
+                &source as &dyn duckdb::types::ToSql,
+            ])?;
             let mut skills: Vec<String> = Vec::new();
             while let Some(skill_row) = skill_iter.next()? {
                 let s = skill_row.get::<_, String>(0).unwrap_or_default();
@@ -208,7 +209,8 @@ pub fn run(
         {offset_clause}"
     );
 
-    let agg_param_refs: Vec<&dyn duckdb::types::ToSql> = agg_params.iter().map(|p| p.as_ref()).collect();
+    let agg_param_refs: Vec<&dyn duckdb::types::ToSql> =
+        agg_params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     let mut rows_iter = stmt.query(&agg_param_refs[..])?;
     let mut project_rows: Vec<ProjectRow> = Vec::new();
@@ -246,7 +248,9 @@ pub fn run(
     };
 
     match format {
-        OutputFormat::Table => render_table(&project_rows, &skill_rows, show_skills, group_by_source),
+        OutputFormat::Table => {
+            render_table(&project_rows, &skill_rows, show_skills, group_by_source)
+        }
         _ => render_oneline(&project_rows, &skill_rows, show_skills, group_by_source),
     }
 
@@ -259,10 +263,14 @@ pub fn run(
         if let Ok(total) = conn.query_row(&count_sql, &param_refs[..], |row| row.get::<_, i64>(0)) {
             let total = total as usize;
             if total > project_rows.len() {
-                eprintln!("{}", style::hint(&format!(
-                    "Showing {} of {} projects. Use --limit 0 for all.",
-                    project_rows.len(), total
-                )));
+                eprintln!(
+                    "{}",
+                    style::hint(&format!(
+                        "Showing {} of {} projects. Use --limit 0 for all.",
+                        project_rows.len(),
+                        total
+                    ))
+                );
             }
         }
     }
@@ -306,7 +314,11 @@ fn fetch_skills(
         let project = row.get::<_, String>(1).unwrap_or_default();
         let skill = row.get::<_, String>(2).unwrap_or_default();
         if !skill.is_empty() && pairs.contains(&(source.as_str(), project.as_str())) {
-            skills.push(SkillRow { project, source, skill });
+            skills.push(SkillRow {
+                project,
+                source,
+                skill,
+            });
         }
     }
 
@@ -321,37 +333,45 @@ fn format_count(n: i64) -> String {
     }
 }
 
-fn render_oneline(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: bool, show_source: bool) {
+fn render_oneline(
+    rows: &[ProjectRow],
+    skill_rows: &[SkillRow],
+    show_skills: bool,
+    show_source: bool,
+) {
     // Column order: last_activity, project, [source], sessions, messages, tools, skills.
-    let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let time_ago = if r.last_activity.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::relative_time(&r.last_activity)
-        };
-
-        let project = if r.project.is_empty() {
-            style::null_display().to_string()
-        } else {
-            project_leaf(&r.project)
-        };
-
-        let sessions = format!("{}s", r.sessions);
-        let messages = format!("{} msgs", format_count(r.messages));
-        let tools = format!("{} tools", format_count(r.tools));
-        let skills = format!("{} skills", r.skills);
-
-        let mut cols = vec![time_ago, project];
-        if show_source {
-            cols.push(if r.source.is_empty() {
+    let plain_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let time_ago = if r.last_activity.is_empty() {
                 style::null_display().to_string()
             } else {
-                r.source.clone()
-            });
-        }
-        cols.extend([sessions, messages, tools, skills]);
-        cols
-    }).collect();
+                style::relative_time(&r.last_activity)
+            };
+
+            let project = if r.project.is_empty() {
+                style::null_display().to_string()
+            } else {
+                project_leaf(&r.project)
+            };
+
+            let sessions = format!("{}s", r.sessions);
+            let messages = format!("{} msgs", format_count(r.messages));
+            let tools = format!("{} tools", format_count(r.tools));
+            let skills = format!("{} skills", r.skills);
+
+            let mut cols = vec![time_ago, project];
+            if show_source {
+                cols.push(if r.source.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    r.source.clone()
+                });
+            }
+            cols.extend([sessions, messages, tools, skills]);
+            cols
+        })
+        .collect();
 
     let ncols = if show_source { 7 } else { 6 };
     let mut widths = vec![0usize; ncols];
@@ -366,19 +386,23 @@ fn render_oneline(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: boo
     // project is at index 1 (Primary); the source column (when shown) at index 2
     // uses Secondary; everything else is Dim.
     for (idx, row) in plain_rows.iter().enumerate() {
-        let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
-            let padded = if i == ncols - 1 {
-                cell.clone()
-            } else {
-                style::pad_right(cell, widths[i])
-            };
-            let color = match i {
-                1 => style::Color::Primary,
-                2 if show_source => style::Color::Secondary,
-                _ => style::Color::Dim,
-            };
-            style::color(&padded, color)
-        }).collect();
+        let cols: Vec<String> = row
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                let padded = if i == ncols - 1 {
+                    cell.clone()
+                } else {
+                    style::pad_right(cell, widths[i])
+                };
+                let color = match i {
+                    1 => style::Color::Primary,
+                    2 if show_source => style::Color::Secondary,
+                    _ => style::Color::Dim,
+                };
+                style::color(&padded, color)
+            })
+            .collect();
         println!("{}", cols.join("  "));
 
         if show_skills {
@@ -400,7 +424,12 @@ fn render_oneline(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: boo
     }
 }
 
-fn render_table(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: bool, show_source: bool) {
+fn render_table(
+    rows: &[ProjectRow],
+    skill_rows: &[SkillRow],
+    show_skills: bool,
+    show_source: bool,
+) {
     let mut headers: Vec<&str> = vec!["last_activity", "project"];
     if show_source {
         headers.push("source");
@@ -410,45 +439,48 @@ fn render_table(rows: &[ProjectRow], skill_rows: &[SkillRow], show_skills: bool,
         headers.push("skill_names");
     }
 
-    let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let time_ago = if r.last_activity.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::relative_time(&r.last_activity)
-        };
-
-        let project = if r.project.is_empty() {
-            style::null_display().to_string()
-        } else {
-            project_leaf(&r.project)
-        };
-
-        let mut row = vec![time_ago, project];
-        if show_source {
-            row.push(if r.source.is_empty() {
+    let string_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let time_ago = if r.last_activity.is_empty() {
                 style::null_display().to_string()
             } else {
-                r.source.clone()
-            });
-        }
-        row.extend([
-            r.sessions.to_string(),
-            format_count(r.messages),
-            format_count(r.tools),
-            r.skills.to_string(),
-        ]);
+                style::relative_time(&r.last_activity)
+            };
 
-        if show_skills {
-            let skills: Vec<&str> = skill_rows
-                .iter()
-                .filter(|s| s.project == r.project && s.source == r.source)
-                .map(|s| s.skill.as_str())
-                .collect();
-            row.push(skills.join(", "));
-        }
+            let project = if r.project.is_empty() {
+                style::null_display().to_string()
+            } else {
+                project_leaf(&r.project)
+            };
 
-        row
-    }).collect();
+            let mut row = vec![time_ago, project];
+            if show_source {
+                row.push(if r.source.is_empty() {
+                    style::null_display().to_string()
+                } else {
+                    r.source.clone()
+                });
+            }
+            row.extend([
+                r.sessions.to_string(),
+                format_count(r.messages),
+                format_count(r.tools),
+                r.skills.to_string(),
+            ]);
+
+            if show_skills {
+                let skills: Vec<&str> = skill_rows
+                    .iter()
+                    .filter(|s| s.project == r.project && s.source == r.source)
+                    .map(|s| s.skill.as_str())
+                    .collect();
+                row.push(skills.join(", "));
+            }
+
+            row
+        })
+        .collect();
 
     style::print_light_table(&headers, &string_rows);
 }

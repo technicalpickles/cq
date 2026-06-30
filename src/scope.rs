@@ -11,7 +11,9 @@ pub fn validate_session_id(id: &str) -> Result<()> {
         && parts[2].len() == 4
         && parts[3].len() == 4
         && parts[4].len() == 12
-        && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_hexdigit()));
+        && parts
+            .iter()
+            .all(|p| p.chars().all(|c| c.is_ascii_hexdigit()));
 
     if valid {
         Ok(())
@@ -33,7 +35,12 @@ pub struct QueryScope {
 
 impl QueryScope {
     pub fn new(project: Option<String>, session: Option<String>, since: Option<String>) -> Self {
-        Self { project, session, since, source: None }
+        Self {
+            project,
+            session,
+            since,
+            source: None,
+        }
     }
 
     /// Set the source filter (builder style so existing `new` callers are untouched).
@@ -52,13 +59,17 @@ impl QueryScope {
 
         let len = since.len();
         if len < 2 {
-            return Err(anyhow!("Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"));
+            return Err(anyhow!(
+                "Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"
+            ));
         }
 
         let (num_str, unit) = since.split_at(len - 1);
-        let num: i64 = num_str
-            .parse()
-            .map_err(|_| anyhow!("Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"))?;
+        let num: i64 = num_str.parse().map_err(|_| {
+            anyhow!(
+                "Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"
+            )
+        })?;
 
         let duration = match unit {
             "d" => Duration::days(num),

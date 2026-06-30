@@ -1,6 +1,6 @@
 use anyhow::Result;
-use duckdb::Connection;
 use duckdb::types::Value;
+use duckdb::Connection;
 
 use crate::output::{self, OutputFormat};
 use crate::scope::QueryScope;
@@ -22,7 +22,13 @@ fn val_str(v: &Value) -> String {
 }
 
 const VALID_FIELDS: &[&str] = &[
-    "session_id", "project", "type", "timestamp", "text", "model", "tool_count",
+    "session_id",
+    "project",
+    "type",
+    "timestamp",
+    "text",
+    "model",
+    "tool_count",
 ];
 
 const VALID_COUNT_BY_COLUMNS: &[&str] = &["type", "session_id", "project"];
@@ -60,7 +66,17 @@ pub fn run(
     if let Some(field_list) = fields {
         let resolved = super::validate_fields(field_list, VALID_FIELDS, "messages");
         let resolved_refs: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
-        return run_with_fields(conn, scope, msg_type, grep, &resolved_refs, format, limit, offset, wide);
+        return run_with_fields(
+            conn,
+            scope,
+            msg_type,
+            grep,
+            &resolved_refs,
+            format,
+            limit,
+            offset,
+            wide,
+        );
     }
 
     let mut conditions = vec!["1=1".to_string()];
@@ -134,8 +150,12 @@ pub fn run(
                     super::print_session_not_found(scope.session.as_ref().unwrap());
                 } else {
                     let mut extras: Vec<&str> = Vec::new();
-                    if msg_type.is_some() { extras.push("--type"); }
-                    if grep.is_some() { extras.push("--grep"); }
+                    if msg_type.is_some() {
+                        extras.push("--type");
+                    }
+                    if grep.is_some() {
+                        extras.push("--grep");
+                    }
                     super::print_no_results(&scope, &extras);
                 }
                 return Ok(());
@@ -228,7 +248,8 @@ fn run_with_context(
         all_params.push(Box::new(format!("%{pattern}%")));
     }
 
-    let param_refs: Vec<&dyn duckdb::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+    let param_refs: Vec<&dyn duckdb::types::ToSql> =
+        all_params.iter().map(|p| p.as_ref()).collect();
 
     // Check for empty results before rendering.
     let count: i64 = conn.query_row(
@@ -241,8 +262,12 @@ fn run_with_context(
             super::print_session_not_found(scope.session.as_ref().unwrap());
         } else {
             let mut extras: Vec<&str> = Vec::new();
-            if msg_type.is_some() { extras.push("--type"); }
-            if grep.is_some() { extras.push("--grep"); }
+            if msg_type.is_some() {
+                extras.push("--type");
+            }
+            if grep.is_some() {
+                extras.push("--grep");
+            }
             super::print_no_results(scope, &extras);
         }
         return Ok(());
@@ -392,12 +417,11 @@ fn run_count_by(
             let mut rows_iter = stmt.query(&param_refs[..])?;
             let mut chart_rows: Vec<(String, i64)> = Vec::new();
             while let Some(row) = rows_iter.next()? {
-                let label = row.get::<_, Value>(0)
+                let label = row
+                    .get::<_, Value>(0)
                     .map(|v| val_str(&v))
                     .unwrap_or_default();
-                let count = row.get::<_, Value>(1)
-                    .map(|v| val_i64(&v))
-                    .unwrap_or(0);
+                let count = row.get::<_, Value>(1).map(|v| val_i64(&v)).unwrap_or(0);
                 chart_rows.push((label, count));
             }
 
@@ -424,35 +448,38 @@ fn val_i64(v: &Value) -> i64 {
 
 fn render_oneline(rows: &[MessageRow], wide: bool) {
     // Build plain text rows (no color) for width calculation
-    let plain_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let session_id = if r.session_id.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::short_id(&r.session_id, 8)
-        };
+    let plain_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let session_id = if r.session_id.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::short_id(&r.session_id, 8)
+            };
 
-        let msg_type = if r.msg_type.is_empty() {
-            style::null_display().to_string()
-        } else {
-            r.msg_type.clone()
-        };
+            let msg_type = if r.msg_type.is_empty() {
+                style::null_display().to_string()
+            } else {
+                r.msg_type.clone()
+            };
 
-        let time_ago = if r.timestamp.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::relative_time(&r.timestamp)
-        };
+            let time_ago = if r.timestamp.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::relative_time(&r.timestamp)
+            };
 
-        let text = if r.text.is_empty() {
-            style::null_display().to_string()
-        } else if wide {
-            r.text.clone()
-        } else {
-            style::truncate(&r.text, 60)
-        };
+            let text = if r.text.is_empty() {
+                style::null_display().to_string()
+            } else if wide {
+                r.text.clone()
+            } else {
+                style::truncate(&r.text, 60)
+            };
 
-        vec![session_id, msg_type, time_ago, text]
-    }).collect();
+            vec![session_id, msg_type, time_ago, text]
+        })
+        .collect();
 
     // Calculate column widths from plain text
     let ncols = 4;
@@ -467,19 +494,23 @@ fn render_oneline(rows: &[MessageRow], wide: bool) {
 
     // Print each row with color applied after padding
     for row in &plain_rows {
-        let cols: Vec<String> = row.iter().enumerate().map(|(i, cell)| {
-            let padded = if i == ncols - 1 {
-                cell.clone()
-            } else {
-                style::pad_right(cell, widths[i])
-            };
-            match i {
-                0 => style::color(&padded, style::Color::Secondary),
-                1 => style::color(&padded, style::Color::Primary),
-                2 => style::color(&padded, style::Color::Dim),
-                _ => padded, // last column, no color
-            }
-        }).collect();
+        let cols: Vec<String> = row
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                let padded = if i == ncols - 1 {
+                    cell.clone()
+                } else {
+                    style::pad_right(cell, widths[i])
+                };
+                match i {
+                    0 => style::color(&padded, style::Color::Secondary),
+                    1 => style::color(&padded, style::Color::Primary),
+                    2 => style::color(&padded, style::Color::Dim),
+                    _ => padded, // last column, no color
+                }
+            })
+            .collect();
         println!("{}", cols.join("  "));
     }
 }
@@ -487,35 +518,38 @@ fn render_oneline(rows: &[MessageRow], wide: bool) {
 fn render_table(rows: &[MessageRow], wide: bool) {
     let headers = ["session_id", "type", "timestamp", "text"];
 
-    let string_rows: Vec<Vec<String>> = rows.iter().map(|r| {
-        let session_id = if r.session_id.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::short_id(&r.session_id, 8)
-        };
+    let string_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let session_id = if r.session_id.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::short_id(&r.session_id, 8)
+            };
 
-        let msg_type = if r.msg_type.is_empty() {
-            style::null_display().to_string()
-        } else {
-            r.msg_type.clone()
-        };
+            let msg_type = if r.msg_type.is_empty() {
+                style::null_display().to_string()
+            } else {
+                r.msg_type.clone()
+            };
 
-        let timestamp = if r.timestamp.is_empty() {
-            style::null_display().to_string()
-        } else {
-            style::relative_time(&r.timestamp)
-        };
+            let timestamp = if r.timestamp.is_empty() {
+                style::null_display().to_string()
+            } else {
+                style::relative_time(&r.timestamp)
+            };
 
-        let text = if r.text.is_empty() {
-            style::null_display().to_string()
-        } else if wide {
-            r.text.clone()
-        } else {
-            style::truncate(&r.text, 60)
-        };
+            let text = if r.text.is_empty() {
+                style::null_display().to_string()
+            } else if wide {
+                r.text.clone()
+            } else {
+                style::truncate(&r.text, 60)
+            };
 
-        vec![session_id, msg_type, timestamp, text]
-    }).collect();
+            vec![session_id, msg_type, timestamp, text]
+        })
+        .collect();
 
     style::print_light_table(&headers, &string_rows);
 }

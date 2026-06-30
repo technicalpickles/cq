@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use fs2::FileExt;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::cache;
 use crate::db::SyncMode;
@@ -42,7 +42,11 @@ pub fn sync_sources(
     cache_dir: &Path,
 ) -> Result<SyncResult> {
     if mode == SyncMode::Skip {
-        return Ok(SyncResult { stats: SyncStats::default(), skipped: true, lock_busy: false });
+        return Ok(SyncResult {
+            stats: SyncStats::default(),
+            skipped: true,
+            lock_busy: false,
+        });
     }
 
     if mode == SyncMode::Auto {
@@ -50,17 +54,29 @@ pub fn sync_sources(
         let mut max_mtime = 0i64;
         for (_, dir) in sources {
             let m = max_dir_mtime(dir, &scope)?;
-            if m > max_mtime { max_mtime = m; }
+            if m > max_mtime {
+                max_mtime = m;
+            }
         }
         if max_mtime <= last_sync {
             let total = count_registry(conn)?;
-            return Ok(SyncResult { stats: SyncStats { total, ..Default::default() }, skipped: false, lock_busy: false });
+            return Ok(SyncResult {
+                stats: SyncStats {
+                    total,
+                    ..Default::default()
+                },
+                skipped: false,
+                lock_busy: false,
+            });
         }
     }
 
     let lock_path = cache_dir.join("index.lock");
     let lock_file = std::fs::OpenOptions::new()
-        .create(true).write(true).truncate(false).open(&lock_path)
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
         .context("Failed to open lock file")?;
 
     let lock_acquired = match mode {
@@ -68,8 +84,12 @@ pub fn sync_sources(
         SyncMode::Force => {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             loop {
-                if lock_file.try_lock_exclusive().is_ok() { break true; }
-                if std::time::Instant::now() >= deadline { break false; }
+                if lock_file.try_lock_exclusive().is_ok() {
+                    break true;
+                }
+                if std::time::Instant::now() >= deadline {
+                    break false;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
@@ -81,7 +101,14 @@ pub fn sync_sources(
             anyhow::bail!("index locked by another process after 5s, try again shortly");
         }
         let total = count_registry(conn)?;
-        return Ok(SyncResult { stats: SyncStats { total, ..Default::default() }, skipped: true, lock_busy: true });
+        return Ok(SyncResult {
+            stats: SyncStats {
+                total,
+                ..Default::default()
+            },
+            skipped: true,
+            lock_busy: true,
+        });
     }
 
     let mut agg = SyncStats::default();
@@ -92,7 +119,10 @@ pub fn sync_sources(
         let per_source_scope = match &scope {
             SyncScope::All => SyncScope::All,
             SyncScope::Projects(dirs) => SyncScope::Projects(
-                dirs.iter().filter(|d| d.starts_with(dir)).cloned().collect()
+                dirs.iter()
+                    .filter(|d| d.starts_with(dir))
+                    .cloned()
+                    .collect(),
             ),
             SyncScope::File(f) => {
                 if f.starts_with(dir) {
@@ -112,15 +142,25 @@ pub fn sync_sources(
 
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64).unwrap_or(0);
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
     cache::set_last_sync_at(conn, now_ns)?;
 
     let _ = lock_file.unlock();
-    Ok(SyncResult { stats: agg, skipped: false, lock_busy: false })
+    Ok(SyncResult {
+        stats: agg,
+        skipped: false,
+        lock_busy: false,
+    })
 }
 
 /// The actual sync logic, extracted so the lock wraps it cleanly.
-fn do_sync(conn: &Connection, projects_dir: &Path, scope: &SyncScope, source_name: &str) -> Result<SyncStats> {
+fn do_sync(
+    conn: &Connection,
+    projects_dir: &Path,
+    scope: &SyncScope,
+    source_name: &str,
+) -> Result<SyncStats> {
     let disk_files = scan_filesystem(projects_dir, scope)?;
     let registry = load_registry(conn)?;
 
@@ -209,9 +249,7 @@ fn max_dir_mtime(projects_dir: &Path, scope: &SyncScope) -> Result<i64> {
 }
 
 fn count_registry(conn: &Connection) -> Result<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM file_registry", [], |r| r.get(0)
-    )?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM file_registry", [], |r| r.get(0))?;
     Ok(count as usize)
 }
 
@@ -230,15 +268,19 @@ fn scan_filesystem(projects_dir: &Path, scope: &SyncScope) -> Result<HashMap<Pat
             let mut files = HashMap::new();
             if path.is_file() {
                 if let Ok(metadata) = std::fs::metadata(path) {
-                    let mtime_ns = metadata.modified()
+                    let mtime_ns = metadata
+                        .modified()
                         .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_nanos() as i64)
                         .unwrap_or(0);
-                    files.insert(path.clone(), FileInfo {
-                        mtime_ns,
-                        file_size: metadata.len() as i64,
-                    });
+                    files.insert(
+                        path.clone(),
+                        FileInfo {
+                            mtime_ns,
+                            file_size: metadata.len() as i64,
+                        },
+                    );
                 }
             }
             Ok(files)
@@ -252,7 +294,11 @@ fn scan_all(projects_dir: &Path) -> Result<HashMap<PathBuf, FileInfo>> {
         return Ok(files);
     }
     for project_entry in std::fs::read_dir(projects_dir)?.filter_map(|e| e.ok()) {
-        if !project_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        if !project_entry
+            .file_type()
+            .map(|t| t.is_dir())
+            .unwrap_or(false)
+        {
             continue;
         }
         let dir_files = scan_directory(&project_entry.path())?;
@@ -315,21 +361,28 @@ fn read_agent_type(file: &Path) -> Option<String> {
 /// ledgers, which are resume bookkeeping, not transcripts.
 fn is_indexable_jsonl(path: &Path) -> bool {
     path.extension().map(|e| e == "jsonl").unwrap_or(false)
-        && path.file_name().map(|n| n != "journal.jsonl").unwrap_or(false)
+        && path
+            .file_name()
+            .map(|n| n != "journal.jsonl")
+            .unwrap_or(false)
 }
 
 /// Load the current file registry from the database.
 fn load_registry(conn: &Connection) -> Result<HashMap<String, FileInfo>> {
-    let mut stmt = conn.prepare(
-        "SELECT file_path, mtime_ns, file_size FROM file_registry"
-    )?;
+    let mut stmt = conn.prepare("SELECT file_path, mtime_ns, file_size FROM file_registry")?;
     let mut registry = HashMap::new();
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let path: String = row.get(0)?;
         let mtime_ns: i64 = row.get(1)?;
         let file_size: i64 = row.get(2)?;
-        registry.insert(path, FileInfo { mtime_ns, file_size });
+        registry.insert(
+            path,
+            FileInfo {
+                mtime_ns,
+                file_size,
+            },
+        );
     }
     Ok(registry)
 }
@@ -436,13 +489,28 @@ mod tests {
             ("main".to_string(), main_tmp.path().to_path_buf()),
             ("pinwheel".to_string(), env_tmp.path().to_path_buf()),
         ];
-        sync_sources(&conn, &sources, SyncMode::Force, SyncScope::All, cache_tmp.path()).unwrap();
+        sync_sources(
+            &conn,
+            &sources,
+            SyncMode::Force,
+            SyncScope::All,
+            cache_tmp.path(),
+        )
+        .unwrap();
 
         let n_pinwheel: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_registry WHERE source = 'pinwheel'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM file_registry WHERE source = 'pinwheel'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let n_main: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_registry WHERE source = 'main'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM file_registry WHERE source = 'main'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n_pinwheel, 1);
         assert_eq!(n_main, 1);
@@ -475,13 +543,27 @@ mod tests {
         sync_sources(&conn, &sources, SyncMode::Force, scope, cache_tmp.path()).unwrap();
 
         let n_main: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_registry WHERE source = 'main'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM file_registry WHERE source = 'main'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let n_pinwheel: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_registry WHERE source = 'pinwheel'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM file_registry WHERE source = 'pinwheel'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(n_main, 1, "main's file must be tagged 'main', not the other source");
-        assert_eq!(n_pinwheel, 1, "pinwheel's file must be tagged 'pinwheel', not 'main'");
+        assert_eq!(
+            n_main, 1,
+            "main's file must be tagged 'main', not the other source"
+        );
+        assert_eq!(
+            n_pinwheel, 1,
+            "pinwheel's file must be tagged 'pinwheel', not 'main'"
+        );
     }
 
     #[test]
