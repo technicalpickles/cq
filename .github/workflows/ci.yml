@@ -23,9 +23,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # Shared with clippy so the expensive bundled-DuckDB compile is cached
-          # once and reused across both jobs.
-          shared-key: build
+          # Distinct key from clippy: `cargo test` does full codegen while
+          # `cargo clippy` only check-builds (metadata). A shared key let
+          # whichever job saved first win, leaving the other to rebuild from
+          # scratch (test ate a 10m libduckdb-sys recompile against a clippy
+          # cache). Separate keys keep a complete cache per build kind.
+          shared-key: test
       - run: cargo test --locked
 
   clippy:
@@ -38,7 +41,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: build
+          shared-key: clippy
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   fmt:
