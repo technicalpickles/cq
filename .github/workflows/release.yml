@@ -1,16 +1,19 @@
 name: Release
 
-# Cut a release by pushing a version tag, e.g.:
-#   git tag v0.1.0 && git push origin v0.1.0
+# Binaries are attached to the GitHub Release that release-please cuts when its
+# release PR is merged (see release-please.yml). This workflow fires on that
+# published release, builds cq for each target, and uploads the archives to it.
 #
-# This builds cq on each target's native runner (no cross-compiling) because the
+# Each target builds on its own native runner (no cross-compiling) because the
 # duckdb dependency bundles DuckDB's C++ source, and compiling that for a foreign
 # target is far more trouble than just using the matching runner.
+#
+# Note: this only runs if the release was created with a token that triggers
+# downstream workflows (RELEASE_PLEASE_TOKEN), not the default GITHUB_TOKEN.
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -31,8 +34,12 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
+    env:
+      TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -50,7 +57,7 @@ jobs:
       - name: Package archive
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           staging="cq-${version}-${{ matrix.target }}"
           mkdir "$staging"
           cp "target/${{ matrix.target }}/release/cq" "$staging/"
@@ -58,30 +65,8 @@ jobs:
           tar czf "${staging}.tar.gz" "$staging"
           echo "ASSET=${staging}.tar.gz" >> "$GITHUB_ENV"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}
-          path: ${{ env.ASSET }}
-          if-no-files-found: error
-
-  release:
-    name: publish release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Create GitHub release
+      - name: Upload to release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            artifacts/*.tar.gz
+        run: gh release upload "$TAG" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
