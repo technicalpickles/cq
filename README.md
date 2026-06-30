@@ -67,6 +67,12 @@ cq indexes Claude Code's JSONL session transcripts into a local [DuckDB](https:/
 
 ## Install
 
+### Prebuilt binary
+
+Grab the archive for your platform from the [latest release](https://github.com/technicalpickles/cq/releases/latest), extract it, and put `cq` on your `PATH`. Builds are published for macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64).
+
+### From source
+
 Requires [Rust](https://rustup.rs/).
 
 ```bash

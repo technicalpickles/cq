@@ -13,6 +13,11 @@ authors = ["Josh Nichols <josh@technicalpickles.com>"]
 # tightened TIMESTAMPTZ arithmetic, dropping the `-(TIMESTAMPTZ, INTERVAL)`
 # overload that `now() - INTERVAL N DAY` relied on. Pin so behavior stays
 # predictable; bump deliberately and re-check timestamp date math when you do.
+#
+# `bundled` is required, not just a build-time preference: the `json` feature
+# transitively enables `bundled` (json -> libduckdb-sys/json -> bundled), and the
+# view layer in views.rs runs entirely on DuckDB's JSON functions (read_json,
+# json_extract). Dropping `bundled` means dropping `json`, which isn't an option.
 duckdb = { version = "=1.10501.0", features = ["bundled", "json"] }
 fs2 = "0.4"
 clap = { version = "4", features = ["derive"] }

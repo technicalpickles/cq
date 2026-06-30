@@ -113,3 +113,19 @@ cargo run -- sessions --project myproject --limit 5    # project filter
 cargo run -- sql "SELECT COUNT(*) FROM messages"       # raw SQL
 cargo run -- schema --examples                         # see available views + queries
 ```
+
+## Releasing
+
+Releases are cut by pushing a version tag. `.github/workflows/release.yml` then builds
+`cq` for macOS (arm64 + x86_64) and Linux (x86_64 + arm64) and publishes a GitHub
+release with the binaries attached.
+
+```bash
+# bump version in Cargo.toml, commit, then:
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Each target builds on its own native runner because the bundled DuckDB compiles C++
+from source, which makes cross-compiling more trouble than it's worth. There is no
+crates.io publish step today.
