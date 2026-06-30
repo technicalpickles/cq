@@ -1,0 +1,31 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # release-please maintains a release PR that bumps Cargo.toml + Cargo.lock
+      # and generates CHANGELOG.md from conventional commits. Merging that PR
+      # creates the git tag + GitHub release. The release 'published' event then
+      # fires release.yml, which builds the cross-platform binaries and attaches
+      # them to the release.
+      #
+      # token: a release created with the default GITHUB_TOKEN will NOT trigger
+      # downstream workflows (GitHub blocks this to avoid recursive runs), so
+      # release.yml would never fire. Provide a PAT or GitHub App token via the
+      # RELEASE_PLEASE_TOKEN secret so the cut release triggers release.yml.
+      # Without the secret the action still opens release PRs using GITHUB_TOKEN,
+      # but merging them won't build/attach binaries.
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -116,16 +116,21 @@ cargo run -- schema --examples                         # see available views + q
 
 ## Releasing
 
-Releases are cut by pushing a version tag. `.github/workflows/release.yml` then builds
-`cq` for macOS (arm64 + x86_64) and Linux (x86_64 + arm64) and publishes a GitHub
-release with the binaries attached.
+Releases are driven by [release-please](https://github.com/googleapis/release-please)
+off conventional commits. The flow:
 
-```bash
-# bump version in Cargo.toml, commit, then:
-git tag v0.1.0
-git push origin v0.1.0
-```
+1. Land conventional commits on `main` (`feat:` → minor bump, `fix:` → patch, etc.).
+2. `release-please.yml` keeps an open "release PR" that bumps `Cargo.toml` + `Cargo.lock`
+   and updates `CHANGELOG.md`. Merge it when you want to ship.
+3. Merging that PR cuts the git tag + GitHub release. The `release: published` event
+   then fires `release.yml`, which builds `cq` for macOS (arm64 + x86_64) and Linux
+   (x86_64 + arm64) and attaches the archives to the release.
 
-Each target builds on its own native runner because the bundled DuckDB compiles C++
-from source, which makes cross-compiling more trouble than it's worth. There is no
-crates.io publish step today.
+You don't bump versions or push tags by hand. Each target builds on its own native
+runner because the bundled DuckDB compiles C++ from source, which makes cross-compiling
+more trouble than it's worth. There is no crates.io publish step today.
+
+The bump version lives in `.release-please-manifest.json` (kept in sync with
+`Cargo.toml`). `release.yml` only fires when the release is created with a token that
+triggers downstream workflows — the `RELEASE_PLEASE_TOKEN` secret (a PAT or GitHub App
+token), not the default `GITHUB_TOKEN`.
