@@ -64,12 +64,12 @@ impl ClaudeProvider {
     }
 
     pub fn encode_path(path: &str) -> String {
-        path.replace('/', "-").replace('.', "-")
+        path.replace(['/', '.'], "-")
     }
 
     pub fn decode_path(encoded: &str) -> String {
-        if encoded.starts_with('-') {
-            format!("/{}", encoded[1..].replace('-', "/"))
+        if let Some(rest) = encoded.strip_prefix('-') {
+            format!("/{}", rest.replace('-', "/"))
         } else {
             encoded.replace('-', "/")
         }
@@ -198,7 +198,7 @@ impl TranscriptProvider for ClaudeProvider {
                 });
             }
         }
-        projects.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+        projects.sort_by_key(|p| std::cmp::Reverse(p.file_count));
         Ok(projects)
     }
 

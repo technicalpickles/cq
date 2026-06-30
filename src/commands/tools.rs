@@ -43,6 +43,7 @@ fn val_i64(v: &Value) -> i64 {
 
 const VALID_COUNT_BY_COLUMNS: &[&str] = &["name", "session_id", "project"];
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
@@ -217,8 +218,8 @@ pub fn run(
     }
 
     if detail_rows.is_empty() {
-        if scope.session.is_some() {
-            super::print_session_not_found(scope.session.as_ref().unwrap());
+        if let Some(session) = &scope.session {
+            super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
             if grep.is_some() {
@@ -230,7 +231,7 @@ pub fn run(
             if tool_name.is_some() {
                 extras.push("[name]");
             }
-            super::print_no_results(&scope, &extras);
+            super::print_no_results(scope, &extras);
         }
         return Ok(());
     }
@@ -260,6 +261,7 @@ pub fn run(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_context(
     conn: &Connection,
     scope: &crate::scope::QueryScope,
@@ -347,8 +349,8 @@ fn run_with_context(
     let match_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM cq_ctx_matches", [], |r| r.get(0))?;
     if match_count == 0 {
-        if scope.session.is_some() {
-            super::print_session_not_found(scope.session.as_ref().unwrap());
+        if let Some(session) = &scope.session {
+            super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
             if tool_name.is_some() {
@@ -411,6 +413,7 @@ fn run_with_context(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_fields(
     conn: &Connection,
     scope: &QueryScope,
@@ -489,8 +492,8 @@ fn run_with_fields(
     }
 
     if rows.is_empty() {
-        if scope.session.is_some() {
-            super::print_session_not_found(scope.session.as_ref().unwrap());
+        if let Some(session) = &scope.session {
+            super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
             if errors_only {
@@ -526,6 +529,7 @@ fn run_with_fields(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_count_by(
     conn: &Connection,
     scope: &QueryScope,
@@ -678,10 +682,10 @@ fn run_summary(
             }
 
             if summary_rows.is_empty() {
-                if scope.session.is_some() {
-                    super::print_session_not_found(scope.session.as_ref().unwrap());
+                if let Some(session) = &scope.session {
+                    super::print_session_not_found(session);
                 } else {
-                    super::print_no_results(&scope, &[]);
+                    super::print_no_results(scope, &[]);
                 }
                 return Ok(());
             }

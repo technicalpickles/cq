@@ -274,10 +274,7 @@ fn main() -> Result<()> {
         db::SyncMode::Auto
     };
 
-    let options = db::DbOptions {
-        sync_mode,
-        ..Default::default()
-    };
+    let options = db::DbOptions { sync_mode };
 
     let sources: Vec<(String, std::path::PathBuf)> = provider
         .sources()

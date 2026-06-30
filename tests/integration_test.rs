@@ -1385,8 +1385,8 @@ fn sessions_timeline_json() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect(&format!("Should be valid JSON, got: {stdout}"));
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout)
+        .unwrap_or_else(|_| panic!("Should be valid JSON, got: {stdout}"));
     assert!(!parsed.is_empty(), "Should have timeline events");
     assert!(
         parsed[0].get("event").is_some(),

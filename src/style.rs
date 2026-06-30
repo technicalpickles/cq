@@ -178,17 +178,7 @@ pub fn print_light_table(headers: &[&str], rows: &[Vec<String>]) {
     println!("{}", color(&header_cells.join("  "), Color::Dim));
 
     // Print separator
-    let sep_cells: Vec<String> = widths
-        .iter()
-        .enumerate()
-        .map(|(i, &w)| {
-            if i == ncols - 1 {
-                "\u{2500}".repeat(w)
-            } else {
-                "\u{2500}".repeat(w)
-            }
-        })
-        .collect();
+    let sep_cells: Vec<String> = widths.iter().map(|&w| "\u{2500}".repeat(w)).collect();
     println!("{}", color(&sep_cells.join("  "), Color::Dim));
 
     // Print data rows

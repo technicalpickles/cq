@@ -33,6 +33,7 @@ const VALID_FIELDS: &[&str] = &[
 
 const VALID_COUNT_BY_COLUMNS: &[&str] = &["type", "session_id", "project"];
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
@@ -146,8 +147,8 @@ pub fn run(
             }
 
             if message_rows.is_empty() {
-                if scope.session.is_some() {
-                    super::print_session_not_found(scope.session.as_ref().unwrap());
+                if let Some(session) = &scope.session {
+                    super::print_session_not_found(session);
                 } else {
                     let mut extras: Vec<&str> = Vec::new();
                     if msg_type.is_some() {
@@ -156,7 +157,7 @@ pub fn run(
                     if grep.is_some() {
                         extras.push("--grep");
                     }
-                    super::print_no_results(&scope, &extras);
+                    super::print_no_results(scope, &extras);
                 }
                 return Ok(());
             }
@@ -180,6 +181,7 @@ pub fn run(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_context(
     conn: &Connection,
     scope: &QueryScope,
@@ -258,8 +260,8 @@ fn run_with_context(
         |r| r.get(0),
     )?;
     if count == 0 {
-        if scope.session.is_some() {
-            super::print_session_not_found(scope.session.as_ref().unwrap());
+        if let Some(session) = &scope.session {
+            super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
             if msg_type.is_some() {
@@ -289,6 +291,7 @@ fn run_with_context(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_with_fields(
     conn: &Connection,
     scope: &QueryScope,

@@ -44,8 +44,7 @@ fn val_i64(v: &Value) -> i64 {
 fn project_leaf(project: &str) -> String {
     project
         .split('/')
-        .filter(|s| !s.is_empty())
-        .last()
+        .rfind(|s| !s.is_empty())
         .unwrap_or(project)
         .to_string()
 }
@@ -127,7 +126,7 @@ pub fn run(
                 WHERE name = 'Skill' AND project = ? AND source = ?
                 ORDER BY skill";
             let mut skill_stmt = conn.prepare(skill_sql)?;
-            let mut skill_iter = skill_stmt.query(&[
+            let mut skill_iter = skill_stmt.query([
                 &project as &dyn duckdb::types::ToSql,
                 &source as &dyn duckdb::types::ToSql,
             ])?;
@@ -231,7 +230,7 @@ pub fn run(
     }
 
     if project_rows.is_empty() {
-        super::print_no_results(&scope, &[]);
+        super::print_no_results(scope, &[]);
         return Ok(());
     }
 
