@@ -42,7 +42,9 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # Pinned to match CI (.github/workflows/ci.yml) so release binaries
+        # build against a known compiler. Bump both together.
+        uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: ${{ matrix.target }}
 
