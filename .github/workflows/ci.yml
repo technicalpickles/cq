@@ -20,7 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned: a rolling `stable` changes the rustc version, which is part of
+      # the rust-cache key, so every new release silently invalidates the cache
+      # and forces a full ~10m libduckdb-sys rebuild. Bump this deliberately.
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: Swatinem/rust-cache@v2
         with:
           # Distinct key from clippy: `cargo test` does full codegen while
@@ -36,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0 # pinned (see test job)
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -49,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0 # pinned (see test job)
         with:
           components: rustfmt
       - run: cargo fmt --check
