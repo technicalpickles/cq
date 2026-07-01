@@ -21,8 +21,8 @@ _Avoid_: using "source" to mean a different harness.
 - A **Harness** is read by exactly one **Provider**.
 - The Claude **Provider** spans one or more **Sources** (main + cenv envs); `--source` scopes within it.
 - The opencode **Provider** has no **Sources** in the current sense — its storage is a single SQLite DB, not a directory of JSONL roots.
-- The `source` column in the cq views is really a **harness/provider** tag (`'claude'` / `'opencode'`), distinct from the `--source` flag's within-Claude meaning. (Flagged below.)
+- The cq views carry two distinct columns: `harness` is the harness/provider tag (`'claude'` / `'opencode'`), and `source` is the within-Claude root name that the `--source` flag selects (`main` + cenv envs).
 
 ## Flagged ambiguities
 
-- "source" was used in the opencode findings doc to mean "a new harness" (`'opencode'` source). Resolved: that is a **Provider**/**Harness**, not a **Source**. cq's existing `Source` keeps its narrow within-Claude meaning. The overload on the views' `source` column vs. the `--source` flag is a known wart to resolve when designing the views.
+- "source" was used in the opencode findings doc to mean "a new harness" (`'opencode'` source). Resolved: that is a **Provider**/**Harness**, not a **Source**. cq's existing `Source` keeps its narrow within-Claude meaning. The earlier overload on the views' `source` column was resolved by giving the views a separate `harness` column for the provider tag, leaving `source` to mean the within-Claude root name (matching the `--source` flag).
