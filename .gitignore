@@ -3,3 +3,7 @@
 /.scratch/
 /.superpowers/
 eval_set.json
+
+# Stray DuckDB cache if CQ_CACHE_DIR resolves to the repo root (e.g. empty/unset)
+/index.duckdb
+/index.lock
