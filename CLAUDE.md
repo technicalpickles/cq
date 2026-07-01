@@ -13,11 +13,14 @@ commands/
   sessions.rs     List/filter sessions
   tools.rs        Tool call queries + summary mode (no filters = grouped counts)
   messages.rs     Message queries
+  projects.rs     `cq projects`: per-project session/message/tool/skill counts
+  context.rs      ContextSqlBuilder: grep-style context windows (-C/--after/--before)
+  mod.rs          Shared arg validators (count-by, fields, context-window conflicts)
   sql.rs          Raw SQL passthrough (intentionally unparameterized)
   schema.rs       View schema docs + example queries (pure text, no DB needed)
 output.rs         Shared rendering: table (comfy-table) or JSON, accepts params
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
-views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the four views; every row carries a `harness` column
+views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the four views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
 indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, fs2 file lock; recurses into <session>/subagents/** and captures agentType from meta.json
@@ -25,11 +28,12 @@ sync_scope.rs     SyncScope: narrows which files the indexer touches (derived fr
 provider.rs       TranscriptProvider trait
 claude_provider.rs  ClaudeProvider: recursively discovers JSONL files (incl. subagents) from ~/.claude/projects/
 scope.rs          QueryScope: --project, --session, --since parsing
+source.rs         Source: named transcript roots (`main` + discovered cenv envs); backs --source
 ```
 
 ## Design principles
 
-CQ is a query tool, not a monitoring tool. Default is auto-scope to the current project directory; `--all` escapes to global. Stale-but-available beats error. Explicit always wins (`--reindex`/`--no-reindex` override all automatic behavior). See `docs/design-principles.md` for the full reference.
+CQ is a query tool, not a monitoring tool. Default is auto-scope to the current project directory; `--all` escapes to global. Sources scope the same way: `--source <name>` targets one transcript root, else cq auto-scopes to the active source (matched via `CLAUDE_CONFIG_DIR`), and `--all` spans all sources. Stale-but-available beats error. Explicit always wins (`--reindex`/`--no-reindex` override all automatic behavior). See `docs/design-principles.md` for the full reference, and `CONTEXT.md` for the Harness/Provider/Source glossary.
 
 ## Key patterns
 
@@ -98,9 +102,10 @@ The pattern: `let wide = cli.wide || !std::io::stdout().is_terminal();`
 cargo test              # all tests (unit + integration + view tests)
 ```
 
-- `tests/views_test.rs` (20 tests): View SQL correctness against fixture JSONL files
-- `tests/integration_test.rs` (12 tests): End-to-end CLI tests with `assert_cmd`
-- `src/` unit tests (14 tests): Scope parsing, path encoding, file discovery
+- `tests/views_test.rs`: View SQL correctness against fixture JSONL files
+- `tests/integration_test.rs`: End-to-end CLI tests with `assert_cmd`
+- `tests/cache_test.rs`: Cache open / schema-version / rebuild behavior
+- `src/` unit tests: Scope parsing, path encoding, file discovery, source discovery
 
 Fixtures live in `tests/fixtures/` as handcrafted JSONL files.
 
