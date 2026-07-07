@@ -197,6 +197,58 @@ fn tool_calls_has_message_uuid() {
     assert_eq!(uuid, "a1");
 }
 
+// ---- advisor() tool calls ----
+// advisor() invocations use server_tool_use / advisor_tool_result content blocks
+// instead of the standard tool_use / tool_result pair, and the result block lives
+// in an assistant-type record rather than a user-type one.
+
+#[test]
+fn tool_calls_finds_advisor_server_tool_use() {
+    let conn = setup_db("advisor_session.jsonl");
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE name = 'advisor'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn sessions_tool_call_count_includes_advisor() {
+    let conn = setup_db("advisor_session.jsonl");
+    let tool_count: i64 = conn
+        .query_row(
+            "SELECT tool_count FROM messages WHERE uuid = 'a1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tool_count, 1, "advisor() call should count in tool_count");
+
+    let session_total: i64 = conn
+        .query_row("SELECT tool_call_count FROM sessions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        session_total, 1,
+        "sessions.tool_call_count should agree with tool_calls' row count"
+    );
+}
+
+#[test]
+fn tool_results_finds_advisor_tool_result() {
+    let conn = setup_db("advisor_session.jsonl");
+    let content: String = conn
+        .query_row(
+            "SELECT content FROM tool_results WHERE tool_use_id = 'srvtoolu_adv001'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(content, "Looks solid. Ship it.");
+}
+
 // ---- tool_results view ----
 
 #[test]

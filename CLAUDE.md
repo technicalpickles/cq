@@ -45,6 +45,7 @@ CQ is a query tool, not a monitoring tool. Default is auto-scope to the current 
 - **stderr for progress, stdout for data.** "Scanned N files" and "No results." go to stderr so piped output stays clean.
 - **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-alice-myproject`) back to paths (`/Users/alice/myproject`).
 - **ILIKE for project filtering.** `--project` does substring match, not exact.
+- **`advisor()` calls use server-side content blocks, not `tool_use`/`tool_result`.** They show up as `server_tool_use` (call) and `advisor_tool_result` (result) blocks, both inside `assistant`-type records -- the result is *not* in the following `user`-type record like a normal tool result. `claude_tool_calls_sql`/`claude_tool_results_sql` in `views.rs` special-case both: `tool_calls` matches `server_tool_use` alongside `tool_use` (same `id`/`name`/`input` shape), and `tool_results` matches `advisor_tool_result` in `assistant` records alongside `tool_result` in `user` records, unwrapping `content.text` since `content` is a nested object (`{type, text}`) instead of a plain string. Rows surface with `name = 'advisor'`.
 
 ## Keeping docs in sync
 

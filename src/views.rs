@@ -125,7 +125,7 @@ pub fn claude_messages_sql() -> String {
                 CASE WHEN json_extract_string(json, '$.type') = 'assistant' THEN
                     (SELECT COUNT(*)
                      FROM (SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item)
-                     WHERE json_extract_string(item, '$.type') = 'tool_use')
+                     WHERE json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use'))
                 ELSE CAST(0 AS BIGINT)
                 END AS tool_count,
                 json_extract_string(json, '$.message.model') AS model,
@@ -143,6 +143,10 @@ pub fn claude_messages_sql() -> String {
 }
 
 /// The Claude `tool_calls` view body.
+///
+/// Matches both `tool_use` blocks (regular tools) and `server_tool_use` blocks
+/// (server-side tools like `advisor()`) -- both carry the same `id`/`name`/`input`
+/// shape inside an assistant-type record.
 pub fn claude_tool_calls_sql() -> String {
     format!(
         "SELECT
@@ -165,11 +169,16 @@ pub fn claude_tool_calls_sql() -> String {
         )
         WHERE json_extract_string(json, '$.type') = 'assistant'
         AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_use'"
+        AND json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use')"
     )
 }
 
 /// The Claude `tool_results` view body.
+///
+/// Matches standard `tool_result` blocks (in user-type records, string `content`)
+/// and `advisor_tool_result` blocks (in assistant-type records -- `advisor()`
+/// results land back in the same assistant turn as the `server_tool_use` call --
+/// with `content` nested as `{type, text}` rather than a plain string).
 pub fn claude_tool_results_sql() -> String {
     format!(
         "SELECT
@@ -179,7 +188,10 @@ pub fn claude_tool_results_sql() -> String {
             'claude' AS harness,
             json_extract_string(item, '$.tool_use_id') AS tool_use_id,
             COALESCE(CAST(json_extract(item, '$.is_error') AS BOOLEAN), false) AS is_error,
-            json_extract_string(item, '$.content') AS content,
+            CASE WHEN json_type(json_extract(item, '$.content')) = 'OBJECT'
+                THEN json_extract_string(item, '$.content.text')
+                ELSE json_extract_string(item, '$.content')
+            END AS content,
             {AGENT_ID_EXPR} AS agent_id,
             {IS_SIDECHAIN_EXPR} AS is_sidechain,
             {AGENT_TYPE_EXPR} AS agent_type,
@@ -188,9 +200,11 @@ pub fn claude_tool_results_sql() -> String {
         LATERAL (
             SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
         )
-        WHERE json_extract_string(json, '$.type') = 'user'
-        AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
-        AND json_extract_string(item, '$.type') = 'tool_result'"
+        WHERE json_type(json_extract(json, '$.message.content')) = 'ARRAY'
+        AND (
+            (json_extract_string(json, '$.type') = 'user' AND json_extract_string(item, '$.type') = 'tool_result')
+            OR (json_extract_string(json, '$.type') = 'assistant' AND json_extract_string(item, '$.type') = 'advisor_tool_result')
+        )"
     )
 }
 

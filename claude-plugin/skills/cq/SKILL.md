@@ -43,9 +43,9 @@ user_invocable: true
 
 **messages**: session_id, project, source, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id
 
-**tool_calls**: session_id, project, source, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id
+**tool_calls**: session_id, project, source, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` invocations appear here too, with `name = 'advisor'` (they use a `server_tool_use` block under the hood, not the standard `tool_use`).
 
-**tool_results**: session_id, project, source, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id
+**tool_results**: session_id, project, source, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` results appear here with `content` already unwrapped to the advisor's text.
 
 Subagent rows carry the parent `session_id`. Filter with `WHERE NOT is_sidechain` (main loop), `WHERE is_sidechain` (subagents), `WHERE agent_type = 'Explore'`, or `WHERE workflow_id IS NOT NULL`.
 
@@ -58,6 +58,19 @@ json_extract_string(input, '$.command')    -- Bash commands
 json_extract_string(input, '$.file_path')  -- Read/Edit targets
 json_extract_string(input, '$.skill')      -- Skill invocations
 json_extract_string(input, '$.pattern')    -- Glob/Grep patterns
+```
+
+## Querying advisor() Calls
+
+`advisor()` calls show up in `tool_calls`/`tool_results` like any other tool, under `name = 'advisor'`:
+
+```sql
+SELECT tc.session_id, tc.timestamp, tr.content
+FROM tool_calls tc
+JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
+WHERE tc.name = 'advisor'
+ORDER BY tc.timestamp DESC
+LIMIT 20;
 ```
 
 ## Working With cq
