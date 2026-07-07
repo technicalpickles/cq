@@ -60,7 +60,8 @@ const TOOL_CALLS_SCHEMA: &str = r#"tool_calls
   workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
 
   Note: query input fields with json_extract_string(input, '$.field_name')
-  Example: json_extract_string(input, '$.command') for Bash commands"#;
+  Example: json_extract_string(input, '$.command') for Bash commands
+  Note: advisor() calls appear here with name = 'advisor'"#;
 
 const TOOL_RESULTS_SCHEMA: &str = r#"tool_results
 ------------
@@ -70,7 +71,7 @@ const TOOL_RESULTS_SCHEMA: &str = r#"tool_results
   harness             VARCHAR   The tool that produced the transcript (claude, opencode)
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
-  content             VARCHAR   Tool result content (text)
+  content             VARCHAR   Tool result content (text); advisor() results are unwrapped from {type, text}
   agent_id            VARCHAR   Subagent id; NULL for main-loop rows
   is_sidechain        BOOLEAN   true if this row is from a subagent
   agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
@@ -187,6 +188,7 @@ tool_calls
 
   Note: query input fields with json_extract_string(input, '$.field_name')
   Example: json_extract_string(input, '$.command') for Bash commands
+  Note: advisor() calls appear here with name = 'advisor'
 
 tool_results
 ------------
@@ -196,7 +198,7 @@ tool_results
   harness             VARCHAR   The tool that produced the transcript (claude, opencode)
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
-  content             VARCHAR   Tool result content (text)
+  content             VARCHAR   Tool result content (text); advisor() results are unwrapped from {type, text}
   agent_id            VARCHAR   Subagent id; NULL for main-loop rows
   is_sidechain        BOOLEAN   true if this row is from a subagent
   agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
