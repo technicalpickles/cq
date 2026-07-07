@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/technicalpickles/cq/compare/v0.2.0...v0.2.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* recognize advisor() calls in tool_calls/tool_results views ([411ab68](https://github.com/technicalpickles/cq/commit/411ab68bb790a6df8d1c2d352f3e5d30c51f4e25))
+* recognize advisor() calls in tool_calls/tool_results views ([81cee42](https://github.com/technicalpickles/cq/commit/81cee42896077ddddb61998b4f630b81253b88c2))
+
 ## [0.2.0](https://github.com/technicalpickles/cq/compare/v0.1.0...v0.2.0) (2026-06-30)
 
 
