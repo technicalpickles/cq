@@ -149,6 +149,47 @@ fn detects_changed_files() {
     assert_eq!(result.stats.changed, 1);
 }
 
+/// DuckDB's read_json(..., ignore_errors=true) tolerates a line it can't parse
+/// (e.g. an unpaired UTF-16 surrogate escape, which lenient JSON parsers accept
+/// but DuckDB's stricter parser rejects) by emitting that row with a NULL value
+/// rather than dropping it or raising. raw_records.json is NOT NULL, so indexing
+/// must filter those rows out instead of crashing on the constraint violation.
+#[test]
+fn skips_unparseable_record_instead_of_crashing() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["unparseable_record.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+
+    let result = cq::indexer::sync_sources(
+        &conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
+    assert_eq!(result.stats.added, 1);
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM raw_records", [], |r| r.get(0))
+        .unwrap();
+    // The fixture has 3 lines; the middle one has an unpaired surrogate escape
+    // and should be skipped, leaving the 2 well-formed records indexed.
+    assert_eq!(
+        count, 2,
+        "the unparseable record should be skipped, not inserted as NULL"
+    );
+
+    let null_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM raw_records WHERE json IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(null_count, 0, "raw_records.json is NOT NULL; no NULL rows should ever be inserted");
+}
+
 #[test]
 fn creates_tables_on_first_open() {
     let dir = cache_dir();

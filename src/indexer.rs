@@ -417,17 +417,46 @@ fn max_mtime_recursive(dir: &Path) -> i64 {
 
 /// Parse JSONL files with DuckDB's read_json and insert into raw_records.
 /// Also extracts cwd and registers files in file_registry.
+///
+/// `read_json(..., ignore_errors=true)` tolerates a line it can't parse (e.g.
+/// invalid JSON that a more lenient tool would accept, such as an unpaired
+/// UTF-16 surrogate escape) by emitting that row with a NULL value instead of
+/// raising or dropping the row. `raw_records.json` is NOT NULL, so those rows
+/// are staged and filtered out here rather than inserted; a warning reports
+/// how many were skipped and from which file, since silently dropping them
+/// would be its own kind of surprise.
 fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Result<()> {
     for file in files {
         let path_str = file.to_string_lossy().to_string();
         let escaped = path_str.replace('\'', "''");
 
-        let insert_sql = format!(
-            "INSERT INTO raw_records (source_file, json)
-             SELECT '{escaped}', CAST(json AS JSON)
+        conn.execute_batch(&format!(
+            "CREATE OR REPLACE TEMP TABLE _index_staging AS
+             SELECT CAST(json AS JSON) AS json
              FROM read_json('{escaped}', format='newline_delimited', records=false, ignore_errors=true)"
-        );
-        conn.execute_batch(&insert_sql)
+        ))
+        .with_context(|| format!("Failed to index {path_str}"))?;
+
+        let skipped: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM _index_staging WHERE json IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if skipped > 0 {
+            eprintln!(
+                "Warning: skipped {skipped} unparseable record(s) in {path_str} (DuckDB's JSON reader could not parse them; ignore_errors=true tolerates that as NULL rather than failing the whole file)"
+            );
+        }
+
+        conn.execute_batch(&format!(
+            "INSERT INTO raw_records (source_file, json)
+             SELECT '{escaped}', json FROM _index_staging WHERE json IS NOT NULL"
+        ))
+        .with_context(|| format!("Failed to index {path_str}"))?;
+
+        conn.execute_batch("DROP TABLE _index_staging")
             .with_context(|| format!("Failed to index {path_str}"))?;
 
         let cwd: Option<String> = conn
