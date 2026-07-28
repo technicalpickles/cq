@@ -224,24 +224,9 @@ pub fn print_context_table(
         }
     }
 
-    let header_cells: Vec<String> = headers
-        .iter()
-        .enumerate()
-        .map(|(i, h)| {
-            if i == ncols - 1 {
-                h.to_string()
-            } else {
-                style::pad_right(h, widths[i])
-            }
-        })
-        .collect();
-    println!(
-        "{}",
-        style::color(&header_cells.join("  "), style::Color::Dim)
-    );
-
-    let sep_cells: Vec<String> = widths.iter().map(|&w| "\u{2500}".repeat(w)).collect();
-    println!("{}", style::color(&sep_cells.join("  "), style::Color::Dim));
+    let (header_line, sep_line) = style::table_header_and_separator(&headers, &widths);
+    println!("{header_line}");
+    println!("{sep_line}");
 
     let mut prev_group: Option<i64> = None;
     for row in &curated_rows {
