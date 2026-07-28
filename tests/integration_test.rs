@@ -2123,3 +2123,129 @@ fn sessions_json_always_includes_source() {
         "JSON should carry source, got: {stdout}"
     );
 }
+
+#[test]
+fn tty_context_curates_to_four_columns() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["messages", "--grep", "NEEDLE", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let data_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty() && l.trim() != "--")
+        .collect();
+    assert!(
+        !data_lines.is_empty(),
+        "expected at least one data row, got:\n{stdout}"
+    );
+
+    for line in &data_lines {
+        let cells: Vec<&str> = line
+            .split("  ")
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(
+            cells.len(),
+            4,
+            "expected 4 curated columns (session_id, type, timestamp, text), got {} in line:\n{line}",
+            cells.len()
+        );
+    }
+}
+
+#[test]
+fn table_context_hides_match_kind_and_group_columns() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--table", "messages", "--grep", "NEEDLE", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("session_id") && stdout.contains("timestamp") && stdout.contains("text"),
+        "expected curated header columns, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("match_kind") && !stdout.contains("match_group"),
+        "table context output should not expose match_kind/match_group column names, got:\n{stdout}"
+    );
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "--" {
+            continue;
+        }
+        let cells: Vec<&str> = trimmed
+            .split("  ")
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for cell in &cells {
+            assert!(
+                !matches!(*cell, "match" | "before" | "after"),
+                "table output should not include bare match_kind column value '{cell}' in line:\n{line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn table_context_shows_separators_on_group_boundaries() {
+    // Grep "ne" matches "one" (ord 1), "six NEEDLE" (ord 6), and "nine" (ord 9) in the fixture.
+    // With -A 0 -B 0, these form three non-contiguous groups separated by `--` separators,
+    // ported from the TTY equivalent (`tty_context_non_contiguous_groups_show_separator`).
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--table", "messages", "--grep", "ne", "-A", "0", "-B", "0"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
+    assert_eq!(
+        separator_lines, 2,
+        "three non-contiguous matches should have exactly 2 '--' separators, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn table_context_single_group_no_separator() {
+    // One match, -A 0 -B 0 -- one group, no `--` separator line.
+    let env = setup_env(&["context_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args([
+            "--table", "messages", "--grep", "NEEDLE", "-A", "0", "-B", "0",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let separator_lines = stdout.lines().filter(|l| l.trim() == "--").count();
+    assert_eq!(
+        separator_lines, 0,
+        "single group should not have '--' separator, got:\n{stdout}"
+    );
+}

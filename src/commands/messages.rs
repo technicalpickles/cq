@@ -282,7 +282,7 @@ fn run_with_context(
         }
         OutputFormat::Table => {
             let mut stmt = conn.prepare(&sql)?;
-            output::print_results(&mut stmt, &param_refs, format, wide)
+            output::print_context_table(&mut stmt, &param_refs, wide)
         }
         OutputFormat::Default => {
             let mut stmt = conn.prepare(&sql)?;

@@ -44,19 +44,50 @@ pub fn print_results(
     }
 }
 
-/// Render context-bearing rows for TTY (Default) output.
-/// Drops `match_kind` and `match_group` columns from the visible output.
-/// Dims rows where `match_kind != 'match'`.
-/// Prints `--` separator line when `match_group` changes between consecutive rows.
-///
-/// Expects the input statement to include both `match_kind` (text) and
-/// `match_group` (integer) columns. Column names and positions are detected at
-/// runtime so this works for both message-shaped and tools-shaped queries.
-pub fn print_context_rows(
+/// A single context-window row curated down to the 4 columns `cq messages`/`cq tools`
+/// show in their normal (non-context) output, formatted the same way
+/// `messages::render_oneline` formats them: `session_id` short-id'd, `type` as-is,
+/// `timestamp` relativized, `text` truncated unless `wide`.
+struct CuratedContextRow {
+    cells: [String; 4],
+    is_match: bool,
+    group: Option<i64>,
+}
+
+/// Raw text extraction for a DuckDB `Value`, matching the `val_str` helper duplicated
+/// across `src/commands/*.rs`: `Text` unwraps, `Null` becomes an empty string (so callers
+/// can apply their own `style::null_display()` fallback), anything else falls back to
+/// its debug form.
+fn raw_string(v: &Value) -> String {
+    match v {
+        Value::Text(s) => s.clone(),
+        Value::Null => String::new(),
+        other => format!("{:?}", other),
+    }
+}
+
+/// Look up a required column's index by name, failing loudly (rather than silently
+/// mis-curating) if the context query's shape ever drifts from `ContextSqlBuilder`'s
+/// documented `session_id, uuid, type, timestamp, text, model, tool_count, project,
+/// match_kind, match_group` output.
+fn required_column_index(names: &[String], name: &str) -> Result<usize> {
+    names.iter().position(|c| c == name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "curate_context_rows: expected column '{name}' not found in context query result (columns: {names:?})"
+        )
+    })
+}
+
+/// Walk a context-window result set once and curate each row down to the 4 columns
+/// `cq messages`/`cq tools` show normally, applying the same formatting
+/// `messages::render_oneline` uses. Shared by both the TTY (`print_context_rows`) and
+/// `--table` (`print_context_table`) renderers so Default and Table context output stay
+/// in lockstep.
+fn curate_context_rows(
     stmt: &mut duckdb::Statement,
     params: &[&dyn duckdb::types::ToSql],
     wide: bool,
-) -> anyhow::Result<()> {
+) -> Result<Vec<CuratedContextRow>> {
     let mut rows_iter = stmt.query(params)?;
     let column_names: Vec<String> = rows_iter
         .as_ref()
@@ -66,25 +97,18 @@ pub fn print_context_rows(
         .map(|s| s.to_string())
         .collect();
 
+    let session_idx = required_column_index(&column_names, "session_id")?;
+    let type_idx = required_column_index(&column_names, "type")?;
+    let timestamp_idx = required_column_index(&column_names, "timestamp")?;
+    let text_idx = required_column_index(&column_names, "text")?;
     let kind_idx = column_names.iter().position(|c| c == "match_kind");
     let group_idx = column_names.iter().position(|c| c == "match_group");
 
-    // Indices to display (everything except the two metadata columns).
-    let display_indices: Vec<usize> = (0..column_names.len())
-        .filter(|i| Some(*i) != kind_idx && Some(*i) != group_idx)
-        .collect();
-
-    let max_width = if wide { 0 } else { 120 };
-
-    struct OutRow {
-        cells: Vec<String>,
-        is_match: bool,
-        group: Option<i64>,
-    }
-    let mut out_rows: Vec<OutRow> = Vec::new();
+    let ncols = column_names.len();
+    let mut out_rows: Vec<CuratedContextRow> = Vec::new();
 
     while let Some(row) = rows_iter.next()? {
-        let values: Vec<Value> = (0..column_names.len())
+        let values: Vec<Value> = (0..ncols)
             .map(|i| row.get::<_, Value>(i).unwrap_or(Value::Null))
             .collect();
 
@@ -98,17 +122,60 @@ pub fn print_context_rows(
             .map(|i| matches!(&values[i], Value::Text(s) if s == "match"))
             .unwrap_or(true);
 
-        let cells: Vec<String> = display_indices
-            .iter()
-            .map(|&i| value_to_string(&values[i], max_width))
-            .collect();
+        let session_id = raw_string(&values[session_idx]);
+        let msg_type = raw_string(&values[type_idx]);
+        let timestamp = raw_string(&values[timestamp_idx]);
+        let text = raw_string(&values[text_idx]);
 
-        out_rows.push(OutRow {
-            cells,
+        let session_cell = if session_id.is_empty() {
+            style::null_display().to_string()
+        } else {
+            style::short_id(&session_id, 8)
+        };
+        let type_cell = if msg_type.is_empty() {
+            style::null_display().to_string()
+        } else {
+            msg_type
+        };
+        let timestamp_cell = if timestamp.is_empty() {
+            style::null_display().to_string()
+        } else {
+            style::relative_time(&timestamp)
+        };
+        let text_cell = if text.is_empty() {
+            style::null_display().to_string()
+        } else if wide {
+            text
+        } else {
+            style::truncate(&text, 60)
+        };
+
+        out_rows.push(CuratedContextRow {
+            cells: [session_cell, type_cell, timestamp_cell, text_cell],
             is_match,
             group,
         });
     }
+
+    Ok(out_rows)
+}
+
+/// Render context-bearing rows for TTY (Default) output.
+/// Curates the row down to `session_id, type, timestamp, text` (the same 4 columns
+/// `cq messages`'s normal output shows), dropping `match_kind`/`match_group` entirely.
+/// Dims rows where `match_kind != 'match'`.
+/// Prints `--` separator line when `match_group` changes between consecutive rows.
+///
+/// Expects the input statement to include `session_id`, `type`, `timestamp`, `text`,
+/// `match_kind` (text), and `match_group` (integer) columns — the shape
+/// `ContextSqlBuilder::build()` produces. Column names and positions are detected at
+/// runtime so this works for both message-shaped and tools-shaped queries.
+pub fn print_context_rows(
+    stmt: &mut duckdb::Statement,
+    params: &[&dyn duckdb::types::ToSql],
+    wide: bool,
+) -> anyhow::Result<()> {
+    let out_rows = curate_context_rows(stmt, params, wide)?;
 
     let mut prev_group: Option<i64> = None;
     for row in &out_rows {
@@ -125,6 +192,79 @@ pub fn print_context_rows(
         } else {
             println!("{}", crate::style::color(&line, crate::style::Color::Dim));
         }
+    }
+
+    Ok(())
+}
+
+/// Render context-bearing rows for `--table` output.
+/// Curates to the same 4 columns as `print_context_rows` (and `cq messages`'s normal
+/// table output), and adds `--` group-boundary separators to match Default mode's
+/// behavior — unlike the old direct `print_results` path, which showed all 10 raw
+/// columns (including `match_kind`/`match_group`) with no separators.
+///
+/// No per-row dim styling is applied here (consistent with every other existing
+/// `--table` renderer, which is plain/uncolored); only column curation and separators
+/// are added.
+pub fn print_context_table(
+    stmt: &mut duckdb::Statement,
+    params: &[&dyn duckdb::types::ToSql],
+    wide: bool,
+) -> anyhow::Result<()> {
+    let curated_rows = curate_context_rows(stmt, params, wide)?;
+
+    let headers = ["session_id", "type", "timestamp", "text"];
+    let ncols = headers.len();
+    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    for row in &curated_rows {
+        for (i, cell) in row.cells.iter().enumerate() {
+            if cell.len() > widths[i] {
+                widths[i] = cell.len();
+            }
+        }
+    }
+
+    let header_cells: Vec<String> = headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            if i == ncols - 1 {
+                h.to_string()
+            } else {
+                style::pad_right(h, widths[i])
+            }
+        })
+        .collect();
+    println!(
+        "{}",
+        style::color(&header_cells.join("  "), style::Color::Dim)
+    );
+
+    let sep_cells: Vec<String> = widths.iter().map(|&w| "\u{2500}".repeat(w)).collect();
+    println!("{}", style::color(&sep_cells.join("  "), style::Color::Dim));
+
+    let mut prev_group: Option<i64> = None;
+    for row in &curated_rows {
+        if let (Some(prev), Some(this)) = (prev_group, row.group) {
+            if this != prev {
+                println!("--");
+            }
+        }
+        prev_group = row.group.or(prev_group);
+
+        let cells: Vec<String> = row
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                if i == ncols - 1 {
+                    cell.clone()
+                } else {
+                    style::pad_right(cell, widths[i])
+                }
+            })
+            .collect();
+        println!("{}", cells.join("  "));
     }
 
     Ok(())
