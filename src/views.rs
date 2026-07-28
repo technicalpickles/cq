@@ -33,10 +33,11 @@ const SOURCE_EXPR: &str =
 
 /// Register all queryable views against the given JSONL transcript files.
 ///
-/// Creates four views:
+/// Creates five views:
 /// - `messages`: one row per user/assistant turn
 /// - `tool_calls`: one row per tool_use block (from assistant messages)
 /// - `tool_results`: one row per tool_result block (from user messages with array content)
+/// - `hook_events`: one row per hook injection (SessionStart context, PreToolUse/PostToolUse output)
 /// - `sessions`: aggregated session-level metrics
 ///
 /// When `files` is empty, creates empty views with the correct schema so queries
@@ -208,6 +209,78 @@ pub fn claude_tool_results_sql() -> String {
     )
 }
 
+/// The Claude `hook_events` view body.
+///
+/// Surfaces `hook_success` / `hook_additional_context` attachment records
+/// (`type: "attachment"` in the raw transcript) -- SessionStart context
+/// injections, PreToolUse/PostToolUse hook output -- that are otherwise
+/// invisible to `messages`.
+///
+/// `hook_success` rows are one row per record: `content` is resolved via a
+/// three-way COALESCE (plain `attachment.content` text, else
+/// `additionalContext` pulled out of JSON-structured `attachment.stdout`, else
+/// the raw `stdout` text as a last resort). `TRY_CAST(... AS JSON)` returns
+/// NULL rather than erroring on non-JSON `stdout` (e.g. the plain-text case,
+/// where the first COALESCE branch already matched), so branch 2 falls
+/// through to branch 3 cleanly.
+///
+/// `hook_additional_context` rows fan out via `LATERAL UNNEST`: `content` is a
+/// JSON array of strings (one element per plugin's SessionStart
+/// contribution), and a single row can't represent a multi-plugin bundle as
+/// one coherent text blob, so each array element becomes its own row --
+/// following the same fan-out shape `claude_tool_calls_sql`/
+/// `claude_tool_results_sql` use for `message.content` arrays, just over
+/// `VARCHAR[]` instead of `JSON[]`.
+pub fn claude_hook_events_sql() -> String {
+    format!(
+        "WITH hook_success_rows AS (
+            SELECT
+                json_extract_string(json, '$.sessionId') AS session_id,
+                {PROJECT_EXPR} AS project,
+                {SOURCE_EXPR} AS source,
+                'claude' AS harness,
+                json_extract_string(json, '$.timestamp') AS timestamp,
+                json_extract_string(json, '$.attachment.hookEvent') AS hook_event,
+                json_extract_string(json, '$.attachment.hookName') AS hook_name,
+                json_extract_string(json, '$.attachment.type') AS attachment_type,
+                COALESCE(
+                    NULLIF(json_extract_string(json, '$.attachment.content'), ''),
+                    json_extract_string(
+                        TRY_CAST(json_extract_string(json, '$.attachment.stdout') AS JSON),
+                        '$.hookSpecificOutput.additionalContext'
+                    ),
+                    NULLIF(json_extract_string(json, '$.attachment.stdout'), '')
+                ) AS content
+            FROM raw_records
+            WHERE json_extract_string(json, '$.type') = 'attachment'
+            AND json_extract_string(json, '$.attachment.type') = 'hook_success'
+        ),
+        hook_additional_context_rows AS (
+            SELECT
+                json_extract_string(json, '$.sessionId') AS session_id,
+                {PROJECT_EXPR} AS project,
+                {SOURCE_EXPR} AS source,
+                'claude' AS harness,
+                json_extract_string(json, '$.timestamp') AS timestamp,
+                json_extract_string(json, '$.attachment.hookEvent') AS hook_event,
+                json_extract_string(json, '$.attachment.hookName') AS hook_name,
+                json_extract_string(json, '$.attachment.type') AS attachment_type,
+                item AS content
+            FROM raw_records,
+            LATERAL (
+                SELECT UNNEST(CAST(json_extract(json, '$.attachment.content') AS VARCHAR[])) AS item
+            )
+            WHERE json_extract_string(json, '$.type') = 'attachment'
+            AND json_extract_string(json, '$.attachment.type') = 'hook_additional_context'
+        )
+        SELECT *, OCTET_LENGTH(CAST(content AS BLOB)) AS content_size FROM (
+            SELECT * FROM hook_success_rows
+            UNION ALL
+            SELECT * FROM hook_additional_context_rows
+        )"
+    )
+}
+
 /// The Claude `sessions` view body. Aggregates over the (possibly multi-provider)
 /// `messages` view, filtered to Claude rows so it never scoops up another harness's
 /// messages once `messages` becomes a UNION.
@@ -298,6 +371,20 @@ fn empty_view_sql(view: View) -> &'static str {
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
             NULL::VARCHAR AS workflow_id
+        WHERE 1=0"
+        }
+        View::HookEvents => {
+            "SELECT
+            NULL::VARCHAR AS session_id,
+            NULL::VARCHAR AS project,
+            NULL::VARCHAR AS source,
+            NULL::VARCHAR AS harness,
+            NULL::VARCHAR AS timestamp,
+            NULL::VARCHAR AS hook_event,
+            NULL::VARCHAR AS hook_name,
+            NULL::VARCHAR AS attachment_type,
+            NULL::VARCHAR AS content,
+            NULL::BIGINT AS content_size
         WHERE 1=0"
         }
         View::Sessions => {

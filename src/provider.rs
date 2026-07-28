@@ -20,23 +20,27 @@ pub trait TranscriptProvider {
     fn contribute_view_sql(&self, view: View) -> Option<String>;
 }
 
-/// The four SQL views cq exposes. Each active provider contributes a SELECT
+/// The five SQL views cq exposes. Each active provider contributes a SELECT
 /// body per view via [`TranscriptProvider::contribute_view_sql`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Messages,
     ToolCalls,
     ToolResults,
+    HookEvents,
     Sessions,
 }
 
 impl View {
     /// All views in creation order. `Sessions` comes last because its SQL reads
-    /// from the `messages` view, which must already exist.
-    pub const ALL: [View; 4] = [
+    /// from the `messages` view, which must already exist. `HookEvents` doesn't
+    /// read `messages`, so its position only matters relative to `Sessions`
+    /// (before it).
+    pub const ALL: [View; 5] = [
         View::Messages,
         View::ToolCalls,
         View::ToolResults,
+        View::HookEvents,
         View::Sessions,
     ];
 
@@ -46,6 +50,7 @@ impl View {
             View::Messages => "messages",
             View::ToolCalls => "tool_calls",
             View::ToolResults => "tool_results",
+            View::HookEvents => "hook_events",
             View::Sessions => "sessions",
         }
     }

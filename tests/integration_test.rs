@@ -2123,3 +2123,114 @@ fn sessions_json_always_includes_source() {
         "JSON should carry source, got: {stdout}"
     );
 }
+
+// ---- cq hooks ----
+
+#[test]
+fn hooks_summary_mode_shows_bar_chart() {
+    let env = setup_env(&["hook_events_session.jsonl"]);
+    cq_cmd(&env)
+        .arg("hooks")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SessionStart"))
+        .stdout(predicate::str::contains("\u{2588}")); // bar chart block char
+}
+
+#[test]
+fn hooks_filter_by_event() {
+    let env = setup_env(&["hook_events_session.jsonl"]);
+    cq_cmd(&env)
+        .args(["hooks", "PreToolUse"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("permissionDecision"));
+}
+
+#[test]
+fn hooks_grep_filters_content() {
+    let env = setup_env(&["hook_events_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["hooks", "--grep", "superpowers"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("You have superpowers."),
+        "Expected matching content in output, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("LSP context"),
+        "Should not show non-matching content, got: {stdout}"
+    );
+}
+
+#[test]
+fn hooks_count_by_hook_name() {
+    let env = setup_env(&["hook_events_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["hooks", "--count-by", "hook_name"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("SessionStart:startup"),
+        "Should show SessionStart:startup, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("PreToolUse:Bash"),
+        "Should show PreToolUse:Bash, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2588}"),
+        "Should show bar chart blocks, got: {stdout}"
+    );
+}
+
+#[test]
+fn hooks_json_output_full_columns() {
+    let env = setup_env(&["hook_events_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["--json", "hooks", "SessionStart"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    assert!(!parsed.is_empty());
+    let first = &parsed[0];
+    for field in [
+        "session_id",
+        "project",
+        "source",
+        "harness",
+        "timestamp",
+        "hook_event",
+        "hook_name",
+        "attachment_type",
+        "content",
+        "content_size",
+    ] {
+        assert!(
+            first.get(field).is_some(),
+            "Expected field '{field}' in JSON output, got: {first}"
+        );
+    }
+}
+
+#[test]
+fn hooks_no_results_message() {
+    let env = setup_env(&["hook_events_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["hooks", "--grep", "zzznotfound"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No results"),
+        "Should show no results, got: {stderr}"
+    );
+}

@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use cq::claude_provider::ClaudeProvider;
-use cq::commands::{messages, projects, schema, sessions, sql, tools};
+use cq::commands::{hooks, messages, projects, schema, sessions, sql, tools};
 use cq::db;
 use cq::output::OutputFormat;
 use cq::scope::QueryScope;
@@ -124,6 +124,19 @@ enum Command {
         #[arg(short = 'C', long = "context", value_name = "N", conflicts_with_all = ["after", "before"])]
         context: Option<usize>,
     },
+    /// Query hook events (SessionStart context injections, PreToolUse/PostToolUse output)
+    Hooks {
+        /// Filter to a specific hook event (run 'cq hooks' to see available events)
+        event: Option<String>,
+
+        /// Filter hook event content by text
+        #[arg(long)]
+        grep: Option<String>,
+
+        /// Aggregate rows into counts by column [valid: hook_event, hook_name, session, project]
+        #[arg(long = "count-by")]
+        count_by: Option<String>,
+    },
     /// Query messages
     Messages {
         /// Filter by message type [valid: user, assistant]
@@ -167,7 +180,7 @@ enum Command {
     },
     /// Show view schema documentation
     Schema {
-        /// Show documentation for a specific view [valid: messages, tool_calls, tool_results, sessions]
+        /// Show documentation for a specific view [valid: messages, tool_calls, tool_results, hook_events, sessions]
         name: Option<String>,
 
         /// Show example queries
@@ -367,6 +380,23 @@ fn main() -> Result<()> {
                 field_refs.as_deref(),
                 count_by.as_deref(),
                 ctx,
+                &format,
+                cli.limit,
+                cli.offset,
+                wide,
+            )?;
+        }
+        Command::Hooks {
+            event,
+            grep,
+            count_by,
+        } => {
+            hooks::run(
+                &conn,
+                &scope,
+                event.as_deref(),
+                grep.as_deref(),
+                count_by.as_deref(),
                 &format,
                 cli.limit,
                 cli.offset,

@@ -851,3 +851,132 @@ fn empty_views_have_harness_column() {
         assert_eq!(n, 0, "{view} should be empty");
     }
 }
+
+// ---- hook_events view ----
+
+#[test]
+fn hook_events_view_extracts_plain_stdout_content() {
+    let conn = setup_db("hook_events_session.jsonl");
+    let content: String = conn
+        .query_row(
+            "SELECT content FROM hook_events WHERE hook_name = 'SessionStart:startup'
+             AND hook_event = 'SessionStart' AND attachment_type = 'hook_success'
+             ORDER BY timestamp LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        content,
+        "## LSP context\n\nAn LSP server is loaded for this codebase."
+    );
+}
+
+#[test]
+fn hook_events_view_extracts_additional_context_from_json_stdout() {
+    let conn = setup_db("hook_events_session.jsonl");
+    let content: String = conn
+        .query_row(
+            "SELECT content FROM hook_events WHERE hook_event = 'SessionStart'
+             AND attachment_type = 'hook_success' AND hook_name = 'SessionStart:startup'
+             ORDER BY timestamp DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(content, "You have superpowers.");
+}
+
+#[test]
+fn hook_events_view_falls_back_to_raw_stdout_when_no_additional_context() {
+    let conn = setup_db("hook_events_session.jsonl");
+    let content: String = conn
+        .query_row(
+            "SELECT content FROM hook_events WHERE hook_event = 'PreToolUse'
+             AND attachment_type = 'hook_success'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        content,
+        "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}"
+    );
+}
+
+#[test]
+fn hook_events_view_fans_out_additional_context_array() {
+    let conn = setup_db("hook_events_session.jsonl");
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM hook_events WHERE attachment_type = 'hook_additional_context'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        count, 2,
+        "the 2-element content array should fan out to 2 rows"
+    );
+
+    let distinct: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT content) FROM hook_events WHERE attachment_type = 'hook_additional_context'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        distinct, 2,
+        "each fanned-out row should have distinct content"
+    );
+}
+
+#[test]
+fn hook_events_view_content_size_matches_byte_length() {
+    let conn = setup_db("hook_events_session.jsonl");
+    let mismatches: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM hook_events
+             WHERE content_size IS DISTINCT FROM OCTET_LENGTH(CAST(content AS BLOB))",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        mismatches, 0,
+        "content_size should equal OCTET_LENGTH(content) for every row"
+    );
+}
+
+#[test]
+fn empty_hook_events_view_has_correct_schema() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY, mtime_ns BIGINT, file_size BIGINT,
+            cwd TEXT, agent_type TEXT, source TEXT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+    cq::views::register_views(&conn, &[]).unwrap();
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM hook_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // All 10 columns must exist and be selectable without error.
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM hook_events WHERE
+             session_id IS NULL AND project IS NULL AND source IS NULL AND harness IS NULL
+             AND timestamp IS NULL AND hook_event IS NULL AND hook_name IS NULL
+             AND attachment_type IS NULL AND content IS NULL AND content_size IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 0, "hook_events should be empty");
+}

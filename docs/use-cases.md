@@ -138,4 +138,17 @@ LIMIT 20
 cq tools Read --grep '/etc/passwd' -C 2
 ```
 
+## What's Actually Getting Injected at Session Start
+
+Every plugin that hooks `SessionStart` bundles its context into the same record. Rank them by size to see which ones are eating your budget before the conversation even begins.
+
+```bash
+cq sql "
+SELECT hook_name, content_size
+FROM hook_events
+WHERE attachment_type = 'hook_additional_context'
+ORDER BY content_size DESC
+"
+```
+
 Show the Read call plus two messages before and after. Useful for debugging why a tool was called, what context the agent had, and what it did with the result.

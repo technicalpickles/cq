@@ -2,7 +2,7 @@
 
 CLI tool for querying Claude Code session transcripts with SQL. Rust + DuckDB.
 
-Reads Claude Code's JSONL session files from `~/.claude/projects/`, indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes four SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`. Sync is incremental: files are re-parsed only when their mtime or size changes.
+Reads Claude Code's JSONL session files from `~/.claude/projects/`, indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes five SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`, `hook_events`. Sync is incremental: files are re-parsed only when their mtime or size changes.
 
 ## Architecture
 
@@ -12,6 +12,7 @@ lib.rs            Library entry point, re-exports modules for integration tests
 commands/
   sessions.rs     List/filter sessions
   tools.rs        Tool call queries + summary mode (no filters = grouped counts)
+  hooks.rs        Hook event queries + summary mode (mirrors tools.rs)
   messages.rs     Message queries
   projects.rs     `cq projects`: per-project session/message/tool/skill counts
   context.rs      ContextSqlBuilder: grep-style context windows (-C/--after/--before)
@@ -20,7 +21,7 @@ commands/
   schema.rs       View schema docs + example queries (pure text, no DB needed)
 output.rs         Shared rendering: table (comfy-table) or JSON, accepts params
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
-views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the four views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
+views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the five views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
 indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, fs2 file lock; recurses into <session>/subagents/** and captures agentType from meta.json
