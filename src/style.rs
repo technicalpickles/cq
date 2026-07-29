@@ -143,6 +143,32 @@ pub fn align_columns(rows: &[Vec<String>]) -> Vec<String> {
         .collect()
 }
 
+/// Format a dimmed header line and separator line for a table, given column widths.
+/// Column `i` is padded to `widths[i]` except the last column, which is left unpadded
+/// to avoid trailing whitespace. Shared by `print_light_table` and
+/// `output::print_context_table` so both renderers stay identical.
+pub fn table_header_and_separator(headers: &[&str], widths: &[usize]) -> (String, String) {
+    let ncols = headers.len();
+
+    let header_cells: Vec<String> = headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            if i == ncols - 1 {
+                h.to_string()
+            } else {
+                pad_right(h, widths[i])
+            }
+        })
+        .collect();
+    let header_line = color(&header_cells.join("  "), Color::Dim);
+
+    let sep_cells: Vec<String> = widths.iter().map(|&w| "\u{2500}".repeat(w)).collect();
+    let sep_line = color(&sep_cells.join("  "), Color::Dim);
+
+    (header_line, sep_line)
+}
+
 pub fn print_light_table(headers: &[&str], rows: &[Vec<String>]) {
     if rows.is_empty() {
         eprintln!("No results.");
@@ -163,23 +189,9 @@ pub fn print_light_table(headers: &[&str], rows: &[Vec<String>]) {
         }
     }
 
-    // Print header row
-    let header_cells: Vec<String> = headers
-        .iter()
-        .enumerate()
-        .map(|(i, h)| {
-            if i == ncols - 1 {
-                h.to_string()
-            } else {
-                pad_right(h, widths[i])
-            }
-        })
-        .collect();
-    println!("{}", color(&header_cells.join("  "), Color::Dim));
-
-    // Print separator
-    let sep_cells: Vec<String> = widths.iter().map(|&w| "\u{2500}".repeat(w)).collect();
-    println!("{}", color(&sep_cells.join("  "), Color::Dim));
+    let (header_line, sep_line) = table_header_and_separator(headers, &widths);
+    println!("{header_line}");
+    println!("{sep_line}");
 
     // Print data rows
     for row in rows {

@@ -13,13 +13,14 @@ fn print_view(name: &str) {
         "messages" => Some(MESSAGES_SCHEMA),
         "tool_calls" => Some(TOOL_CALLS_SCHEMA),
         "tool_results" => Some(TOOL_RESULTS_SCHEMA),
+        "hook_events" => Some(HOOK_EVENTS_SCHEMA),
         "sessions" => Some(SESSIONS_SCHEMA),
         _ => None,
     };
     match section {
         Some(s) => println!("{}", s),
         None => {
-            eprintln!("Error: Unknown view '{}'\nValid views: messages, tool_calls, tool_results, sessions", name);
+            eprintln!("Error: Unknown view '{}'\nValid views: messages, tool_calls, tool_results, hook_events, sessions", name);
             std::process::exit(1);
         }
     }
@@ -76,6 +77,21 @@ const TOOL_RESULTS_SCHEMA: &str = r#"tool_results
   is_sidechain        BOOLEAN   true if this row is from a subagent
   agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
   workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL"#;
+
+const HOOK_EVENTS_SCHEMA: &str = r#"hook_events
+-----------
+  session_id          VARCHAR   Session identifier
+  project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
+  harness             VARCHAR   The tool that produced the transcript (claude, opencode)
+  timestamp           VARCHAR   ISO 8601 timestamp string
+  hook_event          VARCHAR   Hook event name (e.g. 'SessionStart', 'PreToolUse', 'PostToolUse')
+  hook_name           VARCHAR   Specific hook identifier (e.g. 'SessionStart:startup', 'PreToolUse:Bash')
+  attachment_type     VARCHAR   'hook_success' or 'hook_additional_context'
+  content             VARCHAR   Injected text or stdout; one row per plugin for hook_additional_context
+  content_size        BIGINT    Byte length of content
+
+  Note: one row per hook_additional_context array element (fanned out per plugin's SessionStart contribution)"#;
 
 const SESSIONS_SCHEMA: &str = r#"sessions
 --------
@@ -147,7 +163,13 @@ Recent sessions:
   SELECT session_id, project, started_at, message_count, tool_call_count, first_user_message
   FROM sessions
   ORDER BY started_at DESC
-  LIMIT 10;"#;
+  LIMIT 10;
+
+SessionStart injection sizes by plugin:
+  SELECT hook_name, content_size
+  FROM hook_events
+  WHERE attachment_type = 'hook_additional_context'
+  ORDER BY content_size DESC;"#;
 
 const SCHEMA_DOCS: &str = r#"cq Views Schema
 ===============
@@ -203,6 +225,21 @@ tool_results
   is_sidechain        BOOLEAN   true if this row is from a subagent
   agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
   workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
+
+hook_events
+-----------
+  session_id          VARCHAR   Session identifier
+  project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
+  harness             VARCHAR   The tool that produced the transcript (claude, opencode)
+  timestamp           VARCHAR   ISO 8601 timestamp string
+  hook_event          VARCHAR   Hook event name (e.g. 'SessionStart', 'PreToolUse', 'PostToolUse')
+  hook_name           VARCHAR   Specific hook identifier (e.g. 'SessionStart:startup', 'PreToolUse:Bash')
+  attachment_type     VARCHAR   'hook_success' or 'hook_additional_context'
+  content             VARCHAR   Injected text or stdout; one row per plugin for hook_additional_context
+  content_size        BIGINT    Byte length of content
+
+  Note: one row per hook_additional_context array element (fanned out per plugin's SessionStart contribution)
 
 sessions
 --------
@@ -276,4 +313,10 @@ Recent sessions:
   FROM sessions
   ORDER BY started_at DESC
   LIMIT 10;
+
+SessionStart injection sizes by plugin:
+  SELECT hook_name, content_size
+  FROM hook_events
+  WHERE attachment_type = 'hook_additional_context'
+  ORDER BY content_size DESC;
 "#;

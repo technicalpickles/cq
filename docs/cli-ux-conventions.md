@@ -137,7 +137,7 @@ cq mirrors grep's context flags on `tools` and `messages`:
 - `-B N`: N messages before each match
 - `-C N`: N messages before AND after (shorthand for `-A N -B N`)
 
-Context is always counted in messages, not tool calls. When `cq tools` has a context flag, its output becomes message-shaped for the terminal; `--json` keeps heterogeneous rows with tool-specific fields on matches. `--limit N` limits matches, not total output rows. `--count-by` is incompatible with context flags. Context never crosses session boundaries.
+Context is always counted in messages, not tool calls. When `cq tools` has a context flag, its output becomes message-shaped for the terminal: both Default and `--table` curate down to the same 4 columns `cq messages`'s normal output shows (`session_id`, `type`, `timestamp`, `text`), with `--` separators marking group boundaries in both formats. `--json` is the only format that keeps the full row — all columns, `match_kind`/`match_group`, and (on `cq tools` matches) the tool-specific enrichment fields. `--limit N` limits matches, not total output rows. `--count-by` is incompatible with context flags. Context never crosses session boundaries.
 
 ```bash
 # What did the agent do right after this Skill invocation?

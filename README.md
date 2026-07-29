@@ -85,6 +85,7 @@ cargo install --git https://github.com/technicalpickles/cq
 cq sessions                              # your recent sessions
 cq tools                                 # tool usage, ranked
 cq messages --grep "docker" --since 7d   # search your history
+cq hooks                                 # hook events, ranked (SessionStart, PreToolUse, ...)
 cq sql "SELECT count(*) FROM messages"   # run anything
 ```
 
@@ -122,12 +123,13 @@ By default cq scopes to the **active** source (the one matching `$CLAUDE_CONFIG_
 
 ## Views
 
-Four SQL views, all queryable with `cq sql`:
+Five SQL views, all queryable with `cq sql`:
 
 - **sessions** - one row per session with timestamps, message counts, tool counts (main-loop only), plus a `subagent_count`
 - **messages** - one row per conversation turn (user or assistant)
 - **tool_calls** - one row per tool invocation, with input as queryable JSON
 - **tool_results** - one row per tool response, with an error flag
+- **hook_events** - one row per hook injection - SessionStart context, PreToolUse/PostToolUse output - fanned out per plugin for `hook_additional_context` records
 
 Subagent activity is indexed too: `messages`, `tool_calls`, and `tool_results` carry `is_sidechain`, `agent_id`, `agent_type`, and `workflow_id` so you can include, exclude, or focus subagents. `cq sessions` stays main-loop-only.
 
