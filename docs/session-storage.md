@@ -90,7 +90,7 @@ Two consequences. First, `SELECT count(*) FROM raw_records` is not a message cou
 - `tool_results` reads `tool_result` blocks out of `user` records.
 - `hook_events` reads `attachment` records where `attachment.type = 'hook_success'`, pulling `attachment.hookEvent` and `attachment.hookName`.
 
-The `advisor()` case breaks the usual call/result symmetry: it uses `server_tool_use` and `advisor_tool_result` blocks, and both live inside `assistant` records, so the result is *not* in the following `user` record the way a normal tool result is. `views.rs` special-cases both sides.
+The `advisor()` case breaks the usual call/result symmetry in two ways. Its blocks are `server_tool_use` (the call) and `advisor_tool_result` (the result), and both live inside `assistant` records, so the result is *not* in the following `user` record the way a normal tool result is. Its `content` is also a nested object (`{type, text}`) rather than a plain string, so reading the text means unwrapping `content.text`. `server_tool_use` otherwise has the same `id`/`name`/`input` shape as `tool_use`. `views.rs` special-cases both sides and surfaces the rows as `name = 'advisor'`.
 
 ## Identity and ordering
 

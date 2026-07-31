@@ -4,6 +4,19 @@ CLI tool for querying Claude Code session transcripts with SQL. Rust + DuckDB.
 
 Reads Claude Code's JSONL session files from `~/.claude/projects/`, indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes five SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`, `hook_events`. Sync is incremental: files are re-parsed only when their mtime or size changes.
 
+The input format is not ours and is not a documented contract. Before you write anything that reads or reasons about transcripts, read `docs/session-storage.md`: it covers the on-disk layout, which record types actually show up, and the places the format will surprise you.
+
+## Docs
+
+| Doc | What it's for |
+|-----|---------------|
+| `docs/session-storage.md` | The transcript format on disk: layout, record types, gotchas |
+| `docs/cli-ux-conventions.md` | Flags, help text, error messages, output behavior, plus the docs-sync table |
+| `docs/design-principles.md` | Why the defaults are what they are |
+| `docs/use-cases.md` | Worked queries |
+| `CONTEXT.md` | Harness / Provider / Source glossary |
+| `docs/adr/` | Decisions with lasting consequences |
+
 ## Architecture
 
 ```
@@ -39,14 +52,14 @@ CQ is a query tool, not a monitoring tool. Default is auto-scope to the current 
 ## Key patterns
 
 - **Commands build SQL + params, output renders.** Each command constructs a WHERE clause with `?` placeholders, collects params in a `Vec<Box<dyn ToSql>>`, and passes both to `output::print_results`.
-- **Persistent cache + incremental sync.** `cache.rs` opens the cache DB and handles schema versioning. `indexer.rs` walks files, checks mtime + size against `file_registry`, and only re-parses what changed. `fs2` file locking serializes concurrent writers; readers fall back to cached data when the lock is busy. The scan recurses into `<session>/subagents/**` (excluding `journal.jsonl`); subagent rows carry the parent `session_id` plus `is_sidechain`/`agent_id`/`agent_type`/`workflow_id` tags. The Auto mtime fast-path is a recursive max so new deep files are detected. `index_files` stages each file's rows in a temp table and drops the ones DuckDB's JSON reader couldn't parse, because `ignore_errors=true` nulls a bad line's value instead of dropping the row; see `docs/session-storage.md` for that and the rest of the on-disk format.
+- **Persistent cache + incremental sync.** `cache.rs` opens the cache DB and handles schema versioning. `indexer.rs` walks files, checks mtime + size against `file_registry`, and only re-parses what changed. `fs2` file locking serializes concurrent writers; readers fall back to cached data when the lock is busy. How the scan handles nested subagent files, and why `index_files` stages rows in a temp table before inserting, both follow from the on-disk format: `docs/session-storage.md`.
 - **SyncMode is explicit over smart.** `Auto` (default) does mtime fast-path + try-lock + skip-if-busy. `Force` (`--reindex`) waits for the lock and re-parses everything. `Skip` (`--no-reindex`) bypasses sync entirely. User flags always beat smart behavior.
 - **SyncScope narrows sync work.** A `--project` filter also restricts which files the indexer touches, not just which rows the query returns. Derived in `main.rs` from the CLI flags, passed through `db::setup_connection` into `indexer::sync`.
 - **Provider trait** abstracts a transcript *harness*. Beyond file discovery, a provider has `prepare(conn) -> bool` (is it active?) and `contribute_view_sql(view)` (a SELECT body); `views::compose_views` UNION ALLs the active providers' contributions, tagging rows with a `harness` column. Only `ClaudeProvider` exists today (always active; its bodies read `raw_records`); the seam is built for a second harness to plug in.
 - **stderr for progress, stdout for data.** "Scanned N files" and "No results." go to stderr so piped output stays clean.
-- **Project paths are decoded in SQL.** `PROJECT_EXPR` in `views.rs` converts encoded directory names (e.g. `-Users-alice-myproject`) back to paths (`/Users/alice/myproject`).
+- **Project paths come from the registry, not the directory name.** `PROJECT_EXPR` in `views.rs` prefers the `cwd` captured at index time and only falls back to decoding the encoded directory name. The encoding is lossy (it eats dots as well as slashes), so the fallback is wrong for any path containing a dot or a hyphen. See `docs/session-storage.md`.
 - **ILIKE for project filtering.** `--project` does substring match, not exact.
-- **`advisor()` calls use server-side content blocks, not `tool_use`/`tool_result`.** They show up as `server_tool_use` (call) and `advisor_tool_result` (result) blocks, both inside `assistant`-type records -- the result is *not* in the following `user`-type record like a normal tool result. `claude_tool_calls_sql`/`claude_tool_results_sql` in `views.rs` special-case both: `tool_calls` matches `server_tool_use` alongside `tool_use` (same `id`/`name`/`input` shape), and `tool_results` matches `advisor_tool_result` in `assistant` records alongside `tool_result` in `user` records, unwrapping `content.text` since `content` is a nested object (`{type, text}`) instead of a plain string. Rows surface with `name = 'advisor'`.
+- **`advisor()` calls use server-side content blocks, not `tool_use`/`tool_result`.** `claude_tool_calls_sql`/`claude_tool_results_sql` in `views.rs` special-case them so they surface as `name = 'advisor'`. The block shapes and why the result isn't where you'd expect are in `docs/session-storage.md`.
 
 ## Keeping docs in sync
 
