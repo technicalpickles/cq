@@ -181,6 +181,7 @@ Docs drift when behavior changes but nobody grep'd the docs. Before considering 
 | A subcommand's behavior | README "Quick start", `cq schema --examples` output if query patterns shift |
 | A module in `src/` | CLAUDE.md architecture tree |
 | Sync / cache / scope behavior | CLAUDE.md "Key patterns"; `docs/design-principles.md` if a default changes |
+| Anything about the transcript format on disk (a new record `type`, a layout change, a parsing quirk) | `docs/session-storage.md` |
 | A SQL view's columns | `cq schema` output (in `src/commands/schema.rs`); README "Views" bullets if a view is added or removed |
 | A default behavior (scope, sync mode, output) | `docs/design-principles.md` and any example that relied on the old default |
 
