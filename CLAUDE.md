@@ -67,49 +67,12 @@ When you change behavior, the matching docs need to move with it. `docs/cli-ux-c
 
 ## CLI UX conventions
 
-When adding or modifying CLI behavior, follow these conventions. See `docs/cli-ux-conventions.md` for the full reference with examples, rationale, and checklists.
+`docs/cli-ux-conventions.md` is the reference, with the examples, rationale, and a checklist to run before calling a flag done. Read it when you touch CLI behavior. The rules it comes down to:
 
-### Discoverability: valid values in `--help`
-
-Any flag or arg that accepts a fixed set of values lists them in the help text using `[valid: ...]` format:
-
-```
---type <TYPE>       Filter by message type [valid: user, assistant]
---count-by <COL>    Aggregate rows into counts [valid: name, session, project]
---fields <FIELDS>   Extract specific columns [valid: session_id, project, type, ...]
-```
-
-For dynamic or tool-dependent values, point to where the user can discover them:
-
-```
-[NAME]  Filter to a specific tool name (run 'cq tools' to see available names)
-```
-
-When adding a new flag, ask: "Can the user discover valid values without trial and error?" If not, add them to `--help`.
-
-### Forgiveness: error message template
-
-Every validation error uses this structure:
-
-```
-Error: <what went wrong, including the invalid input in quotes>
-Valid <thing>: <comma-separated list>
-Hint: <how to learn more or fix it, if applicable>
-```
-
-The three lines serve different needs: the first tells you what's wrong, the second tells you what's right, the third tells you where to go next. The hint line is optional for cases where the valid values already make the fix obvious.
-
-When adding validation, always include the user's invalid input in the error so they can see their typo.
-
-### Consistency: friendly aliases
-
-Use short aliases for common column references: `session` maps to `session_id`. Keep aliases consistent across flags (`--fields session` and `--count-by session` both work). If you add a new alias, it should work everywhere that column appears.
-
-### TTY-aware output
-
-Truncation serves terminal readability. When piped, output full values (the consumer is another program). `--wide` forces full output in terminal. `--json` always gives full output.
-
-The pattern: `let wide = cli.wide || !std::io::stdout().is_terminal();`
+- Fixed-value flags list their values in `--help` as `[valid: a, b, c]`. Dynamic ones name the command that reveals them.
+- Validation errors follow `Error:` / `Valid <thing>:` / `Hint:`, and always quote the input the user actually passed.
+- Column aliases (`session` for `session_id`) work everywhere that column is accepted, not just where you added them.
+- Truncate for terminals, never for pipes: `let wide = cli.wide || !std::io::stdout().is_terminal();`
 
 ## Tests
 
