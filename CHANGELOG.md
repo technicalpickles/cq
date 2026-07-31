@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/technicalpickles/cq/compare/v0.2.1...v0.3.0) (2026-07-31)
+
+
+### Features
+
+* add hook_events view and cq hooks subcommand ([eaae821](https://github.com/technicalpickles/cq/commit/eaae8216d7f77e2e96fe7e41b389e3f9a46a4fad))
+
+
+### Bug Fixes
+
+* address code review warnings on hook_events docs and table rendering ([4ae54c8](https://github.com/technicalpickles/cq/commit/4ae54c8ce6cbd562c8368f523da7f7b684eb7d7d))
+* curate context-flag output to 4 columns in Default and Table modes ([5f72494](https://github.com/technicalpickles/cq/commit/5f724948fff5ab21235cab155418aacae6cf9253))
+* skip records DuckDB's JSON reader rejects instead of crashing ([967dec9](https://github.com/technicalpickles/cq/commit/967dec91bd643c879dd273414079448bedada0d5))
+* skip records DuckDB's JSON reader rejects instead of crashing :bug: ([c743865](https://github.com/technicalpickles/cq/commit/c7438656a6ce138d63241b1982298c395334e34d))
+
 ## [0.2.1](https://github.com/technicalpickles/cq/compare/v0.2.0...v0.2.1) (2026-07-07)
 
 
