@@ -187,7 +187,10 @@ fn skips_unparseable_record_instead_of_crashing() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(null_count, 0, "raw_records.json is NOT NULL; no NULL rows should ever be inserted");
+    assert_eq!(
+        null_count, 0,
+        "raw_records.json is NOT NULL; no NULL rows should ever be inserted"
+    );
 }
 
 #[test]
