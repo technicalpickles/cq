@@ -85,6 +85,7 @@ cargo install --git https://github.com/technicalpickles/cq
 cq sessions                              # your recent sessions
 cq tools                                 # tool usage, ranked
 cq messages --grep "docker" --since 7d   # search your history
+cq tools --errors --result-grep "ECONNREFUSED"  # what failed, and why
 cq hooks                                 # hook events, ranked (SessionStart, PreToolUse, ...)
 cq sql "SELECT count(*) FROM messages"   # run anything
 ```

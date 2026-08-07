@@ -38,7 +38,7 @@ pub fn run(
     conn: &Connection,
     scope: &QueryScope,
     msg_type: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
     fields: Option<&[&str]>,
     count_by: Option<&str>,
     ctx: Option<super::ContextWindow>,
@@ -108,9 +108,9 @@ pub fn run(
         params.push(Box::new(t.to_string()));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("text ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("text", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");
@@ -154,7 +154,7 @@ pub fn run(
                     if msg_type.is_some() {
                         extras.push("--type");
                     }
-                    if grep.is_some() {
+                    if !grep.is_empty() {
                         extras.push("--grep");
                     }
                     super::print_no_results(scope, &extras);
@@ -186,7 +186,7 @@ fn run_with_context(
     conn: &Connection,
     scope: &QueryScope,
     msg_type: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
     window: super::ContextWindow,
     format: &OutputFormat,
     match_limit: usize,
@@ -216,8 +216,8 @@ fn run_with_context(
     if let Some(_t) = msg_type {
         match_conditions.push("type = ?".to_string());
     }
-    if let Some(_pattern) = grep {
-        match_conditions.push("text ILIKE ?".to_string());
+    if let Some(clause) = super::grep_where("text", grep) {
+        match_conditions.push(clause);
     }
     let match_where = match_conditions.join(" AND ");
 
@@ -246,9 +246,7 @@ fn run_with_context(
     if let Some(t) = msg_type {
         all_params.push(Box::new(t.to_string()));
     }
-    if let Some(pattern) = grep {
-        all_params.push(Box::new(format!("%{pattern}%")));
-    }
+    all_params.extend(super::grep_params(grep));
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> =
         all_params.iter().map(|p| p.as_ref()).collect();
@@ -267,7 +265,7 @@ fn run_with_context(
             if msg_type.is_some() {
                 extras.push("--type");
             }
-            if grep.is_some() {
+            if !grep.is_empty() {
                 extras.push("--grep");
             }
             super::print_no_results(scope, &extras);
@@ -296,7 +294,7 @@ fn run_with_fields(
     conn: &Connection,
     scope: &QueryScope,
     msg_type: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
     field_list: &[&str],
     format: &OutputFormat,
     limit: usize,
@@ -331,9 +329,9 @@ fn run_with_fields(
         params.push(Box::new(t.to_string()));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("text ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("text", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");
@@ -361,7 +359,7 @@ fn run_count_by(
     conn: &Connection,
     scope: &QueryScope,
     msg_type: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
     column: &str,
     format: &OutputFormat,
     wide: bool,
@@ -394,9 +392,9 @@ fn run_count_by(
         params.push(Box::new(t.to_string()));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("text ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("text", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");

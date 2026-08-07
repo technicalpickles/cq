@@ -33,9 +33,9 @@ user_invocable: true
 
 ## Subcommand Flags
 
-- **sessions**: `--grep` (filter by content)
-- **tools**: `--grep` (filter inputs), `--errors` (errors only), `--fields` (extract input fields as columns)
-- **messages**: `--type user|assistant`, `--grep`
+- **sessions**: `--grep` (filter by content, repeatable/OR)
+- **tools**: `--grep` (filter inputs, repeatable/OR), `--result-grep` (filter by tool result content, repeatable/OR, ANDs with `--errors`), `--errors` (errors only), `--fields` (extract input fields as columns)
+- **messages**: `--type user|assistant`, `--grep` (repeatable/OR)
 
 ## View Schemas
 
@@ -78,7 +78,9 @@ LIMIT 20;
 - Use `--json` when parsing output programmatically or piping to other tools.
 - Do not suppress stderr on a cq pipe (`cq ... --json 2>/dev/null | ...`). If the SQL errors, the error goes to stderr and stdout is empty, so the downstream consumer (e.g. `python3 -c json.load`) dies with a confusing `Expecting value: line 1 column 1` instead of the real cq error. Let stderr through, or redirect to a temp file and check it.
 - Do not merge stderr into stdout on a cq pipe either (`cq ... --json 2>&1 | ...`). Progress messages ("Loaded N files", "Synced N new files") are written to stderr by design so stdout stays clean JSON; merging the streams puts those lines back in front of the JSON and breaks the parser. Redirect stderr to a file or the terminal instead: `cq ... --json 2>/tmp/cq.err | ...`.
-- The convenience subcommands (`sessions`, `tools`, `messages`) cover most needs. Reach for `cq sql` when you need joins or aggregations across views.
+- The convenience subcommands (`sessions`, `tools`, `messages`, `hooks`) cover most needs. Reach for `cq sql` when you need joins or aggregations across views.
+- `--grep` can be repeated for an OR search (`--grep foo --grep bar` matches either), so a multi-term keyword sweep doesn't need to drop to raw SQL with a chain of `ILIKE ... OR ILIKE ...`.
+- `tools --grep` searches the tool call's input (what was asked for); `tools --result-grep` searches the tool result's content (what came back, e.g. error text or output). Before `--result-grep` existed, searching result content required a raw `tool_calls JOIN tool_results` query — reach for `cq sql` only if you also need aggregation across that join, not just a text match.
 - `--since` filters the convenience subcommands (`sessions`, `tools`, `messages`), but NOT `cq sql`: raw SQL runs verbatim and ignores `--since`/`--project`/`--session`. On `cq sql`, filter time with a string comparison instead, e.g. `WHERE timestamp >= '2026-05-28'`. cq uses DuckDB, not SQLite, so SQLite functions like `datetime()` will not work. Do NOT reach for `WHERE timestamp > now() - INTERVAL N DAY`: it errors (see Tips below).
 - `cq` auto-scopes to the current directory's project. The scope hint shows which path is being matched.
 - Use `--project <name>` to query a different project (substring match, searches all project directories).
@@ -103,6 +105,16 @@ What does NOT work on the raw columns:
 
 - `now() - INTERVAL N DAY` errors with `No function matches '-(TIMESTAMP WITH TIME ZONE, INTERVAL)'`. Compare against a string literal, or cast with `now()::TIMESTAMP - INTERVAL N DAY`. cq surfaces this hint automatically when the query fails.
 - `strftime(...)`, `date_trunc(...)`, `extract(...)` need a real timestamp. For genuine per-row date math (e.g. correlating events within a window), cast inline: `timestamp::TIMESTAMP`.
+
+### Aliasing extracted fields: avoid existing column names
+
+`tool_calls` already has real columns named `agent_id`, `agent_type`, `session_id`, `project`, `source`, `harness`, `is_sidechain`, and `workflow_id` (see `cq schema tool_calls`). If you `SELECT json_extract_string(input, '$.some_field') AS agent_type` and then `GROUP BY agent_type`, DuckDB resolves the `GROUP BY` reference to the *real* `agent_type` column, not your alias, since column names win over aliases. The result is a confusing error unrelated to the actual mistake:
+
+```
+Error: Binder Error: column "input" must appear in the GROUP BY clause or must be part of an aggregate function.
+```
+
+The fix is just to pick an alias that doesn't collide, e.g. `AS extracted_agent_type`. This only bites when the alias happens to match a real column name on the view you're querying — check `cq schema <view>` if a `GROUP BY` error mentions a column you don't remember referencing.
 
 ## Error Recovery
 

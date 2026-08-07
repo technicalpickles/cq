@@ -75,9 +75,9 @@ struct Cli {
 enum Command {
     /// List sessions
     Sessions {
-        /// Filter sessions by content
+        /// Filter sessions by content (repeatable; matches any pattern, e.g. --grep a --grep b)
         #[arg(long)]
-        grep: Option<String>,
+        grep: Vec<String>,
 
         /// Extract specific columns (comma-separated) [valid: session_id, project, started_at, ended_at, message_count, tool_call_count, user_message_count, first_user_message]
         #[arg(long, value_delimiter = ',')]
@@ -96,9 +96,14 @@ enum Command {
         /// Filter to a specific tool name (run 'cq tools' to see available names)
         name: Option<String>,
 
-        /// Filter tool inputs by content
+        /// Filter tool inputs by content (repeatable; matches any pattern, e.g. --grep a --grep b)
         #[arg(long)]
-        grep: Option<String>,
+        grep: Vec<String>,
+
+        /// Filter tool results by content (repeatable; matches any pattern). Searches
+        /// tool_results.content, unlike --grep which searches the tool_calls input
+        #[arg(long = "result-grep")]
+        result_grep: Vec<String>,
 
         /// Show only tool calls that returned errors
         #[arg(long)]
@@ -129,9 +134,9 @@ enum Command {
         /// Filter to a specific hook event (run 'cq hooks' to see available events)
         event: Option<String>,
 
-        /// Filter hook event content by text
+        /// Filter hook event content by text (repeatable; matches any pattern, e.g. --grep a --grep b)
         #[arg(long)]
-        grep: Option<String>,
+        grep: Vec<String>,
 
         /// Aggregate rows into counts by column [valid: hook_event, hook_name, session, project]
         #[arg(long = "count-by")]
@@ -143,9 +148,9 @@ enum Command {
         #[arg(long = "type", name = "type")]
         msg_type: Option<String>,
 
-        /// Filter messages by content
+        /// Filter messages by content (repeatable; matches any pattern, e.g. --grep a --grep b)
         #[arg(long)]
-        grep: Option<String>,
+        grep: Vec<String>,
 
         /// Extract specific columns (comma-separated) [valid: session_id, project, type, timestamp, text, model, tool_count]
         #[arg(long, value_delimiter = ',')]
@@ -347,7 +352,7 @@ fn main() -> Result<()> {
             sessions::run(
                 &conn,
                 &scope,
-                grep.as_deref(),
+                &grep,
                 field_refs.as_deref(),
                 count_by.as_deref(),
                 &format,
@@ -360,6 +365,7 @@ fn main() -> Result<()> {
         Command::Tools {
             name,
             grep,
+            result_grep,
             errors,
             fields,
             count_by,
@@ -375,7 +381,8 @@ fn main() -> Result<()> {
                 &conn,
                 &scope,
                 name.as_deref(),
-                grep.as_deref(),
+                &grep,
+                &result_grep,
                 errors,
                 field_refs.as_deref(),
                 count_by.as_deref(),
@@ -395,7 +402,7 @@ fn main() -> Result<()> {
                 &conn,
                 &scope,
                 event.as_deref(),
-                grep.as_deref(),
+                &grep,
                 count_by.as_deref(),
                 &format,
                 cli.limit,
@@ -420,7 +427,7 @@ fn main() -> Result<()> {
                 &conn,
                 &scope,
                 msg_type.as_deref(),
-                grep.as_deref(),
+                &grep,
                 field_refs.as_deref(),
                 count_by.as_deref(),
                 ctx,

@@ -129,6 +129,22 @@ If you add a new alias, make sure it works in every flag that accepts columns. I
 
 Users don't need to think about this difference. They write `--fields text` or `--fields command` and get the data.
 
+## Repeatable filters (`--grep`)
+
+`--grep` can be passed more than once. Repeats are OR'd together, not AND'd: `--grep foo --grep bar` matches rows containing "foo" OR "bar". This mirrors ripgrep's `-e` and grep's `-e`/`-f`, and means a multi-term search never has to fall back to raw `cq sql` with a chain of `ILIKE ... OR ILIKE ...`.
+
+In clap, this means the field is `Vec<String>` (not `Option<String>`) with no `value_delimiter` — each `--grep` occurrence is its own pattern, so a pattern containing a literal comma still works.
+
+```bash
+cq messages --grep "docker" --grep "podman"   # either term
+```
+
+### `--grep` vs `--result-grep` on `tools`
+
+`tools --grep` searches `tool_calls.input` (what the agent asked for). `tools --result-grep` searches `tool_results.content` (what came back) — the actual output text, not just whether it errored. `--errors` and `--result-grep` compose with AND: `--errors --result-grep "ECONNREFUSED"` finds failed calls whose output mentions that string specifically, narrower than `--errors` alone.
+
+Before `--result-grep`, searching tool output text required raw SQL with a `tool_calls JOIN tool_results` — there was no subcommand path to it at all.
+
 ## Context flags (`-A`/`-B`/`-C`)
 
 cq mirrors grep's context flags on `tools` and `messages`:

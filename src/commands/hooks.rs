@@ -43,7 +43,7 @@ pub fn run(
     conn: &Connection,
     scope: &QueryScope,
     event: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
     count_by: Option<&str>,
     format: &OutputFormat,
     limit: usize,
@@ -57,7 +57,7 @@ pub fn run(
     }
 
     // Summary mode: no filters specified
-    if event.is_none() && grep.is_none() {
+    if event.is_none() && grep.is_empty() {
         return run_summary(conn, scope, format, wide);
     }
 
@@ -89,9 +89,9 @@ pub fn run(
         params.push(Box::new(e.to_string()));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("content ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("content", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");
@@ -143,7 +143,7 @@ pub fn run(
             super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
-            if grep.is_some() {
+            if !grep.is_empty() {
                 extras.push("--grep");
             }
             if event.is_some() {
@@ -176,7 +176,7 @@ fn run_count_by(
     conn: &Connection,
     scope: &QueryScope,
     event: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
     column: &str,
     format: &OutputFormat,
     wide: bool,
@@ -209,9 +209,9 @@ fn run_count_by(
         params.push(Box::new(e.to_string()));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("content ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("content", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");

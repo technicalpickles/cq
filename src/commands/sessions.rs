@@ -75,7 +75,7 @@ const VALID_COUNT_BY_COLUMNS: &[&str] = &["project"];
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
-    grep: Option<&str>,
+    grep: &[String],
     fields: Option<&[&str]>,
     count_by: Option<&str>,
     format: &OutputFormat,
@@ -142,9 +142,9 @@ pub fn run(
         conditions.push(format!("started_at >= '{formatted}'"));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("first_user_message ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("first_user_message", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");
@@ -193,7 +193,7 @@ pub fn run(
                     super::print_session_not_found(session);
                 } else {
                     let mut extras: Vec<&str> = Vec::new();
-                    if grep.is_some() {
+                    if !grep.is_empty() {
                         extras.push("--grep");
                     }
                     super::print_no_results(scope, &extras);
@@ -224,7 +224,7 @@ pub fn run(
 fn run_with_fields(
     conn: &Connection,
     scope: &QueryScope,
-    grep: Option<&str>,
+    grep: &[String],
     field_list: &[&str],
     format: &OutputFormat,
     limit: usize,
@@ -254,9 +254,9 @@ fn run_with_fields(
         conditions.push(format!("started_at >= '{formatted}'"));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("first_user_message ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("first_user_message", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");
@@ -283,7 +283,7 @@ fn run_with_fields(
 fn run_count_by(
     conn: &Connection,
     scope: &QueryScope,
-    grep: Option<&str>,
+    grep: &[String],
     column: &str,
     format: &OutputFormat,
     wide: bool,
@@ -311,9 +311,9 @@ fn run_count_by(
         conditions.push(format!("started_at >= '{formatted}'"));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("first_user_message ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("first_user_message", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
 
     let where_clause = conditions.join(" AND ");
