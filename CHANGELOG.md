@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/technicalpickles/cq/compare/v0.3.0...v0.4.0) (2026-08-07)
+
+
+### Features
+
+* multi-value --grep (OR match) and --result-grep for tool output content ([acb51f0](https://github.com/technicalpickles/cq/commit/acb51f070b8020443f68fd3b152895214264a0c2))
+* multi-value --grep (OR match) and --result-grep for tool output content ([f737d3b](https://github.com/technicalpickles/cq/commit/f737d3bd3dbd20537778b00b5e56f687a69e312d))
+
 ## [0.3.0](https://github.com/technicalpickles/cq/compare/v0.2.1...v0.3.0) (2026-07-31)
 
 
