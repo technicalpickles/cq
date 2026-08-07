@@ -48,7 +48,8 @@ pub fn run(
     conn: &Connection,
     scope: &QueryScope,
     tool_name: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
+    result_grep: &[String],
     errors_only: bool,
     fields: Option<&[&str]>,
     count_by: Option<&str>,
@@ -62,6 +63,13 @@ pub fn run(
     super::check_count_by_fields_conflict(count_by, fields);
     super::check_count_by_context_conflict(count_by, ctx);
     super::check_fields_context_conflict(fields, ctx);
+    if !result_grep.is_empty() && ctx.is_some() {
+        eprintln!(
+            "Error: --result-grep cannot be used with -A, -B, or -C\n\
+             Use --errors or --grep for context-window searches; --result-grep is detail-mode only"
+        );
+        std::process::exit(1);
+    }
 
     // Dispatch to context mode
     if let Some(window) = ctx {
@@ -86,6 +94,7 @@ pub fn run(
             scope,
             tool_name,
             grep,
+            result_grep,
             errors_only,
             &resolved,
             format,
@@ -94,7 +103,12 @@ pub fn run(
     }
 
     // Summary mode: no filters specified (and no fields requested)
-    if tool_name.is_none() && grep.is_none() && !errors_only && fields.is_none() {
+    if tool_name.is_none()
+        && grep.is_empty()
+        && result_grep.is_empty()
+        && !errors_only
+        && fields.is_none()
+    {
         return run_summary(conn, scope, format, wide);
     }
 
@@ -126,10 +140,27 @@ pub fn run(
         params.push(Box::new(name.to_string()));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("CAST(tc.input AS VARCHAR) ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("CAST(tc.input AS VARCHAR)", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
     }
+
+    if errors_only {
+        conditions.push("tr.is_error = true".to_string());
+    }
+
+    if let Some(clause) = super::grep_where("tr.content", result_grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(result_grep));
+    }
+
+    // tr.is_error / tr.content above only resolve when tool_results is joined.
+    let needs_results_join = errors_only || !result_grep.is_empty();
+    let results_join_clause = if needs_results_join {
+        "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
+    } else {
+        ""
+    };
 
     let where_clause = conditions.join(" AND ");
     let limit_clause = super::limit_clause(limit);
@@ -145,7 +176,7 @@ pub fn run(
             &where_clause,
             &param_refs,
             field_list,
-            errors_only,
+            needs_results_join,
             format,
             limit,
             offset,
@@ -155,52 +186,28 @@ pub fn run(
 
     // JSON gets full column set for scripting; display gets only what's shown
     if matches!(format, OutputFormat::Json) {
-        let sql = if errors_only {
-            format!(
-                "SELECT tc.session_id, tc.project, tc.name, tc.tool_use_id, tc.timestamp, CAST(tc.input AS VARCHAR) AS input
-                 FROM tool_calls tc
-                 JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
-                 WHERE {where_clause}
-                 AND tr.is_error = true
-                 ORDER BY tc.timestamp DESC
-                 {limit_clause}
-                 {offset_clause}"
-            )
-        } else {
-            format!(
-                "SELECT tc.session_id, tc.project, tc.name, tc.tool_use_id, tc.timestamp, CAST(tc.input AS VARCHAR) AS input
-                 FROM tool_calls tc
-                 WHERE {where_clause}
-                 ORDER BY tc.timestamp DESC
-                 {limit_clause}
-                 {offset_clause}"
-            )
-        };
+        let sql = format!(
+            "SELECT tc.session_id, tc.project, tc.name, tc.tool_use_id, tc.timestamp, CAST(tc.input AS VARCHAR) AS input
+             FROM tool_calls tc
+             {results_join_clause}
+             WHERE {where_clause}
+             ORDER BY tc.timestamp DESC
+             {limit_clause}
+             {offset_clause}"
+        );
         let mut stmt = conn.prepare(&sql)?;
         return output::print_results(&mut stmt, &param_refs, format, wide);
     }
 
-    let sql = if errors_only {
-        format!(
-            "SELECT tc.session_id, tc.name, CAST(tc.input AS VARCHAR) AS input
-             FROM tool_calls tc
-             JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
-             WHERE {where_clause}
-             AND tr.is_error = true
-             ORDER BY tc.timestamp DESC
-             {limit_clause}
-             {offset_clause}"
-        )
-    } else {
-        format!(
-            "SELECT tc.session_id, tc.name, CAST(tc.input AS VARCHAR) AS input
-             FROM tool_calls tc
-             WHERE {where_clause}
-             ORDER BY tc.timestamp DESC
-             {limit_clause}
-             {offset_clause}"
-        )
-    };
+    let sql = format!(
+        "SELECT tc.session_id, tc.name, CAST(tc.input AS VARCHAR) AS input
+         FROM tool_calls tc
+         {results_join_clause}
+         WHERE {where_clause}
+         ORDER BY tc.timestamp DESC
+         {limit_clause}
+         {offset_clause}"
+    );
 
     let mut stmt = conn.prepare(&sql)?;
 
@@ -222,8 +229,11 @@ pub fn run(
             super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
-            if grep.is_some() {
+            if !grep.is_empty() {
                 extras.push("--grep");
+            }
+            if !result_grep.is_empty() {
+                extras.push("--result-grep");
             }
             if errors_only {
                 extras.push("--errors");
@@ -243,16 +253,12 @@ pub fn run(
 
     super::print_truncation_hint(
         conn,
-        if errors_only {
+        if needs_results_join {
             "tool_calls tc JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
         } else {
             "tool_calls tc"
         },
-        &if errors_only {
-            format!("{where_clause} AND tr.is_error = true")
-        } else {
-            where_clause.clone()
-        },
+        &where_clause,
         &param_refs,
         detail_rows.len(),
         limit,
@@ -266,7 +272,7 @@ fn run_with_context(
     conn: &Connection,
     scope: &crate::scope::QueryScope,
     tool_name: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
     errors_only: bool,
     window: super::ContextWindow,
     format: &OutputFormat,
@@ -311,9 +317,9 @@ fn run_with_context(
         tool_conditions.push("tc.name = ?".to_string());
         tool_params.push(Box::new(name.to_string()));
     }
-    if let Some(pattern) = grep {
-        tool_conditions.push("CAST(tc.input AS VARCHAR) ILIKE ?".to_string());
-        tool_params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("CAST(tc.input AS VARCHAR)", grep) {
+        tool_conditions.push(clause);
+        tool_params.extend(super::grep_params(grep));
     }
     let tool_where = tool_conditions.join(" AND ");
 
@@ -356,7 +362,7 @@ fn run_with_context(
             if tool_name.is_some() {
                 extras.push("[name]");
             }
-            if grep.is_some() {
+            if !grep.is_empty() {
                 extras.push("--grep");
             }
             if errors_only {
@@ -420,7 +426,7 @@ fn run_with_fields(
     where_clause: &str,
     params: &[&dyn duckdb::types::ToSql],
     field_list: &[&str],
-    errors_only: bool,
+    needs_results_join: bool,
     format: &OutputFormat,
     limit: usize,
     offset: usize,
@@ -436,13 +442,9 @@ fn run_with_fields(
     let limit_clause = super::limit_clause(limit);
     let offset_clause = super::offset_clause(offset);
 
-    let join_clause = if errors_only {
+    // is_error/content filters (if any) are already embedded in where_clause by the caller.
+    let join_clause = if needs_results_join {
         "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
-    } else {
-        ""
-    };
-    let error_filter = if errors_only {
-        "AND tr.is_error = true"
     } else {
         ""
     };
@@ -454,7 +456,6 @@ fn run_with_fields(
              FROM tool_calls tc
              {join_clause}
              WHERE {where_clause}
-             {error_filter}
              ORDER BY tc.timestamp DESC
              {limit_clause}
              {offset_clause}"
@@ -468,7 +469,6 @@ fn run_with_fields(
          FROM tool_calls tc
          {join_clause}
          WHERE {where_clause}
-         {error_filter}
          ORDER BY tc.timestamp DESC
          {limit_clause}
          {offset_clause}"
@@ -496,8 +496,8 @@ fn run_with_fields(
             super::print_session_not_found(session);
         } else {
             let mut extras: Vec<&str> = Vec::new();
-            if errors_only {
-                extras.push("--errors");
+            if needs_results_join {
+                extras.push("--errors/--result-grep");
             }
             super::print_no_results(scope, &extras);
         }
@@ -511,16 +511,12 @@ fn run_with_fields(
 
     super::print_truncation_hint(
         conn,
-        if errors_only {
+        if needs_results_join {
             "tool_calls tc JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
         } else {
             "tool_calls tc"
         },
-        &if errors_only {
-            format!("{where_clause} AND tr.is_error = true")
-        } else {
-            where_clause.to_string()
-        },
+        where_clause,
         params,
         rows.len(),
         limit,
@@ -534,7 +530,8 @@ fn run_count_by(
     conn: &Connection,
     scope: &QueryScope,
     tool_name: Option<&str>,
-    grep: Option<&str>,
+    grep: &[String],
+    result_grep: &[String],
     errors_only: bool,
     column: &str,
     format: &OutputFormat,
@@ -568,19 +565,23 @@ fn run_count_by(
         params.push(Box::new(name.to_string()));
     }
 
-    if let Some(pattern) = grep {
-        conditions.push("CAST(tc.input AS VARCHAR) ILIKE ?".to_string());
-        params.push(Box::new(format!("%{pattern}%")));
+    if let Some(clause) = super::grep_where("CAST(tc.input AS VARCHAR)", grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(grep));
+    }
+
+    if errors_only {
+        conditions.push("tr.is_error = true".to_string());
+    }
+
+    if let Some(clause) = super::grep_where("tr.content", result_grep) {
+        conditions.push(clause);
+        params.extend(super::grep_params(result_grep));
     }
 
     let where_clause = conditions.join(" AND ");
-    let join_clause = if errors_only {
+    let join_clause = if errors_only || !result_grep.is_empty() {
         "JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id"
-    } else {
-        ""
-    };
-    let error_filter = if errors_only {
-        "AND tr.is_error = true"
     } else {
         ""
     };
@@ -590,7 +591,6 @@ fn run_count_by(
          FROM tool_calls tc
          {join_clause}
          WHERE {where_clause}
-         {error_filter}
          GROUP BY tc.{column}
          ORDER BY count DESC"
     );

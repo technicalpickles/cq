@@ -111,6 +111,29 @@ pub fn check_count_by_fields_conflict(count_by: Option<&str>, fields: Option<&[&
     }
 }
 
+/// Build an OR'd ILIKE clause for one or more --grep patterns against `column_expr`.
+/// Returns None when `patterns` is empty (no filter to apply).
+/// Each pattern becomes its own `column_expr ILIKE ?` bound via `grep_params`, so
+/// `--grep foo --grep bar` matches rows containing "foo" OR "bar", not both.
+pub fn grep_where(column_expr: &str, patterns: &[String]) -> Option<String> {
+    if patterns.is_empty() {
+        return None;
+    }
+    let clauses: Vec<String> = patterns
+        .iter()
+        .map(|_| format!("{column_expr} ILIKE ?"))
+        .collect();
+    Some(format!("({})", clauses.join(" OR ")))
+}
+
+/// Params for a `grep_where` clause, in the same pattern order.
+pub fn grep_params(patterns: &[String]) -> Vec<Box<dyn duckdb::types::ToSql>> {
+    patterns
+        .iter()
+        .map(|p| Box::new(format!("%{p}%")) as Box<dyn duckdb::types::ToSql>)
+        .collect()
+}
+
 /// Render a bar chart from (label, count) pairs. Used by --count-by and tools summary mode.
 pub fn render_bar_chart(rows: &[(String, i64)]) {
     let max_count = rows.iter().map(|r| r.1).max().unwrap_or(1);

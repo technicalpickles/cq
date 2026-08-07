@@ -1124,6 +1124,147 @@ fn tools_count_by_with_filter() {
 }
 
 #[test]
+fn tools_grep_multiple_patterns_matches_any() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--grep", "zzz-no-match", "--grep", "ls"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Bash"),
+        "Second --grep pattern should still match, got: {stdout}"
+    );
+}
+
+#[test]
+fn tools_result_grep_filters_by_result_content() {
+    let env = setup_env(&["simple_session.jsonl", "error_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--result-grep", "E0308"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sess-003"),
+        "Should show the session whose tool result matched, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("sess-001"),
+        "Should not show the session with no matching result, got: {stdout}"
+    );
+}
+
+#[test]
+fn tools_result_grep_ands_with_errors() {
+    let env = setup_env(&["error_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--errors", "--result-grep", "no-such-pattern"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No results"),
+        "--errors and --result-grep should AND together, got stderr: {stderr}"
+    );
+}
+
+#[test]
+fn tools_result_grep_conflicts_with_context() {
+    let env = setup_env(&["error_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["tools", "--result-grep", "E0308", "-C", "1"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--result-grep"),
+        "Should name the conflicting flag, got: {stderr}"
+    );
+}
+
+#[test]
+fn messages_grep_multiple_patterns_matches_any() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args([
+            "messages",
+            "--grep",
+            "zzz-no-match",
+            "--grep",
+            "list the files",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("list the files"),
+        "Second --grep pattern should still match, got: {stdout}"
+    );
+}
+
+#[test]
+fn sessions_grep_multiple_patterns_matches_any() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args([
+            "sessions",
+            "--grep",
+            "zzz-no-match",
+            "--grep",
+            "list the files",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("list the files"),
+        "Second --grep pattern should still match, got: {stdout}"
+    );
+}
+
+#[test]
+fn hooks_grep_multiple_patterns_matches_any() {
+    let env = setup_env(&["hook_events_session.jsonl"]);
+    let output = cq_cmd(&env)
+        .args(["hooks", "--grep", "zzz-no-match", "--grep", "superpowers"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("You have superpowers."),
+        "Second --grep pattern should still match, got: {stdout}"
+    );
+}
+
+#[test]
 fn messages_count_by_type() {
     let env = setup_env(&["simple_session.jsonl"]);
     let output = cq_cmd(&env)
