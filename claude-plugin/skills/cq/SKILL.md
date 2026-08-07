@@ -77,6 +77,7 @@ LIMIT 20;
 
 - Use `--json` when parsing output programmatically or piping to other tools.
 - Do not suppress stderr on a cq pipe (`cq ... --json 2>/dev/null | ...`). If the SQL errors, the error goes to stderr and stdout is empty, so the downstream consumer (e.g. `python3 -c json.load`) dies with a confusing `Expecting value: line 1 column 1` instead of the real cq error. Let stderr through, or redirect to a temp file and check it.
+- Do not merge stderr into stdout on a cq pipe either (`cq ... --json 2>&1 | ...`). Progress messages ("Loaded N files", "Synced N new files") are written to stderr by design so stdout stays clean JSON; merging the streams puts those lines back in front of the JSON and breaks the parser. Redirect stderr to a file or the terminal instead: `cq ... --json 2>/tmp/cq.err | ...`.
 - The convenience subcommands (`sessions`, `tools`, `messages`) cover most needs. Reach for `cq sql` when you need joins or aggregations across views.
 - `--since` filters the convenience subcommands (`sessions`, `tools`, `messages`), but NOT `cq sql`: raw SQL runs verbatim and ignores `--since`/`--project`/`--session`. On `cq sql`, filter time with a string comparison instead, e.g. `WHERE timestamp >= '2026-05-28'`. cq uses DuckDB, not SQLite, so SQLite functions like `datetime()` will not work. Do NOT reach for `WHERE timestamp > now() - INTERVAL N DAY`: it errors (see Tips below).
 - `cq` auto-scopes to the current directory's project. The scope hint shows which path is being matched.
