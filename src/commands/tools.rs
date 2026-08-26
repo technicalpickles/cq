@@ -129,6 +129,10 @@ pub fn run(
         conditions.push(crate::scope::source_filter_sql("tc."));
         params.push(Box::new(source.clone()));
     }
+    if let Some(harness) = &scope.harness {
+        conditions.push(crate::scope::harness_filter_sql("tc."));
+        params.push(Box::new(harness.clone()));
+    }
 
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -290,6 +294,9 @@ fn run_with_context(
     if scope.source.is_some() {
         scope_conditions.push(crate::scope::source_filter_sql(""));
     }
+    if scope.harness.is_some() {
+        scope_conditions.push(crate::scope::harness_filter_sql(""));
+    }
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
         scope_conditions.push(format!("timestamp >= '{formatted}'"));
@@ -308,6 +315,9 @@ fn run_with_context(
     }
     if scope.source.is_some() {
         tool_conditions.push(crate::scope::source_filter_sql("tc."));
+    }
+    if scope.harness.is_some() {
+        tool_conditions.push(crate::scope::harness_filter_sql("tc."));
     }
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -554,6 +564,10 @@ fn run_count_by(
         conditions.push(crate::scope::source_filter_sql("tc."));
         params.push(Box::new(source.clone()));
     }
+    if let Some(harness) = &scope.harness {
+        conditions.push(crate::scope::harness_filter_sql("tc."));
+        params.push(Box::new(harness.clone()));
+    }
 
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -646,6 +660,10 @@ fn run_summary(
     if let Some(source) = &scope.source {
         conditions.push(crate::scope::source_filter_sql(""));
         params.push(Box::new(source.clone()));
+    }
+    if let Some(harness) = &scope.harness {
+        conditions.push(crate::scope::harness_filter_sql(""));
+        params.push(Box::new(harness.clone()));
     }
 
     if let Some(ts) = scope.since_timestamp()? {

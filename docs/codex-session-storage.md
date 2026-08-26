@@ -14,7 +14,10 @@ Each file combines session metadata with response items:
 
 Codex rows are stored in cq's normal JSONL cache and exposed with
 `harness = 'codex'`. They have no `source`, because `source` identifies only
-Claude config roots. `--source` therefore never excludes Codex rows.
+Claude config roots. When cq runs inside Codex, it automatically filters normal
+commands to `harness = 'codex'` and skips Claude's automatic source selection.
+Use `--all` to span harnesses or `--harness codex` outside Codex. An explicit
+`--source` selects Claude rows and cannot be combined with `--harness`.
 
 Codex does not currently map hook events or collaboration/subagent state into
 cq's Claude-oriented columns. Those views remain empty or `NULL` for Codex

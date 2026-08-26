@@ -76,6 +76,10 @@ pub fn run(
         conditions.push(crate::scope::source_filter_sql("s."));
         params.push(Box::new(source.clone()));
     }
+    if let Some(harness) = &scope.harness {
+        conditions.push(crate::scope::harness_filter_sql("s."));
+        params.push(Box::new(harness.clone()));
+    }
 
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -121,15 +125,23 @@ pub fn run(
 
             // Fetch skills for this (source, project): a Skill tool_call in one
             // source must not inflate another source's skill list.
-            let skill_sql = "SELECT DISTINCT json_extract_string(input, '$.skill') as skill
+            let skill_harness_filter = if scope.harness.is_some() {
+                "AND harness = ?"
+            } else {
+                ""
+            };
+            let skill_sql = format!(
+                "SELECT DISTINCT json_extract_string(input, '$.skill') as skill
                 FROM tool_calls
-                WHERE name = 'Skill' AND project = ? AND source = ?
-                ORDER BY skill";
-            let mut skill_stmt = conn.prepare(skill_sql)?;
-            let mut skill_iter = skill_stmt.query([
-                &project as &dyn duckdb::types::ToSql,
-                &source as &dyn duckdb::types::ToSql,
-            ])?;
+                WHERE name = 'Skill' AND project = ? AND source = ? {skill_harness_filter}
+                ORDER BY skill"
+            );
+            let mut skill_stmt = conn.prepare(&skill_sql)?;
+            let mut skill_params: Vec<&dyn duckdb::types::ToSql> = vec![&project, &source];
+            if let Some(harness) = &scope.harness {
+                skill_params.push(harness);
+            }
+            let mut skill_iter = skill_stmt.query(&skill_params[..])?;
             let mut skills: Vec<String> = Vec::new();
             while let Some(skill_row) = skill_iter.next()? {
                 let s = skill_row.get::<_, String>(0).unwrap_or_default();
@@ -163,11 +175,14 @@ pub fn run(
     //
     // The CTE always groups skills by (source, project). The join key includes
     // source so a Skill call in one source can't inflate another source's count.
-    let skill_cte_filter = if scope.source.is_some() {
-        "AND (harness != 'claude' OR source = ?)"
-    } else {
-        ""
-    };
+    let mut skill_cte_filters = Vec::new();
+    if scope.source.is_some() {
+        skill_cte_filters.push("AND source = ?");
+    }
+    if scope.harness.is_some() {
+        skill_cte_filters.push("AND harness = ?");
+    }
+    let skill_cte_filter = skill_cte_filters.join(" ");
 
     // Params in SQL-text order: 1) CTE source filter (if scoped), 2) outer WHERE
     // params (project ILIKE, then outer source) as already collected in `params`.
@@ -175,11 +190,17 @@ pub fn run(
     if let Some(source) = &scope.source {
         agg_params.push(Box::new(source.clone()));
     }
+    if let Some(harness) = &scope.harness {
+        agg_params.push(Box::new(harness.clone()));
+    }
     if let Some(project) = &scope.project {
         agg_params.push(Box::new(format!("%{project}%")));
     }
     if let Some(source) = &scope.source {
         agg_params.push(Box::new(source.clone()));
+    }
+    if let Some(harness) = &scope.harness {
+        agg_params.push(Box::new(harness.clone()));
     }
 
     let sql = format!(
@@ -241,7 +262,12 @@ pub fn run(
             .iter()
             .map(|r| (r.source.as_str(), r.project.as_str()))
             .collect();
-        fetch_skills(conn, scope.source.as_deref(), &pairs)?
+        fetch_skills(
+            conn,
+            scope.source.as_deref(),
+            scope.harness.as_deref(),
+            &pairs,
+        )?
     } else {
         vec![]
     };
@@ -284,19 +310,24 @@ pub fn run(
 fn fetch_skills(
     conn: &Connection,
     source_filter: Option<&str>,
+    harness_filter: Option<&str>,
     pairs: &[(&str, &str)],
 ) -> Result<Vec<SkillRow>> {
     if pairs.is_empty() {
         return Ok(vec![]);
     }
 
-    let (filter_sql, params): (&str, Vec<Box<dyn duckdb::types::ToSql>>) = match source_filter {
-        Some(src) => (
-            "AND (harness != 'claude' OR source = ?)",
-            vec![Box::new(src.to_string())],
-        ),
-        None => ("", vec![]),
-    };
+    let mut filter_parts = Vec::new();
+    let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
+    if let Some(source) = source_filter {
+        filter_parts.push("AND source = ?");
+        params.push(Box::new(source.to_string()));
+    }
+    if let Some(harness) = harness_filter {
+        filter_parts.push("AND harness = ?");
+        params.push(Box::new(harness.to_string()));
+    }
+    let filter_sql = filter_parts.join(" ");
 
     let sql = format!(
         "SELECT source, project, json_extract_string(input, '$.skill') as skill
