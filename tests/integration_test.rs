@@ -40,6 +40,10 @@ fn cq_cmd(env: &TestEnv) -> Command {
     cmd.env("CQ_CODEX_SESSIONS_DIR", env.codex_sessions.path());
     // Isolate from any real cenv envs on the host so only CQ_PROJECTS_DIR is indexed.
     cmd.env("CENV_BASE", env.cache.path().join("no-such-cenv-base"));
+    // Test commands should exercise their chosen runtime explicitly, rather
+    // than inheriting the Codex session that happens to run the test suite.
+    cmd.env_remove("CODEX_SESSION_ID");
+    cmd.env_remove("CODEX_THREAD_ID");
     cmd.env("NO_COLOR", "1");
     cmd
 }
@@ -127,9 +131,8 @@ fn sessions_list() {
 fn codex_sessions_and_tools_are_queryable() {
     let env = setup_codex_env();
 
-    // The normal default source scope is Claude-only; Codex remains visible
-    // because it has no Claude source dimension.
     cq_cmd(&env)
+        .env("CODEX_SESSION_ID", "test-codex-session")
         .arg("sessions")
         .assert()
         .success()
@@ -145,6 +148,63 @@ fn codex_sessions_and_tools_are_queryable() {
         .stdout(predicate::str::contains("codex"))
         .stdout(predicate::str::contains("codex-project"))
         .stdout(predicate::str::contains("2"));
+}
+
+#[test]
+fn codex_runtime_scopes_to_codex_unless_all_is_requested() {
+    let env = setup_env(&["simple_session.jsonl"]);
+    let rollout_dir = env.codex_sessions.path().join("2026/08/26");
+    std::fs::create_dir_all(&rollout_dir).unwrap();
+    std::fs::copy(
+        fixture_path("codex_session.jsonl"),
+        rollout_dir.join("rollout-2026-08-26T14-00-00-session.jsonl"),
+    )
+    .unwrap();
+
+    cq_cmd(&env)
+        .env("CODEX_THREAD_ID", "test-codex-thread")
+        .arg("sessions")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("019a1b2c"))
+        .stdout(predicate::str::contains("sess-001").not());
+
+    cq_cmd(&env)
+        .env("CODEX_THREAD_ID", "test-codex-thread")
+        .args(["--json", "sessions"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("019a1b2c"))
+        .stdout(predicate::str::contains("sess-001").not());
+
+    cq_cmd(&env)
+        .env("CODEX_THREAD_ID", "test-codex-thread")
+        .args(["--all", "sessions"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("019a1b2c"))
+        .stdout(predicate::str::contains("sess-001"));
+}
+
+#[test]
+fn harness_and_source_cannot_be_combined() {
+    let env = setup_env(&[]);
+    cq_cmd(&env)
+        .args(["--harness", "codex", "--source", "main", "sessions"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn raw_sql_does_not_claim_automatic_scope() {
+    let env = setup_codex_env();
+    cq_cmd(&env)
+        .env("CODEX_SESSION_ID", "test-codex-session")
+        .args(["sql", "SELECT count(*) AS sessions FROM sessions"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Scoped to harness").not());
 }
 
 #[test]
@@ -2030,6 +2090,8 @@ fn multi_cmd(env: &MultiSourceEnv) -> Command {
         env.cache.path().join("no-such-codex-sessions"),
     );
     cmd.env("CENV_BASE", env.cenv_base.path());
+    cmd.env_remove("CODEX_SESSION_ID");
+    cmd.env_remove("CODEX_THREAD_ID");
     cmd.env("NO_COLOR", "1");
     cmd
 }

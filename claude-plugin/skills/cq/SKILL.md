@@ -24,8 +24,9 @@ user_invocable: true
 - `--project <NAME>` - Substring match on project name
 - `--session <ID>` - Session ID (full UUID required, validates format)
 - `--source <NAME>` - Scope to a named source (`main`, or a cenv env name); use `--all` to span every source. Every row carries a `source` column.
-- `--all` - Show all projects and all sources (disable auto-scoping)
-- `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`); applies to `sessions`/`tools`/`messages`, not `cq sql` (raw SQL ignores scope flags)
+- `--harness <NAME>` - Scope to `claude` or `codex`; cannot combine with `--source`. In Codex, cq automatically selects `codex` unless `--all` is set.
+- `--all` - Show all projects, sources, and harnesses (disable auto-scoping)
+- `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`); applies to `sessions`/`tools`/`messages`, not `cq sql` (raw SQL ignores all scope flags)
 - `--json` - Machine-readable JSON output
 - `--table` - Aligned table with header
 - `--limit <N>` - Max results (default 50, 0 for unlimited)
@@ -39,13 +40,13 @@ user_invocable: true
 
 ## View Schemas
 
-**sessions**: session_id, project, source, started_at, ended_at, message_count, tool_call_count, user_message_count, subagent_count, first_user_message (counts are main-loop only)
+**sessions**: session_id, project, source, harness, started_at, ended_at, message_count, tool_call_count, user_message_count, subagent_count, first_user_message (counts are main-loop only)
 
-**messages**: session_id, project, source, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id
+**messages**: session_id, project, source, harness, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id
 
-**tool_calls**: session_id, project, source, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` invocations appear here too, with `name = 'advisor'` (they use a `server_tool_use` block under the hood, not the standard `tool_use`).
+**tool_calls**: session_id, project, source, harness, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` invocations appear here too, with `name = 'advisor'` (they use a `server_tool_use` block under the hood, not the standard `tool_use`).
 
-**tool_results**: session_id, project, source, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` results appear here with `content` already unwrapped to the advisor's text.
+**tool_results**: session_id, project, source, harness, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` results appear here with `content` already unwrapped to the advisor's text.
 
 Subagent rows carry the parent `session_id`. Filter with `WHERE NOT is_sidechain` (main loop), `WHERE is_sidechain` (subagents), `WHERE agent_type = 'Explore'`, or `WHERE workflow_id IS NOT NULL`.
 

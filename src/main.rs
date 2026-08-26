@@ -1,13 +1,28 @@
 use std::io::IsTerminal;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use cq::claude_provider::ClaudeProvider;
 use cq::codex_provider::CodexProvider;
 use cq::commands::{hooks, messages, projects, schema, sessions, sql, tools};
 use cq::db;
 use cq::output::OutputFormat;
 use cq::scope::QueryScope;
+
+#[derive(Clone, Debug, ValueEnum)]
+enum Harness {
+    Claude,
+    Codex,
+}
+
+impl Harness {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -56,9 +71,13 @@ struct Cli {
     #[arg(long, global = true)]
     all: bool,
 
-    /// Scope to a named source (e.g. 'main', or a cenv env name). Spans all sources with --all.
+    /// Scope to a named Claude source (e.g. 'main', or a cenv env name)
     #[arg(long, global = true)]
     source: Option<String>,
+
+    /// Scope to a transcript harness (claude or codex)
+    #[arg(long, global = true, value_enum, conflicts_with = "source")]
+    harness: Option<Harness>,
 
     /// Maximum number of results (0 for unlimited)
     #[arg(long, global = true, default_value_t = 50)]
@@ -233,10 +252,11 @@ fn main() -> Result<()> {
 
     // Auto-scope to current project if no explicit --project and not --all
     let is_projects_cmd = matches!(cli.command, Command::Projects { .. });
+    let is_sql_cmd = matches!(cli.command, Command::Sql { .. });
 
     let (project, auto_scoped) = if cli.project.is_some() {
         (cli.project, false)
-    } else if cli.all || cli.json || is_projects_cmd {
+    } else if cli.all || cli.json || is_projects_cmd || is_sql_cmd {
         (None, false)
     } else {
         match std::env::var("PWD").ok() {
@@ -258,11 +278,34 @@ fn main() -> Result<()> {
         }
     }
 
+    // Harness scope: explicit --harness wins; else infer Codex from its runtime
+    // session identifiers. --all intentionally spans harnesses.
+    let (harness, harness_auto) = if let Some(harness) = cli.harness.as_ref() {
+        (Some(harness.as_str().to_string()), false)
+    } else if cli.all || is_sql_cmd {
+        (None, false)
+    } else {
+        let active = cq::scope::active_harness();
+        let inferred = active.is_some();
+        (active, inferred)
+    };
+    if harness_auto && !cli.json {
+        eprintln!(
+            "{}",
+            cq::style::hint("Scoped to harness 'codex' (use --all to span harnesses)")
+        );
+    }
+
     // Source scope: explicit --source wins; else auto-scope to the active source
     // (the one matching CLAUDE_CONFIG_DIR), unless --all/--json/projects.
     let (source, source_auto) = if cli.source.is_some() {
         (cli.source.clone(), false)
-    } else if cli.all || cli.json || is_projects_cmd {
+    } else if cli.all
+        || cli.json
+        || is_projects_cmd
+        || is_sql_cmd
+        || harness.as_deref() == Some("codex")
+    {
         (None, false)
     } else {
         let active = std::env::var("CLAUDE_CONFIG_DIR")
@@ -283,7 +326,9 @@ fn main() -> Result<()> {
         }
     }
 
-    let scope = QueryScope::new(project, cli.session, cli.since).with_source(source);
+    let scope = QueryScope::new(project, cli.session, cli.since)
+        .with_source(source)
+        .with_harness(harness);
 
     let sync_mode = if cli.reindex {
         db::SyncMode::Force
