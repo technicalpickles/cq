@@ -227,6 +227,9 @@ pub fn print_no_results(scope: &crate::scope::QueryScope, extra_filters: &[&str]
     if scope.source.is_some() {
         active.push("--source".to_string());
     }
+    if scope.harness.is_some() {
+        active.push("--harness".to_string());
+    }
     for f in extra_filters {
         active.push(f.to_string());
     }
@@ -274,7 +277,7 @@ pub fn print_truncation_hint(
 
 /// Build the parameter vector corresponding to the scope WHERE clause fragments
 /// used in the `ordered` CTE and `matches_subquery`. Order matters, must match the
-/// order in which scope_conditions are pushed: project, then session, then source.
+/// order in which scope_conditions are pushed: project, session, source, harness.
 /// `since` is inlined into the SQL string so it contributes no params.
 pub fn build_scope_params(scope: &crate::scope::QueryScope) -> Vec<Box<dyn duckdb::types::ToSql>> {
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = Vec::new();
@@ -286,6 +289,9 @@ pub fn build_scope_params(scope: &crate::scope::QueryScope) -> Vec<Box<dyn duckd
     }
     if let Some(source) = &scope.source {
         params.push(Box::new(source.clone()));
+    }
+    if let Some(harness) = &scope.harness {
+        params.push(Box::new(harness.clone()));
     }
     params
 }

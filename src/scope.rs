@@ -31,6 +31,7 @@ pub struct QueryScope {
     pub session: Option<String>,
     pub since: Option<String>,
     pub source: Option<String>,
+    pub harness: Option<String>,
 }
 
 impl QueryScope {
@@ -40,12 +41,19 @@ impl QueryScope {
             session,
             since,
             source: None,
+            harness: None,
         }
     }
 
     /// Set the source filter (builder style so existing `new` callers are untouched).
     pub fn with_source(mut self, source: Option<String>) -> Self {
         self.source = source;
+        self
+    }
+
+    /// Set the transcript harness filter (for example, `claude` or `codex`).
+    pub fn with_harness(mut self, harness: Option<String>) -> Self {
+        self.harness = harness;
         self
     }
 
@@ -82,11 +90,34 @@ impl QueryScope {
     }
 }
 
-/// SQL predicate for CQ's Claude-only `--source` dimension. Other harnesses
-/// do not have Claude sources, so they remain in scope when a source is chosen.
+/// SQL predicate for CQ's Claude-only `--source` dimension.
 /// `prefix` is an optional relation prefix such as `"tc."`.
 pub fn source_filter_sql(prefix: &str) -> String {
-    format!("({prefix}harness != 'claude' OR {prefix}source = ?)")
+    format!("{prefix}source = ?")
+}
+
+/// SQL predicate for CQ's top-level transcript harness dimension.
+/// `prefix` is an optional relation prefix such as `"tc."`.
+pub fn harness_filter_sql(prefix: &str) -> String {
+    format!("{prefix}harness = ?")
+}
+
+/// True when the process is running inside a Codex session. Either variable is
+/// sufficient because the Codex runtime has used both identifiers.
+pub fn is_codex_runtime(session_id: Option<&str>, thread_id: Option<&str>) -> bool {
+    [session_id, thread_id]
+        .into_iter()
+        .flatten()
+        .any(|value| !value.is_empty())
+}
+
+/// Return the active harness inferred from runtime metadata, if any.
+pub fn active_harness() -> Option<String> {
+    is_codex_runtime(
+        std::env::var("CODEX_SESSION_ID").ok().as_deref(),
+        std::env::var("CODEX_THREAD_ID").ok().as_deref(),
+    )
+    .then(|| "codex".to_string())
 }
 
 #[cfg(test)]
@@ -150,5 +181,13 @@ mod tests {
     #[test]
     fn validate_session_id_empty() {
         assert!(validate_session_id("").is_err());
+    }
+
+    #[test]
+    fn detects_codex_runtime_from_either_identifier() {
+        assert!(is_codex_runtime(Some("session"), None));
+        assert!(is_codex_runtime(None, Some("thread")));
+        assert!(!is_codex_runtime(Some(""), Some("")));
+        assert!(!is_codex_runtime(None, None));
     }
 }
