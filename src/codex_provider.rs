@@ -5,22 +5,20 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::{Path, PathBuf};
 
-/// Reads the JSONL rollout transcripts written by Codex. The root can be
-/// overridden for testing or a nonstandard Codex installation with
-/// `CQ_CODEX_SESSIONS_DIR`.
+/// Reads the JSONL rollout transcripts written by Codex. The session root is
+/// derived from `CODEX_HOME` when set, and can be explicitly overridden for
+/// testing or nonstandard storage with `CQ_CODEX_SESSIONS_DIR`.
 pub struct CodexProvider {
     sessions_dir: PathBuf,
 }
 
 impl CodexProvider {
     pub fn new() -> Result<Self> {
-        let sessions_dir = match std::env::var("CQ_CODEX_SESSIONS_DIR") {
-            Ok(dir) => PathBuf::from(dir),
-            Err(_) => dirs::home_dir()
-                .context("Could not determine home directory")?
-                .join(".codex")
-                .join("sessions"),
-        };
+        let sessions_dir = resolve_sessions_dir(
+            std::env::var_os("CQ_CODEX_SESSIONS_DIR").map(PathBuf::from),
+            std::env::var_os("CODEX_HOME").map(PathBuf::from),
+            dirs::home_dir(),
+        )?;
         Ok(Self { sessions_dir })
     }
 
@@ -31,6 +29,25 @@ impl CodexProvider {
     pub fn sessions_dir(&self) -> &Path {
         &self.sessions_dir
     }
+}
+
+/// Resolve the Codex transcript directory with explicit cq configuration
+/// taking precedence over Codex's own home-directory setting.
+fn resolve_sessions_dir(
+    cq_sessions_dir: Option<PathBuf>,
+    codex_home: Option<PathBuf>,
+    home_dir: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(dir) = cq_sessions_dir {
+        return Ok(dir);
+    }
+    if let Some(home) = codex_home {
+        return Ok(home.join("sessions"));
+    }
+    Ok(home_dir
+        .context("Could not determine home directory")?
+        .join(".codex")
+        .join("sessions"))
 }
 
 impl TranscriptProvider for CodexProvider {
@@ -94,6 +111,35 @@ mod tests {
     use crate::sync_scope::SyncScope;
     use crate::views;
     use tempfile::TempDir;
+
+    #[test]
+    fn session_directory_uses_explicit_cq_override_first() {
+        let cq_override = PathBuf::from("/cq-sessions");
+        let resolved = resolve_sessions_dir(
+            Some(cq_override.clone()),
+            Some(PathBuf::from("/codex-home")),
+            Some(PathBuf::from("/user-home")),
+        )
+        .unwrap();
+        assert_eq!(resolved, cq_override);
+    }
+
+    #[test]
+    fn session_directory_derives_from_codex_home() {
+        let resolved = resolve_sessions_dir(
+            None,
+            Some(PathBuf::from("/custom-codex")),
+            Some(PathBuf::from("/user-home")),
+        )
+        .unwrap();
+        assert_eq!(resolved, PathBuf::from("/custom-codex/sessions"));
+    }
+
+    #[test]
+    fn session_directory_falls_back_to_default_codex_home() {
+        let resolved = resolve_sessions_dir(None, None, Some(PathBuf::from("/user-home"))).unwrap();
+        assert_eq!(resolved, PathBuf::from("/user-home/.codex/sessions"));
+    }
 
     #[test]
     fn discovers_rollout_files_recursively() {

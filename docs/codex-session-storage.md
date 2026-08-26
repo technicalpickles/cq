@@ -1,8 +1,9 @@
 # Codex session storage
 
-Codex writes one JSONL rollout transcript per session under `~/.codex/sessions/`,
-organized by date. cq discovers those files recursively; set
-`CQ_CODEX_SESSIONS_DIR` to use a different root.
+Codex writes one JSONL rollout transcript per session under
+`$CODEX_HOME/sessions/` (default: `~/.codex/sessions/`), organized by date. cq
+discovers those files recursively. `CQ_CODEX_SESSIONS_DIR` overrides that
+location for cq only.
 
 Each file combines session metadata with response items:
 

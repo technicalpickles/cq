@@ -125,7 +125,7 @@ When Claude is the active harness, cq scopes to the **active** Claude source (th
 
 ## Codex sessions
 
-Codex transcripts are discovered recursively from `~/.codex/sessions/`. Set `CQ_CODEX_SESSIONS_DIR` to point cq at a different session root. Codex rows have `harness = 'codex'` and no `source`.
+Codex transcripts are discovered recursively from `$CODEX_HOME/sessions` (default: `~/.codex/sessions/`). Set `CQ_CODEX_SESSIONS_DIR` to override that location for cq only. Codex rows have `harness = 'codex'` and no `source`.
 
 Built-in commands select the active harness by default: `harness = 'codex'` inside a Codex session and `harness = 'claude'` everywhere else. Codex selection skips Claude's automatic source scope. Use `--all` to span harnesses, or `--harness claude` / `--harness codex` to choose one explicitly. `--source` selects Claude rows only, so it cannot be combined with `--harness`. `cq sql` is raw SQL and ignores all scope flags.
 
