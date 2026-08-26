@@ -10,7 +10,7 @@ This shapes everything from how indexing works (lazy, not eager) to what we opti
 
 ## Auto-scope to the current project, escape to global
 
-Most CQ questions happen inside a project: "what did I do in this repo today," "which sessions touched this codebase." When you run cq from a directory that matches a known project, cq auto-scopes to that project and prints the scope on stderr. `--all` escapes to global when you want everything.
+Most CQ questions happen inside a project: "what did I do in this repo today," "which sessions touched this codebase." When you run cq from a directory that matches a known project, cq auto-scopes to that project and prints the scope on stderr. `--all` removes inferred scope when you want to broaden the query; explicit filters still apply.
 
 This makes the common case fast and obvious, without hiding the rest. The scope hint on stderr means you always see what's being matched, and piping still gets clean stdout.
 
@@ -30,8 +30,9 @@ Scope affects both what data is queried and how much work the indexer does. Sync
 Built-in commands select `harness = 'codex'` inside a Codex runtime and
 `harness = 'claude'` everywhere else. This keeps a normal query focused on the
 tool the user is currently using, without relying on Codex rows having no
-Claude `source`. `--harness` explicitly chooses one harness, while `--all`
-spans them. `cq sql` is deliberately raw and never receives automatic scope.
+Claude `source`. `--harness` explicitly chooses one harness. `--all` removes
+the inferred project, source, and harness filters while preserving explicit
+filters. `cq sql` is deliberately raw and never receives automatic scope.
 
 ## Stale-but-available beats error
 

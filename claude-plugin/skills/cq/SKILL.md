@@ -83,9 +83,9 @@ LIMIT 20;
 - `--grep` can be repeated for an OR search (`--grep foo --grep bar` matches either), so a multi-term keyword sweep doesn't need to drop to raw SQL with a chain of `ILIKE ... OR ILIKE ...`.
 - `tools --grep` searches the tool call's input (what was asked for); `tools --result-grep` searches the tool result's content (what came back, e.g. error text or output). Before `--result-grep` existed, searching result content required a raw `tool_calls JOIN tool_results` query — reach for `cq sql` only if you also need aggregation across that join, not just a text match.
 - `--since` filters the convenience subcommands (`sessions`, `tools`, `messages`), but NOT `cq sql`: raw SQL runs verbatim and ignores `--since`/`--project`/`--session`. On `cq sql`, filter time with a string comparison instead, e.g. `WHERE timestamp >= '2026-05-28'`. cq uses DuckDB, not SQLite, so SQLite functions like `datetime()` will not work. Do NOT reach for `WHERE timestamp > now() - INTERVAL N DAY`: it errors (see Tips below).
-- `cq` auto-scopes to the current directory's project. The scope hint shows which path is being matched.
+- `cq` infers current-context scope from the current project, active Claude source, and active harness. The scope hint shows which context is being matched.
 - Use `--project <name>` to query a different project (substring match, searches all project directories).
-- Use `--all` to disable auto-scoping entirely and query across all projects.
+- Use `--all` to remove inferred current-context scope and query more broadly. Explicit filters still apply.
 - When searching for work done in a different repo (e.g. karafka sessions while in pickleton), use `--project <name>` or `--all`. Auto-scoping only matches sessions from the current directory's project.
 - `cq projects` always shows all projects regardless of auto-scoping, so you can see what's available.
 

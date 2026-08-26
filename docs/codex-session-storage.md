@@ -16,9 +16,10 @@ Codex rows are stored in cq's normal JSONL cache and exposed with
 `harness = 'codex'`. They have no `source`, because `source` identifies only
 Claude config roots. Built-in commands default to `harness = 'codex'` inside a
 Codex runtime and `harness = 'claude'` everywhere else. Codex selection skips
-Claude's automatic source selection. Use `--all` to span harnesses or
-`--harness codex` outside Codex. An explicit `--source` selects Claude rows and
-cannot be combined with `--harness`.
+Claude's automatic source selection. `--all` removes inferred project, source,
+and harness scope; `--harness codex` selects Codex outside its runtime. An
+explicit `--source` selects Claude rows and cannot be combined with
+`--harness`.
 
 Codex does not currently map hook events or collaboration/subagent state into
 cq's Claude-oriented columns. Those views remain empty or `NULL` for Codex
