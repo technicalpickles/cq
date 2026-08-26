@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use cq::claude_provider::ClaudeProvider;
+use cq::codex_provider::CodexProvider;
 use cq::commands::{hooks, messages, projects, schema, sessions, sql, tools};
 use cq::db;
 use cq::output::OutputFormat;
@@ -294,28 +295,36 @@ fn main() -> Result<()> {
 
     let options = db::DbOptions { sync_mode };
 
-    let sources: Vec<(String, std::path::PathBuf)> = provider
+    let mut sources: Vec<(String, std::path::PathBuf)> = provider
         .sources()
         .iter()
         .map(|s| (s.name.clone(), s.projects_dir.clone()))
         .collect();
+    let codex_provider = CodexProvider::new()?;
+    sources.push((
+        "codex".to_string(),
+        codex_provider.sessions_dir().to_path_buf(),
+    ));
 
-    let sync_scope = if cli.reindex {
-        cq::sync_scope::SyncScope::All
-    } else if let Some(ref p) = scope.project {
-        let dirs = provider.project_dirs_for_query(p);
-        if dirs.is_empty() {
+    let sync_scope =
+        if cli.reindex || (scope.project.is_some() && codex_provider.sessions_dir().is_dir()) {
             cq::sync_scope::SyncScope::All
+        } else if let Some(ref p) = scope.project {
+            let dirs = provider.project_dirs_for_query(p);
+            if dirs.is_empty() {
+                cq::sync_scope::SyncScope::All
+            } else {
+                cq::sync_scope::SyncScope::Projects(dirs)
+            }
         } else {
-            cq::sync_scope::SyncScope::Projects(dirs)
-        }
-    } else {
-        cq::sync_scope::SyncScope::All
-    };
+            cq::sync_scope::SyncScope::All
+        };
 
     let start = std::time::Instant::now();
-    let providers: Vec<Box<dyn cq::provider::TranscriptProvider>> =
-        vec![Box::new(cq::claude_provider::ClaudeProvider::new()?)];
+    let providers: Vec<Box<dyn cq::provider::TranscriptProvider>> = vec![
+        Box::new(cq::claude_provider::ClaudeProvider::new()?),
+        Box::new(codex_provider),
+    ];
     let db_setup = db::setup_connection(&providers, &sources, &options, sync_scope)?;
     let elapsed = start.elapsed();
     if db_setup.lock_busy {

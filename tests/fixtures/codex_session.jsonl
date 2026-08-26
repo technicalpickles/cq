@@ -1,0 +1,14 @@
+{"timestamp":"2026-08-26T14:00:00.000Z","type":"session_meta","payload":{"id":"019a1b2c-3d4e-7f80-9a0b-1c2d3e4f5a6b","session_id":"019a1b2c-3d4e-7f80-9a0b-1c2d3e4f5a6b","cwd":"/Users/test/codex-project","model_provider":"openai"}}
+{"timestamp":"2026-08-26T14:00:00.100Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/Users/test/codex-project","model":"gpt-5-codex"}}
+{"timestamp":"2026-08-26T14:00:00.200Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":"2026-08-26T14:00:00.200Z","model_context_window":272000,"collaboration_mode_kind":"default"}}
+{"timestamp":"2026-08-26T14:00:00.300Z","type":"response_item","payload":{"type":"message","id":"msg-developer-1","role":"developer","content":[{"type":"input_text","text":"redacted developer instructions"}]}}
+{"timestamp":"2026-08-26T14:00:01.000Z","type":"response_item","payload":{"type":"message","id":"msg-user-1","role":"user","content":[{"type":"input_text","text":"list the files"}]}}
+{"timestamp":"2026-08-26T14:00:01.100Z","type":"response_item","payload":{"type":"reasoning","id":"reasoning-1","encrypted_content":"redacted","summary":[]}}
+{"timestamp":"2026-08-26T14:00:02.000Z","type":"response_item","payload":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"exec_command","arguments":"{\"cmd\":\"ls\"}"}}
+{"timestamp":"2026-08-26T14:00:03.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"Cargo.toml\\nsrc"}}
+{"timestamp":"2026-08-26T14:00:04.000Z","type":"response_item","payload":{"type":"message","id":"msg-assistant-1","role":"assistant","content":[{"type":"output_text","text":"The project has a Cargo manifest and source directory."}]}}
+{"timestamp":"2026-08-26T14:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-2","name":"plugin_lookup","input":"{\"query\":\"git\"}"}}
+{"timestamp":"2026-08-26T14:00:06.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-2","output":[{"type":"text","text":"No plugin found"}]}}
+{"timestamp":"2026-08-26T14:00:06.100Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"019a1b2c-3d4e-7f80-9a0b-1c2d3e4f5a6b","turn_id":"turn-1","started_at_ms":1787752806100,"completed_at_ms":1787752806100,"item":{"type":"CommandExecution"}}}
+{"timestamp":"2026-08-26T14:00:06.200Z","type":"world_state","payload":{"state":"redacted","full":false}}
+{"timestamp":"2026-08-26T14:00:06.300Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","started_at":"2026-08-26T14:00:00.200Z","completed_at":"2026-08-26T14:00:06.300Z","duration_ms":6100,"time_to_first_token_ms":100,"last_agent_message":"fixture complete"}}

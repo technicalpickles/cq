@@ -61,9 +61,9 @@ total_sessions  used_skill  bypassed
 
 ---
 
-**TITLE CARD:** SQL for your Claude Code sessions.
+**TITLE CARD:** SQL for your AI coding sessions.
 
-cq indexes Claude Code's JSONL session transcripts into a local [DuckDB](https://duckdb.org/) cache at `~/.cache/cq/` and gives you SQL views to query against. Incremental sync keeps it fresh on each run, so you only pay the full-parse cost once. Built-in commands handle the common stuff, and `cq sql` lets you run whatever you want.
+cq indexes Claude Code and Codex JSONL session transcripts into a local [DuckDB](https://duckdb.org/) cache at `~/.cache/cq/` and gives you SQL views to query against. Incremental sync keeps it fresh on each run, so you only pay the full-parse cost once. Built-in commands handle the common stuff, and `cq sql` lets you run whatever you want.
 
 ## Install
 
@@ -110,7 +110,7 @@ Run `cq schema --examples` for a query cookbook.
 | `-B N` | | Show N messages before each match (messages, tools) |
 | `-C N` | | Shorthand for `-A N -B N` (messages, tools) |
 
-## Sources
+## Claude sources
 
 cq indexes multiple transcript **sources**: the main config dir (`~/.claude/projects`, or `$CQ_PROJECTS_DIR`) plus every cenv env's `projects/` (discovered under `$CENV_BASE`, default `~/.local/share/cenv`). A cenv env is one kind of source; cq never shells out to cenv.
 
@@ -122,6 +122,10 @@ By default cq scopes to the **active** source (the one matching `$CLAUDE_CONFIG_
 | `--source <name>` | Target one source by name (e.g. `main`, or a cenv env name) |
 | `--all` | Span all sources |
 
+## Codex sessions
+
+Codex transcripts are discovered recursively from `~/.codex/sessions/`. Set `CQ_CODEX_SESSIONS_DIR` to point cq at a different session root. Codex rows have `harness = 'codex'` and no `source`: `--source` intentionally scopes only Claude's config roots.
+
 ## Views
 
 Five SQL views, all queryable with `cq sql`:
@@ -132,7 +136,7 @@ Five SQL views, all queryable with `cq sql`:
 - **tool_results** - one row per tool response, with an error flag
 - **hook_events** - one row per hook injection - SessionStart context, PreToolUse/PostToolUse output - fanned out per plugin for `hook_additional_context` records
 
-Subagent activity is indexed too: `messages`, `tool_calls`, and `tool_results` carry `is_sidechain`, `agent_id`, `agent_type`, and `workflow_id` so you can include, exclude, or focus subagents. `cq sessions` stays main-loop-only.
+Every view includes a `harness` column (`claude` or `codex`). Subagent activity is indexed for Claude Code: `messages`, `tool_calls`, and `tool_results` carry `is_sidechain`, `agent_id`, `agent_type`, and `workflow_id` so you can include, exclude, or focus subagents. `cq sessions` stays main-loop-only.
 
 Run `cq schema` for full column details.
 

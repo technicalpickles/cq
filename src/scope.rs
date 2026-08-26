@@ -82,6 +82,13 @@ impl QueryScope {
     }
 }
 
+/// SQL predicate for CQ's Claude-only `--source` dimension. Other harnesses
+/// do not have Claude sources, so they remain in scope when a source is chosen.
+/// `prefix` is an optional relation prefix such as `"tc."`.
+pub fn source_filter_sql(prefix: &str) -> String {
+    format!("({prefix}harness != 'claude' OR {prefix}source = ?)")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

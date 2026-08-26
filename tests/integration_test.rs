@@ -11,6 +11,7 @@ fn fixture_path(name: &str) -> PathBuf {
 
 struct TestEnv {
     projects: TempDir,
+    codex_sessions: TempDir,
     cache: TempDir,
 }
 
@@ -23,18 +24,36 @@ fn setup_env(fixtures: &[&str]) -> TestEnv {
         let dest = project_dir.join(fixture);
         std::fs::copy(&src, &dest).unwrap();
     }
+    let codex_sessions = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();
-    TestEnv { projects, cache }
+    TestEnv {
+        projects,
+        codex_sessions,
+        cache,
+    }
 }
 
 fn cq_cmd(env: &TestEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
     cmd.env("CQ_CACHE_DIR", env.cache.path());
+    cmd.env("CQ_CODEX_SESSIONS_DIR", env.codex_sessions.path());
     // Isolate from any real cenv envs on the host so only CQ_PROJECTS_DIR is indexed.
     cmd.env("CENV_BASE", env.cache.path().join("no-such-cenv-base"));
     cmd.env("NO_COLOR", "1");
     cmd
+}
+
+fn setup_codex_env() -> TestEnv {
+    let env = setup_env(&[]);
+    let rollout_dir = env.codex_sessions.path().join("2026/08/26");
+    std::fs::create_dir_all(&rollout_dir).unwrap();
+    std::fs::copy(
+        fixture_path("codex_session.jsonl"),
+        rollout_dir.join("rollout-2026-08-26T14-00-00-session.jsonl"),
+    )
+    .unwrap();
+    env
 }
 
 #[test]
@@ -102,6 +121,30 @@ fn sessions_list() {
         .assert()
         .success()
         .stdout(predicate::str::contains("sess-001"));
+}
+
+#[test]
+fn codex_sessions_and_tools_are_queryable() {
+    let env = setup_codex_env();
+
+    // The normal default source scope is Claude-only; Codex remains visible
+    // because it has no Claude source dimension.
+    cq_cmd(&env)
+        .arg("sessions")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("019a1b2c"));
+
+    cq_cmd(&env)
+        .args([
+            "sql",
+            "SELECT harness, project, count(*) AS tools FROM tool_calls GROUP BY harness, project",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("codex"))
+        .stdout(predicate::str::contains("codex-project"))
+        .stdout(predicate::str::contains("2"));
 }
 
 #[test]
@@ -215,7 +258,11 @@ fn json_output() {
 fn no_files_no_error() {
     let projects = TempDir::new().unwrap();
     let cache = TempDir::new().unwrap();
-    let env = TestEnv { projects, cache };
+    let env = TestEnv {
+        projects,
+        codex_sessions: TempDir::new().unwrap(),
+        cache,
+    };
     let output = cq_cmd(&env).arg("tools").output().unwrap();
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -284,6 +331,10 @@ fn no_color_flag() {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
     cmd.env("CQ_CACHE_DIR", env.cache.path());
+    cmd.env(
+        "CQ_CODEX_SESSIONS_DIR",
+        env.cache.path().join("no-such-codex-sessions"),
+    );
     cmd.env("CENV_BASE", env.cache.path().join("no-such-cenv-base"));
     // Explicitly unset NO_COLOR so we're testing the flag, not the env var
     cmd.env_remove("NO_COLOR");
@@ -503,7 +554,11 @@ fn auto_scope_to_current_project() {
     )
     .unwrap();
 
-    let env = TestEnv { projects, cache };
+    let env = TestEnv {
+        projects,
+        codex_sessions: TempDir::new().unwrap(),
+        cache,
+    };
 
     // Run from "myproject" dir (matches simple_session.jsonl's cwd), should auto-scope
     let output = cq_cmd(&env)
@@ -542,7 +597,11 @@ fn auto_scope_hint_shows_path() {
     )
     .unwrap();
 
-    let env = TestEnv { projects, cache };
+    let env = TestEnv {
+        projects,
+        codex_sessions: TempDir::new().unwrap(),
+        cache,
+    };
 
     let output = cq_cmd(&env)
         .env("PWD", "/Users/test/myproject")
@@ -632,7 +691,11 @@ fn projects_always_unscoped() {
     )
     .unwrap();
 
-    let env = TestEnv { projects, cache };
+    let env = TestEnv {
+        projects,
+        codex_sessions: TempDir::new().unwrap(),
+        cache,
+    };
 
     // Run from "myproject" dir. projects should still show BOTH projects.
     let output = cq_cmd(&env)
@@ -672,7 +735,11 @@ fn all_flag_overrides_auto_scope() {
     )
     .unwrap();
 
-    let env = TestEnv { projects, cache };
+    let env = TestEnv {
+        projects,
+        codex_sessions: TempDir::new().unwrap(),
+        cache,
+    };
 
     // Run with --all from myproject dir, should show sessions from BOTH projects
     let output = cq_cmd(&env)
@@ -1368,6 +1435,7 @@ fn setup_subagent_env() -> TestEnv {
 
     TestEnv {
         projects,
+        codex_sessions: TempDir::new().unwrap(),
         cache: TempDir::new().unwrap(),
     }
 }
@@ -1543,7 +1611,16 @@ fn sessions_timeline_json() {
 
 #[test]
 fn no_reindex_skips_sync() {
+    let projects = TempDir::new().unwrap();
+    let cache = TempDir::new().unwrap();
     let mut cmd = Command::cargo_bin("cq").unwrap();
+    cmd.env("CQ_PROJECTS_DIR", projects.path());
+    cmd.env("CQ_CACHE_DIR", cache.path());
+    cmd.env(
+        "CQ_CODEX_SESSIONS_DIR",
+        cache.path().join("no-such-codex-sessions"),
+    );
+    cmd.env("CENV_BASE", cache.path().join("no-such-cenv-base"));
     cmd.arg("--no-reindex")
         .arg("sessions")
         .arg("--limit")
@@ -1578,7 +1655,11 @@ fn sessions_count_by_project() {
     )
     .unwrap();
 
-    let env = TestEnv { projects, cache };
+    let env = TestEnv {
+        projects,
+        codex_sessions: TempDir::new().unwrap(),
+        cache,
+    };
     let output = cq_cmd(&env)
         .args(["sessions", "--count-by", "project"])
         .output()
@@ -1944,6 +2025,10 @@ fn multi_cmd(env: &MultiSourceEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
     cmd.env("CQ_CACHE_DIR", env.cache.path());
+    cmd.env(
+        "CQ_CODEX_SESSIONS_DIR",
+        env.cache.path().join("no-such-codex-sessions"),
+    );
     cmd.env("CENV_BASE", env.cenv_base.path());
     cmd.env("NO_COLOR", "1");
     cmd
