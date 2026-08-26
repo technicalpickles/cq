@@ -199,7 +199,6 @@ mod tests {
         assert!(!is_codex_runtime(Some(""), Some("")));
         assert!(!is_codex_runtime(None, None));
     }
-
     #[test]
     fn infers_claude_except_in_a_codex_runtime() {
         assert_eq!(inferred_harness(None, None), "claude");
