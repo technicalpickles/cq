@@ -722,6 +722,23 @@ fn auto_scope_to_current_project() {
         stderr.contains("Scoped to"),
         "Should show scope notice, got: {stderr}"
     );
+
+    // JSON changes the output format, not the inferred project scope.
+    let output = cq_cmd(&env)
+        .env("PWD", "/Users/test/myproject")
+        .args(["--json", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sess-001"),
+        "JSON should show myproject session, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("sess-002"),
+        "JSON should not show webapp session, got: {stdout}"
+    );
 }
 
 #[test]
@@ -2273,6 +2290,38 @@ fn projects_scoped_groups_by_project_only() {
         "scoped to one source the project should be a single row, got: {stdout}"
     );
     assert_eq!(myproject_rows[0]["source"].as_str(), Some("main"));
+}
+
+#[test]
+fn json_preserves_automatic_source_scope() {
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    let output = multi_cmd(&env)
+        .env(
+            "CLAUDE_CONFIG_DIR",
+            env.cenv_base.path().join(&env.env_name),
+        )
+        .args(["--json", "sessions"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.len(), 1, "expected one active-source row: {rows:?}");
+    assert_eq!(rows[0]["source"].as_str(), Some("pinwheel"));
 }
 
 #[test]

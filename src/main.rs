@@ -67,7 +67,7 @@ struct Cli {
     #[arg(long, global = true)]
     wide: bool,
 
-    /// Show all projects (disable auto-scoping to current directory)
+    /// Remove inferred current-context scope (project, source, and harness)
     #[arg(long, global = true)]
     all: bool,
 
@@ -256,7 +256,7 @@ fn main() -> Result<()> {
 
     let (project, auto_scoped) = if cli.project.is_some() {
         (cli.project, false)
-    } else if cli.all || cli.json || is_projects_cmd || is_sql_cmd {
+    } else if cli.all || is_projects_cmd || is_sql_cmd {
         (None, false)
     } else {
         match std::env::var("PWD").ok() {
@@ -299,15 +299,10 @@ fn main() -> Result<()> {
     }
 
     // Source scope: explicit --source wins; else auto-scope to the active source
-    // (the one matching CLAUDE_CONFIG_DIR), unless --all/--json/projects.
+    // (the one matching CLAUDE_CONFIG_DIR), unless --all/projects.
     let (source, source_auto) = if cli.source.is_some() {
         (cli.source.clone(), false)
-    } else if cli.all
-        || cli.json
-        || is_projects_cmd
-        || is_sql_cmd
-        || harness.as_deref() == Some("codex")
-    {
+    } else if cli.all || is_projects_cmd || is_sql_cmd || harness.as_deref() == Some("codex") {
         (None, false)
     } else {
         let active = std::env::var("CLAUDE_CONFIG_DIR")

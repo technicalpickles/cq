@@ -99,9 +99,9 @@ Run `cq schema --examples` for a query cookbook.
 | `--project <name>` | `-p` | Scope to a project (substring match) |
 | `--session <id>` | `-s` | Scope to a session (UUID prefix match) |
 | `--since <duration>` | | Time filter: `7d`, `24h`, `30m` |
-| `--all` | | Disable automatic project, source, and harness scoping; span every harness |
+| `--all` | | Remove inferred current-context scope (project, source, harness) |
 | `--harness <name>` | | Target one harness (`claude` or `codex`; cannot combine with `--source`) |
-| `--json` | | JSON output instead of tables |
+| `--json` | | JSON output instead of tables; does not change scope |
 | `--table` | | Aligned table with headers |
 | `--no-color` | | Disable colored output |
 | `--limit <n>` | | Max results (default: 50, 0 for unlimited) |
