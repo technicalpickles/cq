@@ -111,13 +111,22 @@ pub fn is_codex_runtime(session_id: Option<&str>, thread_id: Option<&str>) -> bo
         .any(|value| !value.is_empty())
 }
 
-/// Return the active harness inferred from runtime metadata, if any.
-pub fn active_harness() -> Option<String> {
-    is_codex_runtime(
+/// Infer the active harness from runtime metadata. Codex runtime identifiers
+/// select Codex; every other runtime selects Claude.
+pub fn inferred_harness(session_id: Option<&str>, thread_id: Option<&str>) -> &'static str {
+    if is_codex_runtime(session_id, thread_id) {
+        "codex"
+    } else {
+        "claude"
+    }
+}
+
+/// Return the active harness inferred from the current process environment.
+pub fn active_harness() -> &'static str {
+    inferred_harness(
         std::env::var("CODEX_SESSION_ID").ok().as_deref(),
         std::env::var("CODEX_THREAD_ID").ok().as_deref(),
     )
-    .then(|| "codex".to_string())
 }
 
 #[cfg(test)]
@@ -189,5 +198,12 @@ mod tests {
         assert!(is_codex_runtime(None, Some("thread")));
         assert!(!is_codex_runtime(Some(""), Some("")));
         assert!(!is_codex_runtime(None, None));
+    }
+
+    #[test]
+    fn infers_claude_except_in_a_codex_runtime() {
+        assert_eq!(inferred_harness(None, None), "claude");
+        assert_eq!(inferred_harness(Some("session"), None), "codex");
+        assert_eq!(inferred_harness(None, Some("thread")), "codex");
     }
 }

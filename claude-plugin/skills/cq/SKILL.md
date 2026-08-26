@@ -24,7 +24,7 @@ user_invocable: true
 - `--project <NAME>` - Substring match on project name
 - `--session <ID>` - Session ID (full UUID required, validates format)
 - `--source <NAME>` - Scope to a named source (`main`, or a cenv env name); use `--all` to span every source. Every row carries a `source` column.
-- `--harness <NAME>` - Scope to `claude` or `codex`; cannot combine with `--source`. In Codex, cq automatically selects `codex` unless `--all` is set.
+- `--harness <NAME>` - Scope to `claude` or `codex`; cannot combine with `--source`. cq automatically selects `codex` in Codex and `claude` everywhere else unless `--all` is set.
 - `--all` - Show all projects, sources, and harnesses (disable auto-scoping)
 - `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`); applies to `sessions`/`tools`/`messages`, not `cq sql` (raw SQL ignores all scope flags)
 - `--json` - Machine-readable JSON output

@@ -278,21 +278,23 @@ fn main() -> Result<()> {
         }
     }
 
-    // Harness scope: explicit --harness wins; else infer Codex from its runtime
-    // session identifiers. --all intentionally spans harnesses.
+    // Harness scope: explicit --harness wins; otherwise infer Codex from its
+    // runtime identifiers and Claude everywhere else. --all intentionally spans
+    // harnesses, while raw SQL remains fully unscoped.
     let (harness, harness_auto) = if let Some(harness) = cli.harness.as_ref() {
         (Some(harness.as_str().to_string()), false)
     } else if cli.all || is_sql_cmd {
         (None, false)
     } else {
-        let active = cq::scope::active_harness();
-        let inferred = active.is_some();
-        (active, inferred)
+        (Some(cq::scope::active_harness().to_string()), true)
     };
     if harness_auto && !cli.json {
+        let harness_name = harness.as_deref().expect("inferred harness is present");
         eprintln!(
             "{}",
-            cq::style::hint("Scoped to harness 'codex' (use --all to span harnesses)")
+            cq::style::hint(&format!(
+                "Scoped to harness '{harness_name}' (use --all to span harnesses)"
+            ))
         );
     }
 

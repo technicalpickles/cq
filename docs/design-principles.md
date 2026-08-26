@@ -25,6 +25,14 @@ This makes the common case fast and obvious, without hiding the rest. The scope 
 
 Scope affects both what data is queried and how much work the indexer does. Sync scope follows query scope, so `--project foo` narrows the indexer to that project's files too.
 
+## Select the active harness by default
+
+Built-in commands select `harness = 'codex'` inside a Codex runtime and
+`harness = 'claude'` everywhere else. This keeps a normal query focused on the
+tool the user is currently using, without relying on Codex rows having no
+Claude `source`. `--harness` explicitly chooses one harness, while `--all`
+spans them. `cq sql` is deliberately raw and never receives automatic scope.
+
 ## Stale-but-available beats error
 
 If something goes wrong during indexing (lock contention, filesystem issues), serve cached data and tell the user on stderr. A slightly stale result is infinitely more useful than a crash.
