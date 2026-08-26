@@ -60,6 +60,18 @@ fn setup_codex_env() -> TestEnv {
     env
 }
 
+fn setup_mixed_harness_env() -> TestEnv {
+    let env = setup_env(&["simple_session.jsonl", "hook_events_session.jsonl"]);
+    let rollout_dir = env.codex_sessions.path().join("2026/08/26");
+    std::fs::create_dir_all(&rollout_dir).unwrap();
+    std::fs::copy(
+        fixture_path("codex_session.jsonl"),
+        rollout_dir.join("rollout-2026-08-26T14-00-00-session.jsonl"),
+    )
+    .unwrap();
+    env
+}
+
 #[test]
 fn help_shows_commands() {
     Command::cargo_bin("cq")
@@ -151,6 +163,64 @@ fn codex_sessions_and_tools_are_queryable() {
 }
 
 #[test]
+fn non_codex_runtime_defaults_builtins_to_claude() {
+    let env = setup_mixed_harness_env();
+
+    cq_cmd(&env)
+        .arg("sessions")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sess-001"))
+        .stdout(predicate::str::contains("019a1b2c").not());
+
+    cq_cmd(&env)
+        .arg("messages")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Let me list the files."))
+        .stdout(predicate::str::contains("The project has a Cargo manifest").not());
+
+    cq_cmd(&env)
+        .arg("tools")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Bash"))
+        .stdout(predicate::str::contains("exec_command").not());
+
+    cq_cmd(&env)
+        .arg("hooks")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SessionStart"));
+
+    cq_cmd(&env)
+        .arg("projects")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("myproject"))
+        .stdout(predicate::str::contains("codex-project").not());
+
+    let output = cq_cmd(&env).args(["--json", "sessions"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        !rows.is_empty(),
+        "expected Claude rows in JSON output, got: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row["session_id"].as_str() == Some("sess-001")),
+        "JSON output should contain only Claude rows: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
 fn codex_runtime_scopes_to_codex_unless_all_is_requested() {
     let env = setup_env(&["simple_session.jsonl"]);
     let rollout_dir = env.codex_sessions.path().join("2026/08/26");
@@ -179,6 +249,14 @@ fn codex_runtime_scopes_to_codex_unless_all_is_requested() {
 
     cq_cmd(&env)
         .env("CODEX_THREAD_ID", "test-codex-thread")
+        .args(["--harness", "claude", "sessions"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sess-001"))
+        .stdout(predicate::str::contains("019a1b2c").not());
+
+    cq_cmd(&env)
+        .env("CODEX_THREAD_ID", "test-codex-thread")
         .args(["--all", "sessions"])
         .assert()
         .success()
@@ -198,12 +276,14 @@ fn harness_and_source_cannot_be_combined() {
 
 #[test]
 fn raw_sql_does_not_claim_automatic_scope() {
-    let env = setup_codex_env();
+    let env = setup_mixed_harness_env();
     cq_cmd(&env)
         .env("CODEX_SESSION_ID", "test-codex-session")
-        .args(["sql", "SELECT count(*) AS sessions FROM sessions"])
+        .args(["sql", "SELECT session_id FROM sessions ORDER BY session_id"])
         .assert()
         .success()
+        .stdout(predicate::str::contains("sess-001"))
+        .stdout(predicate::str::contains("019a1b2c"))
         .stderr(predicate::str::contains("Scoped to harness").not());
 }
 
@@ -641,6 +721,23 @@ fn auto_scope_to_current_project() {
     assert!(
         stderr.contains("Scoped to"),
         "Should show scope notice, got: {stderr}"
+    );
+
+    // JSON changes the output format, not the inferred project scope.
+    let output = cq_cmd(&env)
+        .env("PWD", "/Users/test/myproject")
+        .args(["--json", "sessions"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sess-001"),
+        "JSON should show myproject session, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("sess-002"),
+        "JSON should not show webapp session, got: {stdout}"
     );
 }
 
@@ -2193,6 +2290,38 @@ fn projects_scoped_groups_by_project_only() {
         "scoped to one source the project should be a single row, got: {stdout}"
     );
     assert_eq!(myproject_rows[0]["source"].as_str(), Some("main"));
+}
+
+#[test]
+fn json_preserves_automatic_source_scope() {
+    let main_body = session_with_skill(
+        "11111111-1111-1111-1111-111111111111",
+        "sanitation",
+        "toolu_m1",
+    );
+    let cenv_body = session_with_skill(
+        "22222222-2222-2222-2222-222222222222",
+        "obsidian",
+        "toolu_c1",
+    );
+    let env = setup_multi_source("pinwheel", &main_body, &cenv_body);
+
+    let output = multi_cmd(&env)
+        .env(
+            "CLAUDE_CONFIG_DIR",
+            env.cenv_base.path().join(&env.env_name),
+        )
+        .args(["--json", "sessions"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.len(), 1, "expected one active-source row: {rows:?}");
+    assert_eq!(rows[0]["source"].as_str(), Some("pinwheel"));
 }
 
 #[test]

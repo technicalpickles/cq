@@ -47,7 +47,7 @@ source.rs         Source: named transcript roots (`main` + discovered cenv envs)
 
 ## Design principles
 
-CQ is a query tool, not a monitoring tool. Default is auto-scope to the current project directory; `--all` escapes to global. Sources scope the same way: `--source <name>` targets one transcript root, else cq auto-scopes to the active source (matched via `CLAUDE_CONFIG_DIR`), and `--all` spans all sources. Stale-but-available beats error. Explicit always wins (`--reindex`/`--no-reindex` override all automatic behavior). See `docs/design-principles.md` for the full reference, and `CONTEXT.md` for the Harness/Provider/Source glossary.
+CQ is a query tool, not a monitoring tool. Built-in commands infer current-context scope: Claude outside a Codex runtime, Codex inside one, the current project directory, and the active Claude source. `--all` removes inferred scope; explicit filters still apply. Within Claude, `--source <name>` targets one transcript root, else cq selects the active source (matched via `CLAUDE_CONFIG_DIR`). Stale-but-available beats error. Explicit always wins (`--reindex`/`--no-reindex` override all automatic behavior). See `docs/design-principles.md` for the full reference, and `CONTEXT.md` for the Harness/Provider/Source glossary.
 
 ## Key patterns
 

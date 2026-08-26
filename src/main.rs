@@ -67,7 +67,7 @@ struct Cli {
     #[arg(long, global = true)]
     wide: bool,
 
-    /// Show all projects (disable auto-scoping to current directory)
+    /// Remove inferred current-context scope (project, source, and harness)
     #[arg(long, global = true)]
     all: bool,
 
@@ -256,7 +256,7 @@ fn main() -> Result<()> {
 
     let (project, auto_scoped) = if cli.project.is_some() {
         (cli.project, false)
-    } else if cli.all || cli.json || is_projects_cmd || is_sql_cmd {
+    } else if cli.all || is_projects_cmd || is_sql_cmd {
         (None, false)
     } else {
         match std::env::var("PWD").ok() {
@@ -278,34 +278,31 @@ fn main() -> Result<()> {
         }
     }
 
-    // Harness scope: explicit --harness wins; else infer Codex from its runtime
-    // session identifiers. --all intentionally spans harnesses.
+    // Harness scope: explicit --harness wins; otherwise infer Codex from its
+    // runtime identifiers and Claude everywhere else. --all intentionally spans
+    // harnesses, while raw SQL remains fully unscoped.
     let (harness, harness_auto) = if let Some(harness) = cli.harness.as_ref() {
         (Some(harness.as_str().to_string()), false)
     } else if cli.all || is_sql_cmd {
         (None, false)
     } else {
-        let active = cq::scope::active_harness();
-        let inferred = active.is_some();
-        (active, inferred)
+        (Some(cq::scope::active_harness().to_string()), true)
     };
     if harness_auto && !cli.json {
+        let harness_name = harness.as_deref().expect("inferred harness is present");
         eprintln!(
             "{}",
-            cq::style::hint("Scoped to harness 'codex' (use --all to span harnesses)")
+            cq::style::hint(&format!(
+                "Scoped to harness '{harness_name}' (use --all to span harnesses)"
+            ))
         );
     }
 
     // Source scope: explicit --source wins; else auto-scope to the active source
-    // (the one matching CLAUDE_CONFIG_DIR), unless --all/--json/projects.
+    // (the one matching CLAUDE_CONFIG_DIR), unless --all/projects.
     let (source, source_auto) = if cli.source.is_some() {
         (cli.source.clone(), false)
-    } else if cli.all
-        || cli.json
-        || is_projects_cmd
-        || is_sql_cmd
-        || harness.as_deref() == Some("codex")
-    {
+    } else if cli.all || is_projects_cmd || is_sql_cmd || harness.as_deref() == Some("codex") {
         (None, false)
     } else {
         let active = std::env::var("CLAUDE_CONFIG_DIR")

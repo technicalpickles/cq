@@ -1,8 +1,9 @@
 # Codex session storage
 
-Codex writes one JSONL rollout transcript per session under `~/.codex/sessions/`,
-organized by date. cq discovers those files recursively; set
-`CQ_CODEX_SESSIONS_DIR` to use a different root.
+Codex writes one JSONL rollout transcript per session under
+`$CODEX_HOME/sessions/` (default: `~/.codex/sessions/`), organized by date. cq
+discovers those files recursively. `CQ_CODEX_SESSIONS_DIR` overrides that
+location for cq only.
 
 Each file combines session metadata with response items:
 
@@ -14,10 +15,12 @@ Each file combines session metadata with response items:
 
 Codex rows are stored in cq's normal JSONL cache and exposed with
 `harness = 'codex'`. They have no `source`, because `source` identifies only
-Claude config roots. When cq runs inside Codex, it automatically filters normal
-commands to `harness = 'codex'` and skips Claude's automatic source selection.
-Use `--all` to span harnesses or `--harness codex` outside Codex. An explicit
-`--source` selects Claude rows and cannot be combined with `--harness`.
+Claude config roots. Built-in commands default to `harness = 'codex'` inside a
+Codex runtime and `harness = 'claude'` everywhere else. Codex selection skips
+Claude's automatic source selection. `--all` removes inferred project, source,
+and harness scope; `--harness codex` selects Codex outside its runtime. An
+explicit `--source` selects Claude rows and cannot be combined with
+`--harness`.
 
 Codex does not currently map hook events or collaboration/subagent state into
 cq's Claude-oriented columns. Those views remain empty or `NULL` for Codex

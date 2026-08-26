@@ -99,9 +99,9 @@ Run `cq schema --examples` for a query cookbook.
 | `--project <name>` | `-p` | Scope to a project (substring match) |
 | `--session <id>` | `-s` | Scope to a session (UUID prefix match) |
 | `--since <duration>` | | Time filter: `7d`, `24h`, `30m` |
-| `--all` | | Disable automatic project, source, and harness scoping |
+| `--all` | | Remove inferred current-context scope (project, source, harness) |
 | `--harness <name>` | | Target one harness (`claude` or `codex`; cannot combine with `--source`) |
-| `--json` | | JSON output instead of tables |
+| `--json` | | JSON output instead of tables; does not change scope |
 | `--table` | | Aligned table with headers |
 | `--no-color` | | Disable colored output |
 | `--limit <n>` | | Max results (default: 50, 0 for unlimited) |
@@ -115,7 +115,7 @@ Run `cq schema --examples` for a query cookbook.
 
 cq indexes multiple transcript **sources**: the main config dir (`~/.claude/projects`, or `$CQ_PROJECTS_DIR`) plus every cenv env's `projects/` (discovered under `$CENV_BASE`, default `~/.local/share/cenv`). A cenv env is one kind of source; cq never shells out to cenv.
 
-Outside Codex, cq scopes to the **active** Claude source (the one matching `$CLAUDE_CONFIG_DIR`, else `main`), mirroring how it auto-scopes to the current directory. Use `--all` to span every source and `--source <name>` to target one. Every row carries a `source` column; compose with `--since` to weigh results by age.
+When Claude is the active harness, cq scopes to the **active** Claude source (the one matching `$CLAUDE_CONFIG_DIR`, else `main`), mirroring how it auto-scopes to the current directory. Use `--all` to span every source and `--source <name>` to target one. Every row carries a `source` column; compose with `--since` to weigh results by age.
 
 | Flag | What it does |
 |------|-------------|
@@ -125,9 +125,9 @@ Outside Codex, cq scopes to the **active** Claude source (the one matching `$CLA
 
 ## Codex sessions
 
-Codex transcripts are discovered recursively from `~/.codex/sessions/`. Set `CQ_CODEX_SESSIONS_DIR` to point cq at a different session root. Codex rows have `harness = 'codex'` and no `source`.
+Codex transcripts are discovered recursively from `$CODEX_HOME/sessions` (default: `~/.codex/sessions/`). Set `CQ_CODEX_SESSIONS_DIR` to override that location for cq only. Codex rows have `harness = 'codex'` and no `source`.
 
-When cq runs inside a Codex session, it automatically scopes normal commands to `harness = 'codex'` and skips Claude's automatic source scope. Use `--all` to span harnesses, or `--harness claude` / `--harness codex` to choose one explicitly. `--source` selects Claude rows only, so it cannot be combined with `--harness`. `cq sql` is raw SQL and ignores all scope flags.
+Built-in commands select the active harness by default: `harness = 'codex'` inside a Codex session and `harness = 'claude'` everywhere else. Codex selection skips Claude's automatic source scope. Use `--all` to span harnesses, or `--harness claude` / `--harness codex` to choose one explicitly. `--source` selects Claude rows only, so it cannot be combined with `--harness`. `cq sql` is raw SQL and ignores all scope flags.
 
 ## Views
 

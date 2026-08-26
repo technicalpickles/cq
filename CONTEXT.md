@@ -22,7 +22,7 @@ _Avoid_: using "source" to mean a different harness.
 - The Claude **Provider** spans one or more **Sources** (main + cenv envs); `--source` scopes within it.
 - The Codex and opencode **Providers** have no **Sources** in the current sense — Codex has one date-organized JSONL root and opencode has one SQLite DB.
 - The cq views carry two distinct columns: `harness` is the harness/provider tag (`'claude'` / `'codex'` / `'opencode'`), and `source` is the within-Claude root name that the `--source` flag selects (`main` + cenv envs).
-- `--harness` scopes across providers. In a Codex runtime, cq infers `--harness codex` for normal commands; `--all` disables that inference. `--source` remains a Claude-only dimension and cannot be combined with `--harness`.
+- `--harness` scopes across providers. For normal commands, cq infers `--harness codex` in a Codex runtime and `--harness claude` everywhere else. `--all` removes all inferred current-context scope (project, source, and harness), but explicit filters remain active. `--source` remains a Claude-only dimension and cannot be combined with `--harness`.
 
 ## Flagged ambiguities
 
