@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0](https://github.com/technicalpickles/cq/compare/v0.4.0...v0.5.0) (2026-08-26)
+
+
+### Features
+
+* add Codex session support ([eae5114](https://github.com/technicalpickles/cq/commit/eae5114415bca951a0bdfd88e7c5a5967be0a1fe))
+* index Codex sessions ([d58d73b](https://github.com/technicalpickles/cq/commit/d58d73b92cce16198a0b4f7f47863910aa36ca1a))
+* scope queries to active Codex harness ([c2bdafe](https://github.com/technicalpickles/cq/commit/c2bdafe6cc7146ff5339ac419f7eb34be1450305))
+* scope queries to active Codex harness ([dbab68b](https://github.com/technicalpickles/cq/commit/dbab68bbfe80651df9618744f63f7114506c3517))
+* scope queries to active Codex harness ([9262fe3](https://github.com/technicalpickles/cq/commit/9262fe3e5eb53e5c706f6c8154f734e740d9d168))
+
+
+### Bug Fixes
+
+* avoid scope hints for raw SQL ([6efa584](https://github.com/technicalpickles/cq/commit/6efa584023493bfa9b85dcb52872c0e5fbefd5fc))
+* avoid scope hints for raw SQL ([a1c9ad4](https://github.com/technicalpickles/cq/commit/a1c9ad40c15290c8ebb1f88c6bc6951956b613c0))
+* default non-Codex queries to Claude ([9da56f9](https://github.com/technicalpickles/cq/commit/9da56f924b2dadb88df49cec083091f06c8d0527))
+* default non-Codex queries to Claude ([b177b6c](https://github.com/technicalpickles/cq/commit/b177b6cefd0d48d57fd0478f7a6b5a63aa7811a6))
+* derive Codex sessions from CODEX_HOME ([d746254](https://github.com/technicalpickles/cq/commit/d7462544f601472318ac59bbd80fc413aee6b230))
+* keep inferred scope in JSON output ([a2ec84b](https://github.com/technicalpickles/cq/commit/a2ec84bb0c004935037f1f045fc941604b7ab4b8))
+
 ## [0.4.0](https://github.com/technicalpickles/cq/compare/v0.3.0...v0.4.0) (2026-08-07)
 
 
