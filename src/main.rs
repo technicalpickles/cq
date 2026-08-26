@@ -252,10 +252,11 @@ fn main() -> Result<()> {
 
     // Auto-scope to current project if no explicit --project and not --all
     let is_projects_cmd = matches!(cli.command, Command::Projects { .. });
+    let is_sql_cmd = matches!(cli.command, Command::Sql { .. });
 
     let (project, auto_scoped) = if cli.project.is_some() {
         (cli.project, false)
-    } else if cli.all || cli.json || is_projects_cmd {
+    } else if cli.all || cli.json || is_projects_cmd || is_sql_cmd {
         (None, false)
     } else {
         match std::env::var("PWD").ok() {
@@ -281,7 +282,7 @@ fn main() -> Result<()> {
     // session identifiers. --all intentionally spans harnesses.
     let (harness, harness_auto) = if let Some(harness) = cli.harness.as_ref() {
         (Some(harness.as_str().to_string()), false)
-    } else if cli.all {
+    } else if cli.all || is_sql_cmd {
         (None, false)
     } else {
         let active = cq::scope::active_harness();
@@ -299,7 +300,12 @@ fn main() -> Result<()> {
     // (the one matching CLAUDE_CONFIG_DIR), unless --all/--json/projects.
     let (source, source_auto) = if cli.source.is_some() {
         (cli.source.clone(), false)
-    } else if cli.all || cli.json || is_projects_cmd || harness.as_deref() == Some("codex") {
+    } else if cli.all
+        || cli.json
+        || is_projects_cmd
+        || is_sql_cmd
+        || harness.as_deref() == Some("codex")
+    {
         (None, false)
     } else {
         let active = std::env::var("CLAUDE_CONFIG_DIR")

@@ -197,6 +197,17 @@ fn harness_and_source_cannot_be_combined() {
 }
 
 #[test]
+fn raw_sql_does_not_claim_automatic_scope() {
+    let env = setup_codex_env();
+    cq_cmd(&env)
+        .env("CODEX_SESSION_ID", "test-codex-session")
+        .args(["sql", "SELECT count(*) AS sessions FROM sessions"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Scoped to harness").not());
+}
+
+#[test]
 fn sessions_table() {
     let env = setup_env(&["simple_session.jsonl"]);
     cq_cmd(&env)
