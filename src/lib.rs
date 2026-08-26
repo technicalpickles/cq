@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod claude_provider;
+pub mod codex_provider;
 pub mod commands;
 pub mod db;
 pub mod indexer;

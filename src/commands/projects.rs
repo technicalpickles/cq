@@ -73,7 +73,7 @@ pub fn run(
     }
 
     if let Some(source) = &scope.source {
-        conditions.push("s.source = ?".to_string());
+        conditions.push(crate::scope::source_filter_sql("s."));
         params.push(Box::new(source.clone()));
     }
 
@@ -164,7 +164,7 @@ pub fn run(
     // The CTE always groups skills by (source, project). The join key includes
     // source so a Skill call in one source can't inflate another source's count.
     let skill_cte_filter = if scope.source.is_some() {
-        "AND source = ?"
+        "AND (harness != 'claude' OR source = ?)"
     } else {
         ""
     };
@@ -291,7 +291,10 @@ fn fetch_skills(
     }
 
     let (filter_sql, params): (&str, Vec<Box<dyn duckdb::types::ToSql>>) = match source_filter {
-        Some(src) => ("AND source = ?", vec![Box::new(src.to_string())]),
+        Some(src) => (
+            "AND (harness != 'claude' OR source = ?)",
+            vec![Box::new(src.to_string())],
+        ),
         None => ("", vec![]),
     };
 

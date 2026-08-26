@@ -5,11 +5,11 @@ cq queries AI coding-session transcripts with SQL. It indexes transcripts into a
 ## Language
 
 **Harness**:
-The tool that produced the transcripts — Claude Code, opencode. Distinct harnesses store transcripts in fundamentally different shapes (Claude Code: a tree of JSONL files; opencode: one append-only SQLite DB).
+The tool that produced the transcripts — Claude Code, Codex, opencode. Distinct harnesses store transcripts in fundamentally different shapes (Claude Code and Codex: trees of JSONL files; opencode: one append-only SQLite DB).
 _Avoid_: "source" for this meaning (see below), "client", "agent".
 
 **Provider**:
-The cq component that knows how to read one **Harness**'s storage. `ClaudeProvider` exists today; `OpenCodeProvider` is planned. Modeled by the `TranscriptProvider` trait, though the runtime path does not yet dispatch through it polymorphically.
+The cq component that knows how to read one **Harness**'s storage. `ClaudeProvider` and `CodexProvider` exist today; `OpenCodeProvider` is planned. Modeled by the `TranscriptProvider` trait.
 _Avoid_: "adapter", "backend".
 
 **Source**:
@@ -20,8 +20,8 @@ _Avoid_: using "source" to mean a different harness.
 
 - A **Harness** is read by exactly one **Provider**.
 - The Claude **Provider** spans one or more **Sources** (main + cenv envs); `--source` scopes within it.
-- The opencode **Provider** has no **Sources** in the current sense — its storage is a single SQLite DB, not a directory of JSONL roots.
-- The cq views carry two distinct columns: `harness` is the harness/provider tag (`'claude'` / `'opencode'`), and `source` is the within-Claude root name that the `--source` flag selects (`main` + cenv envs).
+- The Codex and opencode **Providers** have no **Sources** in the current sense — Codex has one date-organized JSONL root and opencode has one SQLite DB.
+- The cq views carry two distinct columns: `harness` is the harness/provider tag (`'claude'` / `'codex'` / `'opencode'`), and `source` is the within-Claude root name that the `--source` flag selects (`main` + cenv envs).
 
 ## Flagged ambiguities
 

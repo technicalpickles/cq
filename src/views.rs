@@ -318,6 +318,214 @@ pub fn claude_sessions_sql() -> String {
         GROUP BY session_id".to_string()
 }
 
+/// The Codex `messages` view body. Codex keeps session metadata and response
+/// items in one JSONL file. Message content is an array of input/output text
+/// items, so each response item becomes one cq message row.
+pub fn codex_messages_sql() -> String {
+    "WITH codex_records AS (
+        SELECT source_file, json
+        FROM raw_records
+        WHERE json_extract_string(json, '$.type') = 'response_item'
+    ),
+    session_meta AS (
+        SELECT source_file,
+               COALESCE(
+                   json_extract_string(json, '$.payload.id'),
+                   json_extract_string(json, '$.payload.session_id')
+               ) AS session_id,
+               json_extract_string(json, '$.payload.cwd') AS project
+        FROM raw_records
+        WHERE json_extract_string(json, '$.type') = 'session_meta'
+    )
+    SELECT
+        meta.session_id,
+        meta.project,
+        NULL::VARCHAR AS source,
+        'codex' AS harness,
+        json_extract_string(record.json, '$.payload.id') AS uuid,
+        NULL::VARCHAR AS parent_uuid,
+        json_extract_string(record.json, '$.payload.role') AS type,
+        json_extract_string(record.json, '$.timestamp') AS timestamp,
+        (SELECT string_agg(json_extract_string(item, '$.text'), '')
+         FROM (
+             SELECT UNNEST(CAST(json_extract(record.json, '$.payload.content') AS JSON[])) AS item
+         )
+         WHERE json_extract_string(item, '$.type') IN ('input_text', 'output_text', 'text')) AS text,
+        CAST(0 AS BIGINT) AS tool_count,
+        (SELECT json_extract_string(context.json, '$.payload.model')
+         FROM raw_records context
+         WHERE context.source_file = record.source_file
+           AND json_extract_string(context.json, '$.type') = 'turn_context'
+         ORDER BY CAST(json_extract(context.json, '$.ordinal') AS BIGINT) DESC
+         LIMIT 1) AS model,
+        NULL::VARCHAR AS agent_id,
+        false AS is_sidechain,
+        NULL::VARCHAR AS agent_type,
+        NULL::VARCHAR AS workflow_id
+    FROM codex_records record
+    JOIN session_meta meta USING (source_file)
+    WHERE json_extract_string(record.json, '$.payload.type') = 'message'
+      AND json_extract_string(record.json, '$.payload.role') IN ('user', 'assistant')".to_string()
+}
+
+/// The Codex `tool_calls` view body. Both built-in function calls and Codex
+/// custom-tool calls have stable call IDs and JSON-string inputs.
+pub fn codex_tool_calls_sql() -> String {
+    "WITH session_meta AS (
+        SELECT source_file,
+               COALESCE(
+                   json_extract_string(json, '$.payload.id'),
+                   json_extract_string(json, '$.payload.session_id')
+               ) AS session_id,
+               json_extract_string(json, '$.payload.cwd') AS project
+        FROM raw_records
+        WHERE json_extract_string(json, '$.type') = 'session_meta'
+    )
+    SELECT
+        meta.session_id,
+        meta.project,
+        NULL::VARCHAR AS source,
+        'codex' AS harness,
+        json_extract_string(record.json, '$.payload.id') AS message_uuid,
+        json_extract_string(record.json, '$.payload.call_id') AS tool_use_id,
+        json_extract_string(record.json, '$.payload.name') AS name,
+        TRY_CAST(json_extract_string(record.json, '$.payload.arguments') AS JSON) AS input,
+        json_extract_string(record.json, '$.timestamp') AS timestamp,
+        NULL::VARCHAR AS agent_id,
+        false AS is_sidechain,
+        NULL::VARCHAR AS agent_type,
+        NULL::VARCHAR AS workflow_id
+    FROM raw_records record
+    JOIN session_meta meta USING (source_file)
+    WHERE json_extract_string(record.json, '$.type') = 'response_item'
+      AND json_extract_string(record.json, '$.payload.type') = 'function_call'
+    UNION ALL
+    SELECT
+        meta.session_id,
+        meta.project,
+        NULL::VARCHAR AS source,
+        'codex' AS harness,
+        json_extract_string(record.json, '$.payload.id') AS message_uuid,
+        json_extract_string(record.json, '$.payload.call_id') AS tool_use_id,
+        json_extract_string(record.json, '$.payload.name') AS name,
+        TRY_CAST(json_extract_string(record.json, '$.payload.input') AS JSON) AS input,
+        json_extract_string(record.json, '$.timestamp') AS timestamp,
+        NULL::VARCHAR AS agent_id,
+        false AS is_sidechain,
+        NULL::VARCHAR AS agent_type,
+        NULL::VARCHAR AS workflow_id
+    FROM raw_records record
+    JOIN session_meta meta USING (source_file)
+    WHERE json_extract_string(record.json, '$.type') = 'response_item'
+      AND json_extract_string(record.json, '$.payload.type') = 'custom_tool_call'"
+        .to_string()
+}
+
+/// The Codex `tool_results` view body. Codex records outputs separately from
+/// calls but uses the same `call_id` join key. Output may be a string or JSON
+/// array; keeping the latter as JSON text preserves all returned blocks.
+pub fn codex_tool_results_sql() -> String {
+    "WITH session_meta AS (
+        SELECT source_file,
+               COALESCE(
+                   json_extract_string(json, '$.payload.id'),
+                   json_extract_string(json, '$.payload.session_id')
+               ) AS session_id,
+               json_extract_string(json, '$.payload.cwd') AS project
+        FROM raw_records
+        WHERE json_extract_string(json, '$.type') = 'session_meta'
+    )
+    SELECT
+        meta.session_id,
+        meta.project,
+        NULL::VARCHAR AS source,
+        'codex' AS harness,
+        json_extract_string(record.json, '$.payload.call_id') AS tool_use_id,
+        false AS is_error,
+        json_extract_string(record.json, '$.payload.output') AS content,
+        NULL::VARCHAR AS agent_id,
+        false AS is_sidechain,
+        NULL::VARCHAR AS agent_type,
+        NULL::VARCHAR AS workflow_id
+    FROM raw_records record
+    JOIN session_meta meta USING (source_file)
+    WHERE json_extract_string(record.json, '$.type') = 'response_item'
+      AND json_extract_string(record.json, '$.payload.type') = 'function_call_output'
+    UNION ALL
+    SELECT
+        meta.session_id,
+        meta.project,
+        NULL::VARCHAR AS source,
+        'codex' AS harness,
+        json_extract_string(record.json, '$.payload.call_id') AS tool_use_id,
+        false AS is_error,
+        CAST(json_extract(record.json, '$.payload.output') AS VARCHAR) AS content,
+        NULL::VARCHAR AS agent_id,
+        false AS is_sidechain,
+        NULL::VARCHAR AS agent_type,
+        NULL::VARCHAR AS workflow_id
+    FROM raw_records record
+    JOIN session_meta meta USING (source_file)
+    WHERE json_extract_string(record.json, '$.type') = 'response_item'
+      AND json_extract_string(record.json, '$.payload.type') = 'custom_tool_call_output'"
+        .to_string()
+}
+
+/// Codex currently does not record Claude-compatible hook events.
+pub fn codex_hook_events_sql() -> Option<String> {
+    None
+}
+
+/// The Codex `sessions` view body is anchored on `session_meta`, so even a
+/// freshly-created session with no messages remains queryable.
+pub fn codex_sessions_sql() -> String {
+    "WITH session_meta AS (
+        SELECT source_file,
+               COALESCE(
+                   json_extract_string(json, '$.payload.id'),
+                   json_extract_string(json, '$.payload.session_id')
+               ) AS session_id,
+               json_extract_string(json, '$.payload.cwd') AS project,
+               json_extract_string(json, '$.timestamp') AS started_at
+        FROM raw_records
+        WHERE json_extract_string(json, '$.type') = 'session_meta'
+    ),
+    tool_counts AS (
+        SELECT session_id, COUNT(*) AS tool_call_count
+        FROM tool_calls
+        WHERE harness = 'codex'
+        GROUP BY session_id
+    )
+    SELECT
+        meta.session_id,
+        meta.project,
+        NULL::VARCHAR AS source,
+        'codex' AS harness,
+        meta.started_at,
+        COALESCE(MAX(message.timestamp), meta.started_at) AS ended_at,
+        COUNT(message.uuid) AS message_count,
+        CAST(COALESCE(MAX(tool_counts.tool_call_count), 0) AS BIGINT) AS tool_call_count,
+        COUNT(message.uuid) FILTER (WHERE message.type = 'user') AS user_message_count,
+        CAST(0 AS BIGINT) AS subagent_count,
+        (SELECT text FROM messages first_message
+         WHERE first_message.session_id = meta.session_id
+           AND first_message.harness = 'codex'
+           AND first_message.type = 'user'
+           AND first_message.text IS NOT NULL
+           AND first_message.text != ''
+           AND first_message.text NOT LIKE '<environment_context>%'
+         ORDER BY first_message.timestamp
+         LIMIT 1) AS first_user_message
+    FROM session_meta meta
+    LEFT JOIN messages message
+      ON message.session_id = meta.session_id
+     AND message.harness = 'codex'
+    LEFT JOIN tool_counts
+      ON tool_counts.session_id = meta.session_id
+    GROUP BY meta.session_id, meta.project, meta.started_at"
+        .to_string()
+}
+
 /// The empty-view body (correct schema, zero rows) for one view. Used when no
 /// active provider contributes to that view.
 fn empty_view_sql(view: View) -> &'static str {

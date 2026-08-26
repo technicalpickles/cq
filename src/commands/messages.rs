@@ -94,7 +94,7 @@ pub fn run(
     }
 
     if let Some(source) = &scope.source {
-        conditions.push("source = ?".to_string());
+        conditions.push(crate::scope::source_filter_sql(""));
         params.push(Box::new(source.clone()));
     }
 
@@ -202,7 +202,7 @@ fn run_with_context(
         scope_conditions.push("session_id = ?".to_string());
     }
     if scope.source.is_some() {
-        scope_conditions.push("source = ?".to_string());
+        scope_conditions.push(crate::scope::source_filter_sql(""));
     }
     if let Some(ts) = scope.since_timestamp()? {
         let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -315,7 +315,7 @@ fn run_with_fields(
     }
 
     if let Some(source) = &scope.source {
-        conditions.push("source = ?".to_string());
+        conditions.push(crate::scope::source_filter_sql(""));
         params.push(Box::new(source.clone()));
     }
 
@@ -378,7 +378,7 @@ fn run_count_by(
     }
 
     if let Some(source) = &scope.source {
-        conditions.push("source = ?".to_string());
+        conditions.push(crate::scope::source_filter_sql(""));
         params.push(Box::new(source.clone()));
     }
 

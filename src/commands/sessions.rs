@@ -133,7 +133,7 @@ pub fn run(
     }
 
     if let Some(source) = &scope.source {
-        conditions.push("source = ?".to_string());
+        conditions.push(crate::scope::source_filter_sql(""));
         params.push(Box::new(source.clone()));
     }
 
@@ -245,7 +245,7 @@ fn run_with_fields(
     }
 
     if let Some(source) = &scope.source {
-        conditions.push("source = ?".to_string());
+        conditions.push(crate::scope::source_filter_sql(""));
         params.push(Box::new(source.clone()));
     }
 
@@ -302,7 +302,7 @@ fn run_count_by(
     }
 
     if let Some(source) = &scope.source {
-        conditions.push("source = ?".to_string());
+        conditions.push(crate::scope::source_filter_sql(""));
         params.push(Box::new(source.clone()));
     }
 
