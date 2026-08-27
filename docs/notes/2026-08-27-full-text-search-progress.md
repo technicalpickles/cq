@@ -1,6 +1,6 @@
 # Full-text search progress
 
-Status: implementation spike in draft PR, design decisions resolved
+Status: design decisions resolved and implemented; draft PR nearly ready
 Date: 2026-08-27
 
 This note records the first lexical full-text-search slice for
@@ -106,15 +106,20 @@ Two consequences:
   to three times an entire normal cq command. That makes avoiding unnecessary
   rebuilds more valuable than the raw number suggests.
 
-### `--reindex` is not a full re-parse
+### What `--reindex` actually does
 
-Its help text ("Force full reindex of session files") overstates what it does,
-so this is easy to get wrong. `do_sync` (`src/indexer.rs:166`) takes no
-`SyncMode` parameter, which means the per-file mtime and size check applies in
-Force mode too and unchanged files are never re-parsed. All `--reindex` really
-does is skip the directory-mtime early return and wait for the lock instead of
-try-locking. Measured cost is about 18.5 seconds against about 5 seconds for the
-default path, not the ~61 seconds an empty-cache build takes.
+It is a full cache rebuild, and the mechanism is not where you would look for
+it. `do_sync` (`src/indexer.rs:166`) takes no `SyncMode` parameter, so reading
+the indexer alone suggests Force cannot re-parse unchanged files. The work
+happens one layer up: `db.rs:50` derives `force_rebuild` from `SyncMode::Force`,
+and `cache::open` then calls `rebuild()`, which drops `raw_records`,
+`file_registry`, `cache_meta`, and the FTS schema and table. Against an emptied
+registry every file looks new, so everything is re-parsed. Measured cost is
+about 18.5 seconds against about 5 seconds for the default path.
+
+Worth knowing before testing anything in this area: `--reindex` destroys the FTS
+index rather than aging it, so it cannot be used to simulate a stale index. A
+test that reaches for it will always observe a cold rebuild instead.
 
 ## Which commands pay the refresh cost
 
@@ -122,16 +127,16 @@ The recurring FTS rebuild cost is currently isolated to `cq search`.
 
 | Invocation | Transcript sync | FTS refresh |
 |---|---|---|
-| `cq search ...` | Automatic sync | If `fts_sync_at != last_sync_at` |
-| `cq --no-reindex search ...` | Skipped | May still rebuild from cached messages if the generations differ |
-| `cq --reindex search ...` | Force sync (18.5s) | Rebuilds, but only incidentally (see below) |
+| `cq search ...` | Automatic sync | Only if the data moved *and* the index is older than `CQ_FTS_MAX_AGE`; otherwise serves stale and says so |
+| `cq --no-reindex search ...` | Skipped | Skipped. Errors if no index exists at all |
+| `cq --reindex search ...` | Force rebuild (18.5s) | Always, since the cache rebuild drops the index |
 | Other database-backed subcommands | Their existing sync behavior | Never |
 | `cq schema` | Bypasses transcript sync | Never |
 
-Adding `fts_sync_at` bumped the main cache schema from version 4 to 5, so the
-first database-backed command run against a version 4 cache rebuilds that cache
-even if the command is not `search`. This is a one-time cost, separate from the
-recurring FTS refresh cost, and it is accepted (see decision 1).
+Adding `fts_sync_at` and `fts_built_at` bumped the main cache schema from version
+4 to 5, so the first database-backed command run against a version 4 cache
+rebuilds that cache even if the command is not `search`. This is a one-time cost,
+separate from the recurring FTS refresh cost, and it is accepted (see decision 1).
 
 ## Usage evidence
 
@@ -218,14 +223,16 @@ a true positive: running `cq search` from a live session means that session's
 own transcript just changed. The rebuild fires either way, correctly. The
 staleness window in decision 3 is what addresses that, not this.
 
-**This change silently removes the only way to force an FTS rebuild.** Today
-`--reindex` rebuilds the index only because Force sync writes `last_sync_at`
-unconditionally, which makes the generation comparison fail. Once the comparison
-uses a data revision, a Force sync that finds no changed files will not bump the
-revision, and `prepare()` will skip the rebuild. `SyncMode` must therefore be
-threaded into `prepare()` so `--reindex` forces the rebuild explicitly rather
-than emergently. Without that, a stale or corrupt index becomes unfixable by any
-flag.
+The forced-rebuild path survives this change, but only by accident, so it should
+not be left resting on one. `--reindex` drops the FTS schema and table outright
+as part of the cache rebuild described above, so `search_objects_exist()` returns
+false and `prepare()` rebuilds no matter how freshness is compared. That holds
+whether the comparison uses a timestamp or a data revision.
+
+`SyncMode` is threaded into `prepare()` anyway, with an explicit
+`SyncMode::Force => rebuild` arm. It is redundant with the drop today, and it is
+there so that a future change to what `--reindex` clears cannot quietly leave a
+stale index unfixable by any flag.
 
 ### 3. Bounded staleness, 5 minute default
 
@@ -383,20 +390,26 @@ makes `cq_fts_messages` fast would speed up `sessions` and `messages` too, but i
 needs its own design work on what invalidates what. Recorded in
 [a PR comment](https://github.com/technicalpickles/cq/pull/41#issuecomment-5442962442).
 
-## Suggested next pass
+## Remaining before this leaves draft
 
-Before moving the draft PR out of draft:
+Built and covered by tests: the 5-minute window with `CQ_FTS_MAX_AGE`, the
+explicit `--reindex` force, `--no-reindex` skipping the FTS refresh, staleness
+reporting with the own-session escalation, and best-message-per-session with
+`--all-matches`. Verified against the real corpus: a warm search returns in about
+0.5 seconds, and collapsing turns 3,963 matching messages into 648 sessions, with
+the top session alone contributing 214 of them.
 
-1. Replace timestamp-based freshness with a data-change revision, and thread
-   `SyncMode` into `prepare()` so `--reindex` forces the rebuild explicitly.
-2. Add `fts_built_at` and implement the 5-minute TTL, with `CQ_FTS_MAX_AGE` to
-   tune it.
-3. Make `--no-reindex` skip the FTS refresh.
-4. Report staleness on stderr, using the live-versus-indexed check rather than
-   result inspection. Update the cq skill to document the tradeoff.
-5. Decide item 5 above and return the best matching message per session by
-   default.
-6. Repeat the focused integration tests and the motivating real-corpus test.
+Still outstanding:
+
+1. **Update the cq skill** to document the freshness tradeoff, so an agent knows
+   a stale hit is expected and knows `--reindex` is the lever. The skill lives in
+   the `pickled-claude-plugins` repo, not here, so it is a separate change.
+2. **Decide whether the data revision from decision 2 is worth doing at all.**
+   The window already caps rebuild frequency, which was most of its value. What
+   remains is avoiding a rebuild when the window expires and nothing changed, on
+   an otherwise idle machine.
+3. **Re-check the numbers after the corpus grows**, using the monitoring queries
+   above rather than the figures recorded here.
 
 The public summary of the experiment and tradeoffs is also recorded in
 [this issue comment](https://github.com/technicalpickles/cq/issues/39#issuecomment-5440451213).

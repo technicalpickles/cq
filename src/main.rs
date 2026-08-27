@@ -101,6 +101,10 @@ enum Command {
         /// Filter by message type [valid: user, assistant]
         #[arg(long = "type", name = "type")]
         msg_type: Option<String>,
+
+        /// Show every matching message (default: best-scoring one per session)
+        #[arg(long = "all-matches")]
+        all_matches: bool,
     },
     /// List sessions
     Sessions {
@@ -400,12 +404,18 @@ fn main() -> Result<()> {
     let conn = db_setup.conn;
 
     match cli.command {
-        Command::Search { query, msg_type } => {
+        Command::Search {
+            query,
+            msg_type,
+            all_matches,
+        } => {
             search::run(
                 &conn,
                 &scope,
                 &query,
                 msg_type.as_deref(),
+                all_matches,
+                sync_mode,
                 &format,
                 cli.limit,
                 cli.offset,

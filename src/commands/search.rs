@@ -1,6 +1,7 @@
 use anyhow::Result;
 use duckdb::Connection;
 
+use crate::db::SyncMode;
 use crate::full_text;
 use crate::output::{self, OutputFormat};
 use crate::scope::QueryScope;
@@ -11,12 +12,14 @@ pub fn run(
     scope: &QueryScope,
     query: &str,
     msg_type: Option<&str>,
+    all_matches: bool,
+    sync_mode: SyncMode,
     format: &OutputFormat,
     limit: usize,
     offset: usize,
     wide: bool,
 ) -> Result<()> {
-    full_text::prepare(conn)?;
+    full_text::prepare(conn, sync_mode)?;
 
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = vec![Box::new(query.to_string())];
@@ -47,18 +50,35 @@ pub fn run(
     }
 
     let where_clause = conditions.join(" AND ");
-    let ranked_sql = format!(
-        "SELECT session_id, type, timestamp, text, score
-         FROM (
-             SELECT session_id, project, source, harness, type, timestamp, text,
-                    {schema}.match_bm25(document_id, ?) AS score
-             FROM {table}
-             WHERE {where_clause}
-         ) ranked
-         WHERE score IS NOT NULL",
+    let scored_sql = format!(
+        "SELECT session_id, type, timestamp, text,
+                {schema}.match_bm25(document_id, ?) AS score
+         FROM {table}
+         WHERE {where_clause}",
         schema = full_text::SEARCH_SCHEMA,
         table = full_text::SEARCH_TABLE,
     );
+
+    // The index is message-level, so a session that discussed a topic at length
+    // can crowd every other session off the page. Collapse to that session's
+    // best-scoring message by default and carry the passage count alongside it,
+    // so the signal that would otherwise be lost stays visible.
+    let ranked_sql = if all_matches {
+        format!("SELECT * FROM ({scored_sql}) s WHERE s.score IS NOT NULL")
+    } else {
+        format!(
+            "SELECT session_id, type, timestamp, text, score, match_count
+             FROM (
+                 SELECT s.*,
+                        ROW_NUMBER() OVER (PARTITION BY s.session_id
+                                           ORDER BY s.score DESC, s.timestamp DESC) AS rn,
+                        COUNT(*) OVER (PARTITION BY s.session_id) AS match_count
+                 FROM ({scored_sql}) s
+                 WHERE s.score IS NOT NULL
+             ) collapsed
+             WHERE rn = 1"
+        )
+    };
 
     let param_refs: Vec<&dyn duckdb::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let count: i64 = conn.query_row(
@@ -84,9 +104,15 @@ pub fn run(
 
     let limit_clause = super::limit_clause(limit);
     let offset_clause = super::offset_clause(offset);
+    let match_count_column = if all_matches {
+        ""
+    } else {
+        ", match_count AS matches"
+    };
     let sql = format!(
-        "SELECT session_id, type, timestamp, text, ROUND(score, 4) AS score
-         FROM ({ranked_sql}) matches
+        "SELECT session_id, type, timestamp, text,
+                ROUND(score, 4) AS score{match_count_column}
+         FROM ({ranked_sql}) ranked
          ORDER BY score DESC, timestamp DESC
          {limit_clause}
          {offset_clause}"
@@ -95,12 +121,14 @@ pub fn run(
     output::print_results(&mut stmt, &param_refs, format, wide)?;
 
     if !matches!(format, OutputFormat::Json) && limit > 0 && count as usize > limit + offset {
+        let unit = if all_matches { "messages" } else { "sessions" };
         eprintln!(
             "{}",
             crate::style::hint(&format!(
-                "Showing {} of {} results. Use --limit 0 for all.",
+                "Showing {} of {} matching {}. Use --limit 0 for all.",
                 limit,
-                count.saturating_sub(offset as i64)
+                count.saturating_sub(offset as i64),
+                unit
             ))
         );
     }

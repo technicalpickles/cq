@@ -109,8 +109,9 @@ fn search_ranks_stemmed_message_matches_and_refreshes_after_sync() {
     assert_eq!(rows[0]["text"], "list the files");
     assert!(rows[0]["score"].is_number());
 
-    // A normal transcript sync should make the persisted FTS index stale. The
-    // next search must rebuild it and find text from the newly-added file.
+    // A transcript sync makes the persisted FTS index stale. --reindex must
+    // rebuild it outright and find text from the newly-added file, rather than
+    // relying on the freshness comparison happening to fail.
     std::fs::copy(
         fixture_path("context_session.jsonl"),
         env.projects
@@ -119,10 +120,141 @@ fn search_ranks_stemmed_message_matches_and_refreshes_after_sync() {
     )
     .unwrap();
     cq_cmd(&env)
+        .args(["--all", "--reindex", "search", "NEEDLE"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("six NEEDLE"));
+}
+
+#[test]
+fn search_serves_a_stale_index_within_the_staleness_window() {
+    let env = setup_env(&["simple_session.jsonl"]);
+
+    // Build the index.
+    cq_cmd(&env)
+        .args(["--all", "search", "files"])
+        .assert()
+        .success();
+
+    std::fs::copy(
+        fixture_path("context_session.jsonl"),
+        env.projects
+            .path()
+            .join("-Users-test-myproject/context_session.jsonl"),
+    )
+    .unwrap();
+
+    // Inside the window the index is left alone, so the new file is not
+    // searchable yet and cq says so instead of pretending it covered it.
+    cq_cmd(&env)
+        .args(["--all", "search", "NEEDLE"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("six NEEDLE").not())
+        .stderr(predicate::str::contains("Search index is"))
+        .stderr(predicate::str::contains("--reindex rebuilds it"));
+
+    // A zero-length window opts back into refresh-on-every-search.
+    cq_cmd(&env)
+        .env("CQ_FTS_MAX_AGE", "0s")
         .args(["--all", "search", "NEEDLE"])
         .assert()
         .success()
         .stdout(predicate::str::contains("six NEEDLE"));
+}
+
+#[test]
+fn search_warns_when_the_callers_own_session_is_ahead_of_the_index() {
+    let env = setup_env(&["simple_session.jsonl"]);
+
+    cq_cmd(&env)
+        .args(["--all", "search", "files"])
+        .assert()
+        .success();
+
+    // context_session.jsonl is not in the index yet. A caller running inside
+    // that session is exactly who a stale index misleads, because their own
+    // recent messages are the ones missing.
+    std::fs::copy(
+        fixture_path("context_session.jsonl"),
+        env.projects
+            .path()
+            .join("-Users-test-myproject/context_session.jsonl"),
+    )
+    .unwrap();
+
+    cq_cmd(&env)
+        .env("CLAUDE_SESSION_ID", "cccc0000-0000-0000-0000-000000000001")
+        .args(["--all", "search", "files"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Your current session has messages that are not in it yet",
+        ));
+
+    // An unrelated caller gets the plain staleness line, without the escalation.
+    cq_cmd(&env)
+        .env("CLAUDE_SESSION_ID", "dddd0000-0000-0000-0000-000000000002")
+        .args(["--all", "search", "files"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Search index is"))
+        .stderr(predicate::str::contains("Your current session").not());
+}
+
+#[test]
+fn search_without_an_index_refuses_to_build_one_under_no_reindex() {
+    let env = setup_env(&["simple_session.jsonl"]);
+
+    cq_cmd(&env)
+        .args(["--all", "--no-reindex", "search", "files"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No search index exists yet"));
+}
+
+#[test]
+fn search_collapses_to_best_message_per_session() {
+    // simple_session.jsonl mentions "files" in three separate messages. Without
+    // collapsing, one chatty session would fill the whole result page.
+    let env = setup_env(&["simple_session.jsonl", "context_session.jsonl"]);
+
+    let output = cq_cmd(&env)
+        .args(["--all", "--json", "search", "files"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.len(), 1, "expected one row per session, got {rows:?}");
+    assert_eq!(rows[0]["session_id"], "sess-001");
+    assert_eq!(
+        rows[0]["matches"], 3,
+        "collapsed row should report how many messages matched"
+    );
+
+    // --all-matches opts back into every matching passage, and drops the
+    // per-session count that only makes sense when collapsing.
+    let output = cq_cmd(&env)
+        .args(["--all", "--json", "search", "files", "--all-matches"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        rows.len(),
+        3,
+        "expected every matching message, got {rows:?}"
+    );
+    assert!(rows.iter().all(|r| r["session_id"] == "sess-001"));
+    assert!(rows[0].get("matches").is_none());
 }
 
 #[test]

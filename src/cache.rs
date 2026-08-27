@@ -78,10 +78,15 @@ fn rebuild(conn: &Connection) -> Result<()> {
     )?;
 
     conn.execute_batch(
+        // fts_sync_at answers \"has the data changed since we indexed?\" and
+        // fts_built_at answers \"how old is the index?\". The staleness window
+        // needs both: a rebuild is only worth doing when data actually moved,
+        // and only once the index has aged past the window.
         "CREATE TABLE cache_meta (
             version INTEGER NOT NULL,
             last_sync_at BIGINT NOT NULL DEFAULT 0,
-            fts_sync_at BIGINT NOT NULL DEFAULT -1
+            fts_sync_at BIGINT NOT NULL DEFAULT -1,
+            fts_built_at BIGINT NOT NULL DEFAULT 0
         );
 
         CREATE TABLE file_registry (
@@ -135,8 +140,23 @@ pub fn fts_sync_at(conn: &Connection) -> Result<i64> {
     Ok(ts)
 }
 
-/// Mark the persisted FTS index as covering the current transcript sync.
-pub fn set_fts_sync_at(conn: &Connection, ts: i64) -> Result<()> {
-    conn.execute("UPDATE cache_meta SET fts_sync_at = ?", [ts])?;
+/// Mark the persisted FTS index as covering the given transcript sync, built at
+/// the given wall-clock time (both nanoseconds since the epoch).
+pub fn set_fts_built(conn: &Connection, sync_at: i64, built_at: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE cache_meta SET fts_sync_at = ?, fts_built_at = ?",
+        [sync_at, built_at],
+    )?;
     Ok(())
+}
+
+/// Wall-clock time the persisted FTS index was last built, in nanoseconds since
+/// the epoch. Returns 0 when no index has been built.
+pub fn fts_built_at(conn: &Connection) -> Result<i64> {
+    let ts: i64 = conn
+        .query_row("SELECT fts_built_at FROM cache_meta LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .with_context(|| "Failed to read fts_built_at")?;
+    Ok(ts)
 }
