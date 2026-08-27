@@ -140,6 +140,14 @@ pub fn sync_sources(
     }
     agg.total = count_registry(conn)?;
 
+    // Known gap: this watermark is global, but a scoped sync only scanned part
+    // of the tree. After `cq --project foo ...`, last_sync_at claims coverage of
+    // everything, so the Auto-mode check above (max_dir_mtime vs last_sync) can
+    // skip a project whose files changed before this write but were never in
+    // scope. Those changes stay unindexed until that project is touched again.
+    // Only Auto mode is affected; Force ignores the watermark entirely. The
+    // single write is deliberate for the multi-source case documented above, so
+    // the fix is a per-scope watermark, not moving this back inside the loop.
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as i64)
