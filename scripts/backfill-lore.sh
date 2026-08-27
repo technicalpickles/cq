@@ -5,9 +5,14 @@
 # AGENTS convention: record what was asked and the decision made, skip
 # one-off asks and noise), then commits one lore commit per session.
 #
-# Idempotent: skips any session already referenced in `lore log`, so it's
-# safe to rerun on this machine or point at a different machine's session
-# history later.
+# Idempotent: skips any session already referenced in `lore log` (the
+# correctness guarantee -- safe to rerun on this machine or point at a
+# different machine's session history later), AND any session already
+# recorded in the local seen-file (a plain, non-lore checkpoint of every
+# session examined so far, whether or not it produced a commit -- most
+# sessions produce no durable decisions, so without this a run
+# interrupted partway through would rescan the same empty sessions from
+# the start every time instead of resuming past them).
 #
 # Must be run from a lore repository (`lore init` first) that isn't a
 # throwaway worktree -- .lore isn't git-tracked, so a worktree removal
@@ -18,22 +23,27 @@
 #   scripts/backfill-lore.sh --limit 10     # pilot run: first N unprocessed sessions
 #   scripts/backfill-lore.sh --dry-run      # print what would be staged/committed
 #   scripts/backfill-lore.sh --chunk-size 60
+#   scripts/backfill-lore.sh --seen-file .backfill-seen   # default; safe to delete to force a full rescan
 
 set -euo pipefail
 
 CHUNK_SIZE=40
 LIMIT=0
 DRY_RUN=0
+SEEN_FILE=".backfill-seen"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --limit) LIMIT="$2"; shift 2 ;;
     --chunk-size) CHUNK_SIZE="$2"; shift 2 ;;
+    --seen-file) SEEN_FILE="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+touch "$SEEN_FILE"
 
 for bin in cq lore claude jq; do
   command -v "$bin" >/dev/null || { echo "error: '$bin' not found on PATH" >&2; exit 1; }
@@ -84,7 +94,12 @@ while IFS= read -r session_id; do
     break
   fi
 
+  if grep -qxF "$session_id" "$SEEN_FILE" 2>/dev/null; then
+    continue
+  fi
+
   if lore log 2>/dev/null | grep -q "session $session_id"; then
+    echo "$session_id" >> "$SEEN_FILE"
     continue
   fi
 
@@ -99,6 +114,7 @@ while IFS= read -r session_id; do
   message_count=$(printf '%s\n' "$all_messages" | jq 'length')
 
   if [[ "$message_count" -eq 0 ]]; then
+    echo "$session_id" >> "$SEEN_FILE"
     processed=$((processed + 1))
     continue
   fi
@@ -144,6 +160,7 @@ while IFS= read -r session_id; do
     fi
   fi
 
+  [[ "$DRY_RUN" -eq 0 ]] && echo "$session_id" >> "$SEEN_FILE"
   processed=$((processed + 1))
 done < <(cq sessions --fields session_id,started_at --json --no-reindex --limit 0 \
   | jq -r 'sort_by(.started_at) | .[].session_id')
