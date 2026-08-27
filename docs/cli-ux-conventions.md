@@ -145,6 +145,18 @@ cq messages --grep "docker" --grep "podman"   # either term
 
 Before `--result-grep`, searching tool output text required raw SQL with a `tool_calls JOIN tool_results` — there was no subcommand path to it at all.
 
+## Ranked full-text search (`cq search`)
+
+`cq search <QUERY>` searches message text with DuckDB's BM25 full-text index.
+Unlike `messages --grep`, it tokenizes and stems words, then sorts matches by
+relevance instead of timestamp. It accepts the global scope, pagination, and
+output flags plus `--type user|assistant`.
+
+The FTS index is a physical snapshot because DuckDB's FTS extension does not
+update indexes when the input changes. cq records which transcript sync the
+snapshot covers and rebuilds it lazily on the next search. Commands that do not
+search never load the extension or pay the rebuild cost.
+
 ## Context flags (`-A`/`-B`/`-C`)
 
 cq mirrors grep's context flags on `tools` and `messages`:

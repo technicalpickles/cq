@@ -38,6 +38,12 @@ fn cq_cmd(env: &TestEnv) -> Command {
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
     cmd.env("CQ_CACHE_DIR", env.cache.path());
     cmd.env("CQ_CODEX_SESSIONS_DIR", env.codex_sessions.path());
+    // Runtime extensions are shared across integration-test cache directories,
+    // so the FTS binary only needs to be downloaded once.
+    cmd.env(
+        "CQ_DUCKDB_EXTENSION_DIR",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-duckdb-extensions"),
+    );
     // Isolate from any real cenv envs on the host so only CQ_PROJECTS_DIR is indexed.
     cmd.env("CENV_BASE", env.cache.path().join("no-such-cenv-base"));
     // Test commands should exercise their chosen runtime explicitly, rather
@@ -80,8 +86,43 @@ fn help_shows_commands() {
         .assert()
         .success()
         .stdout(predicate::str::contains("sessions"))
+        .stdout(predicate::str::contains("search"))
         .stdout(predicate::str::contains("tools"))
         .stdout(predicate::str::contains("sql"));
+}
+
+#[test]
+fn search_ranks_stemmed_message_matches_and_refreshes_after_sync() {
+    let env = setup_env(&["simple_session.jsonl"]);
+
+    let output = cq_cmd(&env)
+        .args(["--all", "--json", "search", "listing", "--type", "user"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["text"], "list the files");
+    assert!(rows[0]["score"].is_number());
+
+    // A normal transcript sync should make the persisted FTS index stale. The
+    // next search must rebuild it and find text from the newly-added file.
+    std::fs::copy(
+        fixture_path("context_session.jsonl"),
+        env.projects
+            .path()
+            .join("-Users-test-myproject/context_session.jsonl"),
+    )
+    .unwrap();
+    cq_cmd(&env)
+        .args(["--all", "search", "NEEDLE"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("six NEEDLE"));
 }
 
 #[test]

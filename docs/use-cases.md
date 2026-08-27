@@ -2,6 +2,21 @@
 
 Real investigations, real findings. Each of these surfaced something that would have been difficult or impossible to spot without querying the session logs directly.
 
+## Find a Session When You Only Remember the Topic
+
+*You remember discussing how to review a document as a new reader, but not
+whether you called it a “cold read,” an “outsider review,” or something else.*
+
+```bash
+cq search "cold reading unfamiliar vocabulary" --type user --all
+```
+
+`cq search` stems the query terms, finds matching message text, and ranks it by
+BM25 relevance. Add `--type user` when you specifically want prompts you wrote;
+omit it to search assistant replies too. This is still lexical search, so it can
+bridge word forms such as “migrate” and “migration,” but not unrelated wording
+that expresses the same concept.
+
 ## Skill Activation Gaps
 
 You saw this one in the [README](../README.md). Here's the full picture.

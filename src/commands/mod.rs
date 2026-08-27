@@ -3,6 +3,7 @@ pub mod hooks;
 pub mod messages;
 pub mod projects;
 pub mod schema;
+pub mod search;
 pub mod sessions;
 pub mod sql;
 pub mod tools;

@@ -3,6 +3,7 @@ pub mod claude_provider;
 pub mod codex_provider;
 pub mod commands;
 pub mod db;
+pub mod full_text;
 pub mod indexer;
 pub mod output;
 pub mod provider;

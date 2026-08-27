@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use cq::claude_provider::ClaudeProvider;
 use cq::codex_provider::CodexProvider;
-use cq::commands::{hooks, messages, projects, schema, sessions, sql, tools};
+use cq::commands::{hooks, messages, projects, schema, search, sessions, sql, tools};
 use cq::db;
 use cq::output::OutputFormat;
 use cq::scope::QueryScope;
@@ -93,6 +93,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Search message text by relevance (BM25 full-text search)
+    Search {
+        /// Words to search for (terms are stemmed and ranked by relevance)
+        query: String,
+
+        /// Filter by message type [valid: user, assistant]
+        #[arg(long = "type", name = "type")]
+        msg_type: Option<String>,
+    },
     /// List sessions
     Sessions {
         /// Filter sessions by content (repeatable; matches any pattern, e.g. --grep a --grep b)
@@ -391,6 +400,18 @@ fn main() -> Result<()> {
     let conn = db_setup.conn;
 
     match cli.command {
+        Command::Search { query, msg_type } => {
+            search::run(
+                &conn,
+                &scope,
+                &query,
+                msg_type.as_deref(),
+                &format,
+                cli.limit,
+                cli.offset,
+                wide,
+            )?;
+        }
         Command::Sessions {
             grep,
             fields,
