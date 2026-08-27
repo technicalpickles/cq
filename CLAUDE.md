@@ -38,7 +38,7 @@ style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
 views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the five views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
-full_text.rs      Lazy physical message snapshot + DuckDB FTS index lifecycle
+full_text.rs      Lazy physical message snapshot + DuckDB FTS index lifecycle, staleness window, stale-serve reporting
 indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, fs2 file lock; recurses into <session>/subagents/** and captures agentType from meta.json
 sync_scope.rs     SyncScope: narrows which files the indexer touches (derived from --project etc.)
 provider.rs       TranscriptProvider trait

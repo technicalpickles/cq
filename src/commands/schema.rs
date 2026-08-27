@@ -110,8 +110,12 @@ const SESSIONS_SCHEMA: &str = r#"sessions
 const EXAMPLE_QUERIES: &str = r#"Example Queries
 ===============
 
-Ranked full-text message search (built-in command):
+Ranked full-text message search (built-in command).
+Returns the best-scoring message per session, with a match count:
   cq search "dependency migration" --since 30d --type user
+
+Every matching passage instead of one per session:
+  cq search "dependency migration" --all-matches
 
 All Bash commands:
   SELECT session_id, timestamp, json_extract_string(input, '$.command') AS command

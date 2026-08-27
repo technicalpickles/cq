@@ -13,6 +13,7 @@ user_invocable: true
 | Command | Purpose |
 |---------|---------|
 | `cq sessions` | List sessions with metadata |
+| `cq search "<QUERY>"` | Relevance-ranked full-text search over message text |
 | `cq tools [NAME]` | Query tool calls, optionally filtered by tool name |
 | `cq messages` | Query user/assistant messages |
 | `cq projects` | Summarize projects by session/message/tool counts |
@@ -35,6 +36,7 @@ user_invocable: true
 ## Subcommand Flags
 
 - **sessions**: `--grep` (filter by content, repeatable/OR)
+- **search**: `--type user|assistant`, `--all-matches` (every matching message rather than the best one per session)
 - **tools**: `--grep` (filter inputs, repeatable/OR), `--result-grep` (filter by tool result content, repeatable/OR, ANDs with `--errors`), `--errors` (errors only), `--fields` (extract input fields as columns)
 - **messages**: `--type user|assistant`, `--grep` (repeatable/OR)
 
@@ -73,6 +75,46 @@ WHERE tc.name = 'advisor'
 ORDER BY tc.timestamp DESC
 LIMIT 20;
 ```
+
+## Full-Text Search (`cq search`)
+
+Reach for `cq search` when you know roughly *what was discussed* but not the
+exact wording. It ranks by BM25 relevance with stemming, so `cq search "dependency
+migrations"` matches "migrate a dependency". Reach for `messages --grep` instead
+when you need an exact substring, or when the ordering you want is chronological
+rather than by relevance.
+
+Terms are OR'd, not AND'd, so a multi-word query casts a wide net and leans on
+ranking to sort it out. That is usually what you want, since it is what lets one
+natural-language query beat a hand-assembled pile of grep patterns.
+
+Results show the **best-scoring message per session**, plus a `matches` column
+counting how many messages in that session hit. This matters because the index is
+message-level and a session that discussed a topic at length would otherwise fill
+the entire page. Pass `--all-matches` when you want every matching passage, for
+example to read how a discussion developed within one session.
+
+### Search results can be up to 5 minutes stale
+
+The search index is a snapshot, and rebuilding it costs several times a normal
+query, so cq lets it lag rather than rebuilding on every search. **A slightly
+stale hit is expected behavior, not a bug.**
+
+When cq serves a stale index it says so on stderr, and it escalates the message
+when your own current session is among what is missing. Do not suppress stderr on
+a `cq search` pipe or you will lose that signal.
+
+What to do about it:
+
+- Searching for something from **the conversation you are in right now**, or from
+  the last few minutes: pass `--reindex`. This is the main case where the default
+  will genuinely mislead you, because your recent messages may simply not be in
+  the index, so you get no hit and nothing looks wrong.
+- Searching your **history** (the overwhelmingly common case): ignore it. Five
+  minutes of lag is irrelevant when the target is from last week.
+- `CQ_FTS_MAX_AGE` changes the window (`0s` refreshes every search, `1h` is
+  lazier). `--no-reindex` skips the refresh entirely and errors if no index has
+  been built yet.
 
 ## Working With cq
 
