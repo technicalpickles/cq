@@ -57,7 +57,12 @@ lore status >/dev/null 2>&1 || {
 distill_chunk() {
   local chunk_json="$1"
   local prompt
-  prompt=$(cat <<PROMPT
+  # read -d '' (not $(cat <<HEREDOC)) because macOS's stock /bin/bash (3.2,
+  # what `#!/usr/bin/env bash` resolves to without Homebrew bash ahead on
+  # PATH) mis-parses a heredoc nested inside a $(...) once the body contains
+  # an apostrophe: it scans for quote-balance while hunting the closing ')'
+  # and doesn't exempt heredoc body text, so "cq's" below broke it.
+  IFS= read -r -d '' prompt <<PROMPT || true
 You are extracting durable project decisions from one chunk of a past
 terminal session. The session's working directory was cq's repo (a Rust
 CLI for querying Claude Code session transcripts via DuckDB), but that
@@ -81,7 +86,6 @@ no other text before or after the JSON.
 Conversation chunk (JSON messages, each with "type" and "text"):
 $chunk_json
 PROMPT
-)
   claude -p "$prompt" --output-format text </dev/null 2>/dev/null | sed -e '/^```/d'
 }
 
