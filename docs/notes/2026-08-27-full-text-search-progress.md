@@ -200,11 +200,11 @@ branch and the whole feature still lands as a single bump. The TTL needs a
 wall-clock `fts_built_at` alongside the data revision, since those answer
 different questions.
 
-### 2. Track data changes, not completed scans
+### 2. Track data changes, not completed scans — considered, dropped
 
 `sync_sources` writes `last_sync_at = now_ns` unconditionally once it takes the
-lock, so a scan that changes nothing still invalidates the FTS snapshot. Replace
-the comparison with a data revision that advances only when rows are added,
+lock, so a scan that changes nothing still invalidates the FTS snapshot. The fix
+on the table was a data revision that advances only when rows are added,
 changed, or removed:
 
 ```rust
@@ -213,26 +213,28 @@ if agg.added + agg.changed + agg.removed > 0 {
 }
 ```
 
-Two things to keep in perspective.
+Dropped, because it buys less than it appears to once the 5-minute window from
+decision 3 is in place, and what it does buy costs a new `cache_meta` column and
+a second comparison path (revision instead of, or alongside, the timestamp).
 
-This buys less than it appears. The `indexer.rs:61` early return already bails
-before the lock when no directory mtime advanced, and it does not write the
-watermark. A false bump needs a directory mtime to move without any indexed
-`.jsonl` changing, which is uncommon. Meanwhile the dominant rebuild trigger is
-a true positive: running `cq search` from a live session means that session's
-own transcript just changed. The rebuild fires either way, correctly. The
-staleness window in decision 3 is what addresses that, not this.
+The `indexer.rs:61` early return already bails before the lock when no directory
+mtime advanced, and it does not write the watermark. A false bump needs a
+directory mtime to move without any indexed `.jsonl` changing, which is
+uncommon. Meanwhile the dominant rebuild trigger is a true positive: running
+`cq search` from a live session means that session's own transcript just
+changed, so the revision would advance and the rebuild would fire anyway. That
+leaves exactly one case this would help: an otherwise idle machine where the
+5-minute window expires with nothing having changed in the meantime, triggering
+a rebuild that a revision check would have skipped. Narrow, and no evidence yet
+that it happens often enough to matter (see the monitoring queries below).
 
-The forced-rebuild path survives this change, but only by accident, so it should
-not be left resting on one. `--reindex` drops the FTS schema and table outright
-as part of the cache rebuild described above, so `search_objects_exist()` returns
-false and `prepare()` rebuilds no matter how freshness is compared. That holds
-whether the comparison uses a timestamp or a data revision.
+The forced-rebuild path is unaffected either way. `--reindex` drops the FTS
+schema and table outright as part of the cache rebuild described above, so
+`search_objects_exist()` returns false and `prepare()` rebuilds no matter how
+freshness is compared.
 
-`SyncMode` is threaded into `prepare()` anyway, with an explicit
-`SyncMode::Force => rebuild` arm. It is redundant with the drop today, and it is
-there so that a future change to what `--reindex` clears cannot quietly leave a
-stale index unfixable by any flag.
+Revisit if the monitoring below shows idle-window rebuilds are common enough to
+be worth the extra state.
 
 ### 3. Bounded staleness, 5 minute default
 
@@ -404,12 +406,10 @@ Still outstanding:
 1. **Update the cq skill** to document the freshness tradeoff, so an agent knows
    a stale hit is expected and knows `--reindex` is the lever. The skill lives in
    the `pickled-claude-plugins` repo, not here, so it is a separate change.
-2. **Decide whether the data revision from decision 2 is worth doing at all.**
-   The window already caps rebuild frequency, which was most of its value. What
-   remains is avoiding a rebuild when the window expires and nothing changed, on
-   an otherwise idle machine.
-3. **Re-check the numbers after the corpus grows**, using the monitoring queries
+2. **Re-check the numbers after the corpus grows**, using the monitoring queries
    above rather than the figures recorded here.
+
+Decision 2 (the data revision) was decided against; see that section for why.
 
 The public summary of the experiment and tradeoffs is also recorded in
 [this issue comment](https://github.com/technicalpickles/cq/issues/39#issuecomment-5440451213).
