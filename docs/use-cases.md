@@ -2,6 +2,39 @@
 
 Real investigations, real findings. Each of these surfaced something that would have been difficult or impossible to spot without querying the session logs directly.
 
+## Find a Session When You Only Remember the Topic
+
+*You remember discussing how to review a document as a new reader, but not
+whether you called it a “cold read,” an “outsider review,” or something else.*
+
+```bash
+cq search "cold reading unfamiliar vocabulary" --type user --all
+```
+
+`cq search` stems the query terms, finds matching message text, and ranks it by
+BM25 relevance. Add `--type user` when you specifically want prompts you wrote;
+omit it to search assistant replies too. This is still lexical search, so it can
+bridge word forms such as “migrate” and “migration,” but not unrelated wording
+that expresses the same concept.
+
+Each row is one session, showing its best-scoring message and a `matches` count
+of how many messages in it hit. That count is a useful signal on its own: a
+session with 200 matches spent real time on the topic, while one with 2 mentioned
+it in passing. Once you have found the session, read the discussion itself:
+
+```bash
+# Every matching passage, not just the best one per session
+cq search "cold reading unfamiliar vocabulary" --all-matches --all
+
+# Or drill into the session you found, with surrounding context
+cq messages --session <id> --grep "cold read" -C 3
+```
+
+Results can be up to five minutes behind your transcripts, and cq says so on
+stderr when they are. That is fine when hunting through history, which is what
+this use case is. Add `--reindex` if you are searching for something from the
+conversation you are in right now.
+
 ## Skill Activation Gaps
 
 You saw this one in the [README](../README.md). Here's the full picture.

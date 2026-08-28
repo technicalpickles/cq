@@ -83,6 +83,7 @@ cargo install --git https://github.com/technicalpickles/cq
 
 ```bash
 cq sessions                              # your recent sessions
+cq search "dependency migration"         # ranked full-text search across messages
 cq tools                                 # tool usage, ranked
 cq messages --grep "docker" --since 7d   # search your history
 cq tools --errors --result-grep "ECONNREFUSED"  # what failed, and why
@@ -91,6 +92,22 @@ cq sql "SELECT count(*) FROM messages"   # run anything
 ```
 
 Run `cq schema --examples` for a query cookbook.
+
+`cq search` uses BM25 relevance ranking with stemming, so a query such as
+`cq search "dependency migrations"` can match messages containing “migrate a
+dependency.” Results show the best-scoring message per session with a `matches`
+count of how many messages in that session hit; `--all-matches` returns every
+matching passage instead. This is lexical search rather than semantic search:
+related ideas expressed with wholly different vocabulary still require
+embeddings.
+
+The first search downloads DuckDB's official `fts` extension into the cq cache
+and builds a search index, which takes a while on a large corpus. After that the
+index is allowed to lag up to five minutes behind your transcripts, because
+rebuilding it costs several times a normal query and searches tend to come in
+bursts. When cq serves a stale index it says so on stderr. Use `--reindex` to
+rebuild on demand, `CQ_FTS_MAX_AGE` to change the window (`0s` refreshes on
+every search, `1h` is lazier), and `--no-reindex` to skip the refresh entirely.
 
 ## Common flags
 
@@ -106,6 +123,8 @@ Run `cq schema --examples` for a query cookbook.
 | `--no-color` | | Disable colored output |
 | `--limit <n>` | | Max results (default: 50, 0 for unlimited) |
 | `--offset <n>` | | Skip first N results |
+| `--type <type>` | | Filter message results (`user` or `assistant`; messages, search) |
+| `--all-matches` | | Every matching message instead of the best per session (search) |
 | `--version` | `-V` | Print the cq version |
 | `-A N` | | Show N messages after each match (messages, tools) |
 | `-B N` | | Show N messages before each match (messages, tools) |

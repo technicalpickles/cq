@@ -64,30 +64,41 @@ impl QueryScope {
             Some(s) => s,
             None => return Ok(None),
         };
-
-        let len = since.len();
-        if len < 2 {
-            return Err(anyhow!(
-                "Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"
-            ));
-        }
-
-        let (num_str, unit) = since.split_at(len - 1);
-        let num: i64 = num_str.parse().map_err(|_| {
-            anyhow!(
-                "Invalid duration '{since}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"
-            )
-        })?;
-
-        let duration = match unit {
-            "d" => Duration::days(num),
-            "h" => Duration::hours(num),
-            "m" => Duration::minutes(num),
-            _ => return Err(anyhow!("Unknown duration unit '{unit}' in '{since}'\nValid units: d (days), h (hours), m (minutes)")),
-        };
-
-        Ok(Some(Utc::now() - duration))
+        Ok(Some(Utc::now() - parse_duration(since)?))
     }
+}
+
+/// Parse a `<number><unit>` duration such as `7d`, `24h`, or `30m`. Shared by
+/// `--since` and by the search index's staleness window, so both accept exactly
+/// the same grammar.
+pub fn parse_duration(value: &str) -> Result<Duration> {
+    let len = value.len();
+    if len < 2 {
+        return Err(anyhow!(
+            "Invalid duration '{value}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)"
+        ));
+    }
+
+    let (num_str, unit) = value.split_at(len - 1);
+    let num: i64 = num_str.parse().map_err(|_| {
+        anyhow!("Invalid duration '{value}'\nExpected format: <number><unit> (e.g. 7d, 24h, 30m)")
+    })?;
+
+    match unit {
+        "d" => Ok(Duration::days(num)),
+        "h" => Ok(Duration::hours(num)),
+        "m" => Ok(Duration::minutes(num)),
+        "s" => Ok(Duration::seconds(num)),
+        _ => Err(anyhow!("Unknown duration unit '{unit}' in '{value}'\nValid units: d (days), h (hours), m (minutes), s (seconds)")),
+    }
+}
+
+/// The Claude session this process is running inside, if any. Mirrors the Codex
+/// helpers above: a pure function for testing, plus a thin environment reader.
+pub fn active_claude_session() -> Option<String> {
+    std::env::var("CLAUDE_SESSION_ID")
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 /// SQL predicate for CQ's Claude-only `--source` dimension.

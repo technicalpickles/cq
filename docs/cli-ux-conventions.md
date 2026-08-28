@@ -145,6 +145,67 @@ cq messages --grep "docker" --grep "podman"   # either term
 
 Before `--result-grep`, searching tool output text required raw SQL with a `tool_calls JOIN tool_results` — there was no subcommand path to it at all.
 
+## Ranked full-text search (`cq search`)
+
+`cq search <QUERY>` searches message text with DuckDB's BM25 full-text index.
+Unlike `messages --grep`, it tokenizes and stems words, then sorts matches by
+relevance instead of timestamp. It accepts the global scope, pagination, and
+output flags plus `--type user|assistant` and `--all-matches`.
+
+Global filters compose with search in the same way they compose with other
+built-in commands. For example, this returns every matching passage from one
+session:
+
+```bash
+cq search "dependency migration" --session <SESSION_ID> --all-matches
+```
+
+Results are collapsed to the best-scoring message per session, with a `matches`
+column counting how many messages in that session hit. The index is
+message-level, so without collapsing, one session that discussed a topic at
+length crowds every other session off the page. `--all-matches` returns every
+matching passage instead, and drops the `matches` column, which only means
+something when collapsing. `--limit` and the "Showing N of M" hint count whatever
+unit is in play, sessions by default and messages under `--all-matches`.
+
+Default and `--table` output use the shared tabular renderer. `--json` returns an
+array of objects with `session_id`, `type`, `timestamp`, `text`, and `score`;
+collapsed results also include `matches`. An empty JSON result is `[]`.
+
+Search keeps operational notices separate from result data:
+
+| Condition | Default / `--table` | `--json` |
+|---|---|---|
+| No matches | `No results.` and active-filter hint on stderr | Same stderr notice; `[]` on stdout |
+| Stale index | Freshness and `--reindex` hint on stderr | Same stderr hint; JSON stdout remains valid |
+| Result limit reached | `Showing N of M` hint on stderr | No hint, matching other JSON subcommand paths |
+
+The FTS index is a physical snapshot because DuckDB's FTS extension does not
+update indexes when the input changes. Commands that do not search never load
+the extension or pay the rebuild cost.
+
+Rebuilding that snapshot costs several times a normal query, so cq treats
+freshness as a budget rather than a guarantee: the index may lag up to
+`CQ_FTS_MAX_AGE` (default `5m`) behind the transcripts. This follows the
+stale-but-available principle in `docs/design-principles.md`, and the same rule
+that explicit beats smart still applies, so `--reindex` forces a rebuild and
+`--no-reindex` skips it. With no index at all, `--no-reindex` errors rather than
+silently paying for a build, because there is nothing stale to fall back on.
+`--reindex` rebuilds the complete transcript cache and FTS index even when a
+query filter such as `--session` is present; filters narrow results, not rebuild
+work. Targeted session refresh is not supported.
+
+Serving a stale index always prints why on stderr, following the `Hint:`
+convention. The message escalates when the caller's own session has content the
+index lacks, detected from `CLAUDE_SESSION_ID`. That check deliberately does not
+look at whether the caller's session appeared in the results: a stale index means
+recent messages are absent, so the failure worth surfacing is the false negative,
+which inspecting results cannot reveal.
+
+The 5-minute default is derived from measured usage rather than taste. See
+`docs/notes/2026-08-27-full-text-search-evaluation.md` for the dated evidence and
+the monitoring queries to re-check it against.
+
 ## Context flags (`-A`/`-B`/`-C`)
 
 cq mirrors grep's context flags on `tools` and `messages`:

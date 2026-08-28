@@ -40,6 +40,10 @@ If something goes wrong during indexing (lock contention, filesystem issues), se
 
 This applies to concurrent access especially: multiple processes running CQ simultaneously should never cause failures. The worst case is one process uses slightly older data.
 
+Staleness is also a deliberate default, not only a fallback. `cq search` lets its index lag up to `CQ_FTS_MAX_AGE` (default `5m`) behind the transcripts, because rebuilding it costs several times a normal query while cq invocations arrive in bursts seconds apart. Refreshing on every search would spend most of a burst rebuilding an index for data nobody queries: measured over 479 historical invocations, none targeted the caller's own live session and the shortest time window ever requested was 24 hours. As always, serving stale means saying so on stderr, and here that includes a sharper warning when the caller's own session is what the index is missing.
+
+The one place cq refuses to serve stale is when there is nothing to serve. `--no-reindex` with no search index at all errors instead of silently paying for a build, because "stale" is not an option that exists yet.
+
 ## Explicit always wins
 
 Automatic behavior (smart sync, mtime checks, lock fallbacks) should do the right thing by default. But when the user says `--reindex` or `--no-reindex`, that overrides all smartness. The escape hatch is never hidden, never conditional.

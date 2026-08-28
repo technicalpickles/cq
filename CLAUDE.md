@@ -17,6 +17,20 @@ The input format is not ours and is not a documented contract. Before you write 
 | `CONTEXT.md` | Harness / Provider / Source glossary |
 | `docs/adr/` | Decisions with lasting consequences |
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the canonical triage-label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.
+
 ## Architecture
 
 ```
@@ -27,6 +41,7 @@ commands/
   tools.rs        Tool call queries + summary mode (no filters = grouped counts)
   hooks.rs        Hook event queries + summary mode (mirrors tools.rs)
   messages.rs     Message queries
+  search.rs       BM25-ranked full-text search over the persisted message search index
   projects.rs     `cq projects`: per-project session/message/tool/skill counts
   context.rs      ContextSqlBuilder: grep-style context windows (-C/--after/--before)
   mod.rs          Shared arg validators (count-by, fields, context-window conflicts)
@@ -37,6 +52,7 @@ style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
 views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the five views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
+full_text.rs      Alternating physical message snapshots + DuckDB FTS index lifecycle, atomic generation swap, staleness reporting
 indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, fs2 file lock; recurses into <session>/subagents/** and captures agentType from meta.json
 sync_scope.rs     SyncScope: narrows which files the indexer touches (derived from --project etc.)
 provider.rs       TranscriptProvider trait
@@ -53,6 +69,7 @@ CQ is a query tool, not a monitoring tool. Built-in commands infer current-conte
 
 - **Commands build SQL + params, output renders.** Each command constructs a WHERE clause with `?` placeholders, collects params in a `Vec<Box<dyn ToSql>>`, and passes both to `output::print_results`.
 - **Persistent cache + incremental sync.** `cache.rs` opens the cache DB and handles schema versioning. `indexer.rs` walks files, checks mtime + size against `file_registry`, and only re-parses what changed. `fs2` file locking serializes concurrent writers; readers fall back to cached data when the lock is busy. How the scan handles nested subagent files, and why `index_files` stages rows in a temp table before inserting, both follow from the on-disk format: `docs/session-storage.md`.
+- **Full-text search trades freshness for latency, on purpose.** DuckDB's FTS index targets alternating physical `cq_fts_messages_0` / `_1` snapshots because `messages` is a composed view and FTS indexes do not update automatically. A refresh builds the inactive generation completely, then atomically switches `cache_meta.fts_slot`; failed builds leave the active snapshot available. `fts_sync_at` records the transcript sync that snapshot covers, and `fts_built_at` records when it was built; the first answers "did the data move," the second "how old is this." `cq search` rebuilds only when the data moved *and* the index has aged past `CQ_FTS_MAX_AGE` (default 5m), because a rebuild costs several times a normal query while the median gap between cq invocations is ~16s. Serving stale always prints why on stderr, with a sharper warning when the caller's own session is ahead of the index (checked via `CLAUDE_SESSION_ID`, not by inspecting results, so false negatives get caught). `--reindex` forces a corpus-wide cache and FTS rebuild even when query filters are present; `--no-reindex` skips refresh. Other commands never pay the FTS cost. Dated evidence behind the 5m default: `docs/notes/2026-08-27-full-text-search-evaluation.md`.
 - **SyncMode is explicit over smart.** `Auto` (default) does mtime fast-path + try-lock + skip-if-busy. `Force` (`--reindex`) waits for the lock and re-parses everything. `Skip` (`--no-reindex`) bypasses sync entirely. User flags always beat smart behavior.
 - **SyncScope narrows sync work.** A `--project` filter also restricts which files the indexer touches, not just which rows the query returns. Derived in `main.rs` from the CLI flags, passed through `db::setup_connection` into `indexer::sync`.
 - **Provider trait** abstracts a transcript *harness*. Beyond file discovery, a provider has `prepare(conn) -> bool` (is it active?) and `contribute_view_sql(view)` (a SELECT body); `views::compose_views` UNION ALLs the active providers' contributions, tagging rows with a `harness` column. Only `ClaudeProvider` exists today (always active; its bodies read `raw_records`); the seam is built for a second harness to plug in.

@@ -232,6 +232,16 @@ fn cache_meta_has_last_sync_at() {
         .query_row("SELECT last_sync_at FROM cache_meta", [], |r| r.get(0))
         .unwrap();
     assert_eq!(last_sync, 0);
+
+    let fts_sync: i64 = conn
+        .query_row("SELECT fts_sync_at FROM cache_meta", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(fts_sync, -1);
+
+    let fts_slot: i32 = conn
+        .query_row("SELECT fts_slot FROM cache_meta", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(fts_slot, 0);
 }
 
 #[test]
