@@ -108,6 +108,20 @@ fn search_ranks_stemmed_message_matches_and_refreshes_after_sync() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["text"], "list the files");
     assert!(rows[0]["score"].is_number());
+    for field in [
+        "session_id",
+        "type",
+        "timestamp",
+        "text",
+        "score",
+        "matches",
+    ] {
+        assert!(
+            rows[0].get(field).is_some(),
+            "search JSON should include '{field}': {}",
+            rows[0]
+        );
+    }
 
     // A transcript sync makes the persisted FTS index stale. --reindex must
     // rebuild it outright and find text from the newly-added file, rather than
@@ -145,14 +159,28 @@ fn search_serves_a_stale_index_within_the_staleness_window() {
     .unwrap();
 
     // Inside the window the index is left alone, so the new file is not
-    // searchable yet and cq says so instead of pretending it covered it.
-    cq_cmd(&env)
-        .args(["--all", "search", "NEEDLE"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("six NEEDLE").not())
-        .stderr(predicate::str::contains("Search index is"))
-        .stderr(predicate::str::contains("--reindex rebuilds it"));
+    // searchable yet and cq says so instead of pretending it covered it. The
+    // correctness hint belongs on stderr in every display format; JSON stdout
+    // must remain valid machine-readable data.
+    for format_args in [&[][..], &["--table"][..], &["--json"][..]] {
+        let mut args = vec!["--all"];
+        args.extend_from_slice(format_args);
+        args.extend_from_slice(&["search", "NEEDLE"]);
+        let output = cq_cmd(&env).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("six NEEDLE"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Search index is"), "stderr: {stderr}");
+        assert!(stderr.contains("--reindex rebuilds it"), "stderr: {stderr}");
+        if format_args == ["--json"] {
+            let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+            assert!(rows.is_empty());
+        }
+    }
 
     // A zero-length window opts back into refresh-on-every-search.
     cq_cmd(&env)
@@ -255,6 +283,66 @@ fn search_collapses_to_best_message_per_session() {
     );
     assert!(rows.iter().all(|r| r["session_id"] == "sess-001"));
     assert!(rows[0].get("matches").is_none());
+}
+
+#[test]
+fn search_can_return_all_matches_from_one_session() {
+    let env = setup_env(&["simple_session.jsonl", "context_session.jsonl"]);
+    let session = "cccc0000-0000-0000-0000-000000000001";
+
+    let output = cq_cmd(&env)
+        .args([
+            "--all",
+            "--json",
+            "--session",
+            session,
+            "search",
+            "NEEDLE",
+            "--all-matches",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|row| row["session_id"] == session));
+}
+
+#[test]
+fn search_distinguishes_no_matches_from_a_missing_session() {
+    let env = setup_env(&["context_session.jsonl"]);
+    let existing = "cccc0000-0000-0000-0000-000000000001";
+
+    cq_cmd(&env)
+        .args([
+            "--all",
+            "--json",
+            "--session",
+            existing,
+            "search",
+            "zzz-will-not-match",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::eq("[]\n"))
+        .stderr(predicate::str::contains("No results."))
+        .stderr(predicate::str::contains("Session cccc0000... not found.").not());
+
+    cq_cmd(&env)
+        .args([
+            "--all",
+            "--session",
+            "dddd0000-0000-0000-0000-000000000002",
+            "search",
+            "anything",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Session dddd0000... not found."));
 }
 
 #[test]

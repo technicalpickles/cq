@@ -87,8 +87,18 @@ pub fn run(
         |row| row.get(0),
     )?;
     if count == 0 {
-        if let Some(session) = &scope.session {
-            super::print_session_not_found(session);
+        let missing_session = if let Some(session) = &scope.session {
+            !session_exists(conn, session)?
+        } else {
+            false
+        };
+        if missing_session {
+            super::print_session_not_found(
+                scope
+                    .session
+                    .as_deref()
+                    .expect("missing session was checked"),
+            );
         } else {
             let mut extras = Vec::new();
             if msg_type.is_some() {
@@ -133,4 +143,16 @@ pub fn run(
         );
     }
     Ok(())
+}
+
+/// A scoped search can return no matches even when the session itself exists.
+/// Check the live messages view rather than the FTS snapshot so a newly-synced
+/// session is not mistaken for a missing one while the search index is stale.
+fn session_exists(conn: &Connection, session_id: &str) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM messages WHERE session_id = ?)",
+        [session_id],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
 }

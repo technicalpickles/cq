@@ -27,7 +27,7 @@ user_invocable: true
 - `--source <NAME>` - Scope to a named source (`main`, or a cenv env name); use `--all` to span every source. Every row carries a `source` column.
 - `--harness <NAME>` - Scope to `claude` or `codex`; cannot combine with `--source`. cq automatically selects `codex` in Codex and `claude` everywhere else unless `--all` is set.
 - `--all` - Remove inferred current-context scope (project, source, and harness)
-- `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`); applies to `sessions`/`tools`/`messages`, not `cq sql` (raw SQL ignores all scope flags)
+- `--since <DURATION>` - Time filter (e.g. `7d`, `24h`, `30m`); applies to `search`/`sessions`/`tools`/`messages`, not `cq sql` (raw SQL ignores all scope flags)
 - `--json` - Machine-readable JSON output
 - `--table` - Aligned table with header
 - `--limit <N>` - Max results (default 50, 0 for unlimited)
@@ -94,6 +94,18 @@ message-level and a session that discussed a topic at length would otherwise fil
 the entire page. Pass `--all-matches` when you want every matching passage, for
 example to read how a discussion developed within one session.
 
+All global query filters work with search. To return every matching passage from
+one known session, combine `--session` and `--all-matches`:
+
+```bash
+cq search "dependency migration" --session <SESSION_ID> --all-matches
+```
+
+`--json` returns the same result set as an array of objects. Search results include
+`session_id`, `type`, `timestamp`, `text`, and `score`; collapsed results also
+include `matches`. No-result and stale-index notices stay on stderr, so JSON on
+stdout remains valid.
+
 ### Search results can be up to 5 minutes stale
 
 The search index is a snapshot, and rebuilding it costs several times a normal
@@ -109,7 +121,9 @@ What to do about it:
 - Searching for something from **the conversation you are in right now**, or from
   the last few minutes: pass `--reindex`. This is the main case where the default
   will genuinely mislead you, because your recent messages may simply not be in
-  the index, so you get no hit and nothing looks wrong.
+  the index, so you get no hit and nothing looks wrong. `--reindex` rebuilds the
+  full transcript cache and search index; query filters such as `--session` narrow
+  the returned results, not the rebuild work.
 - Searching your **history** (the overwhelmingly common case): ignore it. Five
   minutes of lag is irrelevant when the target is from last week.
 - `CQ_FTS_MAX_AGE` changes the window (`0s` refreshes every search, `1h` is

@@ -17,7 +17,7 @@ pub const SEARCH_SCHEMA: &str = "fts_main_cq_fts_messages";
 /// about 16 seconds, so always-refresh turns one exploration into a string of
 /// rebuilds. Serving slightly stale results and saying so fits cq's
 /// stale-but-available default better. See
-/// `docs/notes/2026-08-27-full-text-search-progress.md`.
+/// `docs/notes/2026-08-27-full-text-search-evaluation.md`.
 const DEFAULT_MAX_AGE: &str = "5m";
 
 /// Ensure the lazily-built message search table and DuckDB FTS index are fresh
