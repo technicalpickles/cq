@@ -55,8 +55,8 @@ A separate 1,289-file cache showed where normal invocations spent time:
 
 Transcript sync accounted for only 2–5 percent of a typical command. Most time
 went to extracting JSON from `raw_records` through the composed views. The
-physical `cq_fts_messages` table avoided that repeated extraction, so a warm
-search was faster than `cq messages` despite the extra FTS machinery.
+physical `cq_fts_messages_*` snapshots avoided that repeated extraction, so a
+warm search was faster than `cq messages` despite the extra FTS machinery.
 
 ## Freshness evidence
 

@@ -141,6 +141,73 @@ fn search_ranks_stemmed_message_matches_and_refreshes_after_sync() {
 }
 
 #[test]
+fn search_since_compares_timestamps_instead_of_varchar_formats() {
+    let env = setup_env(&[]);
+    let now = chrono::Utc::now();
+    let today_noon = now.date_naive().and_hms_opt(12, 0, 0).unwrap().and_utc();
+    let cutoff = if today_noon < now - chrono::Duration::hours(2) {
+        today_noon
+    } else {
+        today_noon - chrono::Duration::days(1)
+    };
+    let since_seconds = (now - cutoff).num_seconds();
+    let session = "eeee0000-0000-0000-0000-000000000005";
+    let records = [
+        serde_json::json!({
+            "type": "user",
+            "message": {"role": "user", "content": "chronocutoff old"},
+            "uuid": "eeee0000-0000-0000-0000-000000000001",
+            "timestamp": (cutoff - chrono::Duration::hours(1))
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "sessionId": session,
+            "cwd": "/Users/test/myproject"
+        }),
+        serde_json::json!({
+            "type": "user",
+            "message": {"role": "user", "content": "chronocutoff new"},
+            "uuid": "eeee0000-0000-0000-0000-000000000002",
+            "timestamp": (cutoff + chrono::Duration::hours(1))
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "sessionId": session,
+            "cwd": "/Users/test/myproject"
+        }),
+    ];
+    let transcript = format!("{}\n{}\n", records[0], records[1]);
+    std::fs::write(
+        env.projects
+            .path()
+            .join("-Users-test-myproject/same_day_since.jsonl"),
+        transcript,
+    )
+    .unwrap();
+
+    let output = cq_cmd(&env)
+        .args([
+            "--all",
+            "--json",
+            "--since",
+            &format!("{since_seconds}s"),
+            "search",
+            "chronocutoff",
+            "--all-matches",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "older same-day match leaked through: {rows:?}"
+    );
+    assert_eq!(rows[0]["text"], "chronocutoff new");
+}
+
+#[test]
 fn search_serves_a_stale_index_within_the_staleness_window() {
     let env = setup_env(&["simple_session.jsonl"]);
 

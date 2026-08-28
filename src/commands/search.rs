@@ -19,7 +19,7 @@ pub fn run(
     offset: usize,
     wide: bool,
 ) -> Result<()> {
-    full_text::prepare(conn, sync_mode)?;
+    let index = full_text::prepare(conn, sync_mode)?;
 
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn duckdb::types::ToSql>> = vec![Box::new(query.to_string())];
@@ -41,8 +41,8 @@ pub fn run(
         params.push(Box::new(harness.clone()));
     }
     if let Some(ts) = scope.since_timestamp()? {
-        let formatted = ts.format("%Y-%m-%d %H:%M:%S").to_string();
-        conditions.push(format!("timestamp >= '{formatted}'"));
+        conditions.push("CAST(timestamp AS TIMESTAMP) >= CAST(? AS TIMESTAMP)".to_string());
+        params.push(Box::new(ts.to_rfc3339()));
     }
     if let Some(msg_type) = msg_type {
         conditions.push("type = ?".to_string());
@@ -55,8 +55,8 @@ pub fn run(
                 {schema}.match_bm25(document_id, ?) AS score
          FROM {table}
          WHERE {where_clause}",
-        schema = full_text::SEARCH_SCHEMA,
-        table = full_text::SEARCH_TABLE,
+        schema = index.schema,
+        table = index.table,
     );
 
     // The index is message-level, so a session that discussed a topic at length

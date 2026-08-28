@@ -6,8 +6,32 @@ use crate::cache;
 use crate::db::SyncMode;
 use crate::scope;
 
-pub const SEARCH_TABLE: &str = "cq_fts_messages";
-pub const SEARCH_SCHEMA: &str = "fts_main_cq_fts_messages";
+const SEARCH_TABLES: [&str; 2] = ["cq_fts_messages_0", "cq_fts_messages_1"];
+const SEARCH_SCHEMAS: [&str; 2] = ["fts_main_cq_fts_messages_0", "fts_main_cq_fts_messages_1"];
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SearchIndex {
+    pub table: &'static str,
+    pub schema: &'static str,
+    slot: usize,
+}
+
+impl SearchIndex {
+    fn for_slot(slot: usize) -> Result<Self> {
+        match (SEARCH_TABLES.get(slot), SEARCH_SCHEMAS.get(slot)) {
+            (Some(&table), Some(&schema)) => Ok(Self {
+                table,
+                schema,
+                slot,
+            }),
+            _ => anyhow::bail!("Invalid full-text search slot {slot}"),
+        }
+    }
+
+    fn other(self) -> Self {
+        Self::for_slot(1 - self.slot).expect("full-text search has exactly two slots")
+    }
+}
 
 /// How far the search index may lag behind the transcripts before `cq search`
 /// rebuilds it, overridable with `CQ_FTS_MAX_AGE`.
@@ -22,14 +46,18 @@ const DEFAULT_MAX_AGE: &str = "5m";
 
 /// Ensure the lazily-built message search table and DuckDB FTS index are fresh
 /// enough to query, and report on stderr when they are not.
-pub fn prepare(conn: &Connection, mode: SyncMode) -> Result<()> {
+pub fn prepare(conn: &Connection, mode: SyncMode) -> Result<SearchIndex> {
     load_extension(conn)?;
 
-    let exists = search_objects_exist(conn)?;
+    let active = SearchIndex::for_slot(cache::fts_slot(conn)?)?;
+    let fts_sync_at = cache::fts_sync_at(conn)?;
+    // fts_sync_at stays at -1 until a complete build atomically selects its
+    // generation. Partial objects from a failed first build are never usable.
+    let exists = fts_sync_at >= 0 && search_objects_exist(conn, active)?;
     let last_sync_at = cache::last_sync_at(conn)?;
 
-    if exists && cache::fts_sync_at(conn)? == last_sync_at {
-        return Ok(());
+    if exists && fts_sync_at == last_sync_at {
+        return Ok(active);
     }
 
     if !exists {
@@ -40,21 +68,25 @@ pub fn prepare(conn: &Connection, mode: SyncMode) -> Result<()> {
                  Hint: run the same search without --no-reindex to build it."
             );
         }
-        return rebuild(conn, last_sync_at);
+        return rebuild(conn, last_sync_at, active, false);
     }
 
     match mode {
         // Explicit beats smart: --reindex forces the rebuild outright rather
         // than relying on the freshness comparison happening to fail.
-        SyncMode::Force => rebuild(conn, last_sync_at),
+        SyncMode::Force => rebuild(conn, last_sync_at, active, true),
         // --no-reindex promises to skip expensive work, so it skips this too.
-        SyncMode::Skip => report_staleness(conn),
+        SyncMode::Skip => {
+            report_staleness(conn, active)?;
+            Ok(active)
+        }
         SyncMode::Auto => {
             let age = now_ns().saturating_sub(cache::fts_built_at(conn)?);
             if age >= max_age()?.num_nanoseconds().unwrap_or(i64::MAX) {
-                rebuild(conn, last_sync_at)
+                rebuild(conn, last_sync_at, active, true)
             } else {
-                report_staleness(conn)
+                report_staleness(conn, active)?;
+                Ok(active)
             }
         }
     }
@@ -68,13 +100,26 @@ fn max_age() -> Result<Duration> {
     }
 }
 
-fn rebuild(conn: &Connection, last_sync_at: i64) -> Result<()> {
+fn rebuild(
+    conn: &Connection,
+    last_sync_at: i64,
+    active: SearchIndex,
+    active_exists: bool,
+) -> Result<SearchIndex> {
     // DuckDB's FTS indexes do not track mutations to their input table. Build a
     // fresh physical snapshot from the composed messages view, then index it.
+    // Refreshes target the inactive generation, so any failure leaves the
+    // completed active generation untouched and available to --no-reindex.
+    let target = if active_exists {
+        active.other()
+    } else {
+        active
+    };
+
     conn.execute_batch(&format!(
-        "DROP SCHEMA IF EXISTS {SEARCH_SCHEMA} CASCADE;
-         DROP TABLE IF EXISTS {SEARCH_TABLE};
-         CREATE TABLE {SEARCH_TABLE} AS
+        "DROP SCHEMA IF EXISTS {schema} CASCADE;
+         DROP TABLE IF EXISTS {table};
+         CREATE TABLE {table} AS
          SELECT
              CAST(ROW_NUMBER() OVER (
                  ORDER BY harness, COALESCE(source, ''), session_id,
@@ -82,20 +127,26 @@ fn rebuild(conn: &Connection, last_sync_at: i64) -> Result<()> {
              ) AS VARCHAR) AS document_id,
              session_id, project, source, harness, uuid, type, timestamp, text
          FROM messages
-         WHERE text IS NOT NULL AND text != ''"
+         WHERE text IS NOT NULL AND text != ''",
+        schema = target.schema,
+        table = target.table,
     ))
     .context("Failed to materialize messages for full-text search")?;
 
     conn.execute_batch(&format!(
         "PRAGMA create_fts_index(
-            'main.{SEARCH_TABLE}', 'document_id', 'text',
+            'main.{table}', 'document_id', 'text',
             stemmer = 'porter', stopwords = 'english', overwrite = 1
-        )"
+        )",
+        table = target.table,
     ))
     .context("Failed to build the full-text search index")?;
 
-    cache::set_fts_built(conn, last_sync_at, now_ns())?;
-    Ok(())
+    // This one statement is the swap. If it fails, cache_meta still points at
+    // the old completed generation; the new objects are merely inactive and
+    // will be replaced on the next rebuild attempt.
+    cache::set_fts_built(conn, last_sync_at, now_ns(), target.slot)?;
+    Ok(target)
 }
 
 /// Tell the caller the index is behind, and how far.
@@ -105,11 +156,11 @@ fn rebuild(conn: &Connection, last_sync_at: i64) -> Result<()> {
 /// stale index means the caller's recent messages are missing, so the failure
 /// worth warning about is the false negative, where a matching message is
 /// simply absent and inspecting the results reveals nothing.
-fn report_staleness(conn: &Connection) -> Result<()> {
+fn report_staleness(conn: &Connection, active: SearchIndex) -> Result<()> {
     let age = humanize(now_ns().saturating_sub(cache::fts_built_at(conn)?));
 
     let own_session_ahead = match scope::active_claude_session() {
-        Some(session_id) => session_is_ahead(conn, &session_id)?,
+        Some(session_id) => session_is_ahead(conn, &session_id, active)?,
         None => false,
     };
 
@@ -125,14 +176,15 @@ fn report_staleness(conn: &Connection) -> Result<()> {
 /// True when the given session has messages newer than anything indexed for it.
 /// Cheap because transcript sync stays on Auto, so `messages` is current even
 /// when the snapshot is not.
-fn session_is_ahead(conn: &Connection, session_id: &str) -> Result<bool> {
+fn session_is_ahead(conn: &Connection, session_id: &str, active: SearchIndex) -> Result<bool> {
     let ahead: bool = conn.query_row(
         &format!(
             "SELECT COALESCE(
                  (SELECT max(timestamp) FROM messages WHERE session_id = ?)
                  > COALESCE(
-                     (SELECT max(timestamp) FROM {SEARCH_TABLE} WHERE session_id = ?), ''),
-                 false)"
+                     (SELECT max(timestamp) FROM {table} WHERE session_id = ?), ''),
+                 false)",
+            table = active.table,
         ),
         [session_id, session_id],
         |row| row.get(0),
@@ -167,19 +219,19 @@ fn load_extension(conn: &Connection) -> Result<()> {
     })
 }
 
-fn search_objects_exist(conn: &Connection) -> Result<bool> {
+fn search_objects_exist(conn: &Connection, index: SearchIndex) -> Result<bool> {
     let table_exists: bool = conn.query_row(
         "SELECT count(*) > 0
          FROM information_schema.tables
          WHERE table_schema = 'main' AND table_name = ?",
-        [SEARCH_TABLE],
+        [index.table],
         |row| row.get(0),
     )?;
     let schema_exists: bool = conn.query_row(
         "SELECT count(*) > 0
          FROM information_schema.schemata
          WHERE schema_name = ?",
-        [SEARCH_SCHEMA],
+        [index.schema],
         |row| row.get(0),
     )?;
     Ok(table_exists && schema_exists)
@@ -205,5 +257,38 @@ mod tests {
             scope::parse_duration(DEFAULT_MAX_AGE).unwrap(),
             Duration::minutes(5)
         );
+    }
+
+    #[test]
+    fn failed_rebuild_preserves_previous_snapshot() {
+        let conn = Connection::open_in_memory().unwrap();
+        let active = SearchIndex::for_slot(0).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE SCHEMA {schema};
+             CREATE TABLE {table} (marker VARCHAR);
+             INSERT INTO {table} VALUES ('old snapshot');
+             CREATE TABLE {schema}.sentinel (value INTEGER);",
+            schema = active.schema,
+            table = active.table,
+        ))
+        .unwrap();
+
+        let error = rebuild(&conn, 0, active, true).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to materialize messages for full-text search"),
+            "unexpected error: {error:#}"
+        );
+        assert!(
+            search_objects_exist(&conn, active).unwrap(),
+            "failed rebuild removed the previous search objects"
+        );
+        let marker: String = conn
+            .query_row(&format!("SELECT marker FROM {}", active.table), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(marker, "old snapshot");
     }
 }
