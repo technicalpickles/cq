@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/technicalpickles/cq/compare/v0.5.0...v0.6.0) (2026-08-28)
+
+
+### Features
+
+* add BM25 full-text search ([ade3626](https://github.com/technicalpickles/cq/commit/ade36264aee061def0963964c5ad36dd25f55834))
+* add BM25 full-text search ([1e93ec7](https://github.com/technicalpickles/cq/commit/1e93ec772e1e5101e32980998ba7fc5c87b033b8))
+* **search:** add a staleness window and collapse results per session ([323130d](https://github.com/technicalpickles/cq/commit/323130d53d52cabe3b4977ff38899cd11c3b4d25))
+
+
+### Bug Fixes
+
+* **search:** address scoped search review feedback ([e6c5395](https://github.com/technicalpickles/cq/commit/e6c53953da32ac710cec0b4e6f3b23d248591f5f))
+* **search:** preserve index across rebuild failures ([caa36e0](https://github.com/technicalpickles/cq/commit/caa36e0ca61b072fd7665c4e782bcf61d5613055))
+
 ## [0.5.0](https://github.com/technicalpickles/cq/compare/v0.4.0...v0.5.0) (2026-08-26)
 
 
