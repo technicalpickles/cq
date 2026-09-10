@@ -104,6 +104,15 @@ fn build_events(
     // process_name. A group with no direct spans of its own (shouldn't
     // happen: a group is always the lane that did the dispatching) is left
     // unlabeled and falls back to the bare lane id.
+    //
+    // Only agent_type is used, not description, even though the latter would
+    // read friendlier ("Sub work" vs "agent-sub1 (general-purpose)"): the
+    // description lives on `agents`/`file_registry`, not on `Span`, and
+    // pulling it in would widen a struct shared with waterfall.rs for a
+    // label-only benefit on this one caller. The lane id in the name is
+    // already unique, so this is a lost cosmetic upgrade, not a correctness
+    // gap -- two same-agent_type groups never collide on an indistinguishable
+    // label.
     let mut group_agent_type: HashMap<&str, &str> = HashMap::new();
     for s in spans {
         if group_of(&s.lane) == s.lane {

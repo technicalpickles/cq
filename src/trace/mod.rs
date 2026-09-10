@@ -273,7 +273,12 @@ pub fn lane_groups(conn: &Connection, session_id: &str) -> Result<HashMap<String
         visited.insert(current.clone());
 
         // Bounded by the number of lanes: the real chain can never be longer
-        // than that, cycle or not.
+        // than that, cycle or not. In practice this cap never fires -- the
+        // `visited` check below always catches a cycle within
+        // agent_rows.len() steps first, since every step that keeps the walk
+        // alive must land on one of that many distinct agent ids
+        // (pigeonhole). It's kept anyway as a second guard against a bug in
+        // the visited-set logic itself.
         let max_steps = agent_rows.len() + 1;
         let mut group = current.clone();
         for _ in 0..max_steps {
