@@ -20,6 +20,9 @@ fn setup_db(fixture: &str) -> Connection {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -41,6 +44,9 @@ fn setup_db_multi(fixtures: &[&str]) -> Connection {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -516,6 +522,9 @@ fn agent_type_flows_from_registry() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -560,6 +569,9 @@ fn sessions_single_row_across_cwds() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -626,6 +638,9 @@ fn sessions_filter_by_source() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -697,6 +712,9 @@ fn tool_calls_filter_by_source() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -834,6 +852,7 @@ fn empty_views_have_harness_column() {
         "CREATE TABLE file_registry (
             file_path TEXT PRIMARY KEY, mtime_ns BIGINT, file_size BIGINT,
             cwd TEXT, agent_type TEXT, source TEXT,
+            agent_description TEXT, parent_tool_use_id TEXT, spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -956,6 +975,7 @@ fn empty_hook_events_view_has_correct_schema() {
         "CREATE TABLE file_registry (
             file_path TEXT PRIMARY KEY, mtime_ns BIGINT, file_size BIGINT,
             cwd TEXT, agent_type TEXT, source TEXT,
+            agent_description TEXT, parent_tool_use_id TEXT, spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -1012,4 +1032,49 @@ fn tool_result_timestamp_is_at_or_after_its_call() {
         )
         .unwrap();
     assert_eq!(count, 0, "no result may predate its own call");
+}
+
+// ---- meta.json sidecar fields ----
+
+const TRACE_SESSION: &str = "a1b2c3d4-0000-4000-8000-000000000001";
+
+fn sub_fixture(name: &str) -> PathBuf {
+    fixture_path(TRACE_SESSION).join("subagents").join(name)
+}
+
+#[test]
+fn sidecar_fields_are_parsed_from_meta_json() {
+    let meta = cq::indexer::read_agent_meta(&sub_fixture("agent-sub1.jsonl"))
+        .expect("sidecar should parse");
+    assert_eq!(meta.agent_type.as_deref(), Some("general-purpose"));
+    assert_eq!(meta.parent_tool_use_id.as_deref(), Some("toolu_agent1"));
+    assert_eq!(meta.spawn_depth, Some(1));
+    assert_eq!(meta.description.as_deref(), Some("Sub work"));
+}
+
+#[test]
+fn sidecar_reads_depth_two_subagent() {
+    let meta = cq::indexer::read_agent_meta(&sub_fixture("agent-sub2.jsonl"))
+        .expect("sidecar should parse");
+    assert_eq!(meta.agent_type.as_deref(), Some("Explore"));
+    assert_eq!(meta.parent_tool_use_id.as_deref(), Some("toolu_agent2"));
+    assert_eq!(meta.spawn_depth, Some(2));
+}
+
+#[test]
+fn sidecar_absent_yields_none() {
+    let meta = cq::indexer::read_agent_meta(&fixture_path("simple_session.jsonl"));
+    assert!(meta.is_none(), "non-subagent files have no sidecar");
+}
+
+#[test]
+fn workflow_sidecar_has_no_parent_edge() {
+    // Workflow subagents carry only {agentType, spawnDepth, model} -- no toolUseId.
+    let path = fixture_path("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+    if let Some(meta) = cq::indexer::read_agent_meta(&path) {
+        assert_eq!(
+            meta.parent_tool_use_id, None,
+            "workflow subagents have no resolvable parent"
+        );
+    }
 }
