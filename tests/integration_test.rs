@@ -3175,3 +3175,60 @@ fn trace_json_emits_spans_with_durations() {
     assert_eq!(lanes.len(), 3, "main + 2 subagent lanes, got {lanes:?}");
     assert!(lanes.contains("main"));
 }
+
+#[test]
+fn trace_waterfall_shows_lanes_and_scale() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("main"), "expected a main lane: {stdout}");
+    assert!(
+        stdout.contains("min/col") || stdout.contains("s/col"),
+        "expected an explicit time scale in the header: {stdout}"
+    );
+    assert!(stdout.contains('\u{2588}'), "expected bar glyphs: {stdout}");
+}
+
+#[test]
+fn trace_window_narrows_the_span_set() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let full = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace"])
+        .output()
+        .unwrap();
+    let windowed = cq_cmd(&env)
+        .args([
+            "--session",
+            TRACE_SESSION,
+            "trace",
+            "--from",
+            "+0s",
+            "--to",
+            "+1s",
+        ])
+        .output()
+        .unwrap();
+    assert_ne!(
+        String::from_utf8_lossy(&full.stdout),
+        String::from_utf8_lossy(&windowed.stdout),
+        "a 1-second window must not render identically to the whole session"
+    );
+}
+
+#[test]
+fn trace_unknown_session_reports_not_found() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", "ffffffff-0000-4000-8000-000000000000", "trace"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "expected a not-found message: {stderr}"
+    );
+    assert!(output.status.success(), "not-found is not a hard error");
+}

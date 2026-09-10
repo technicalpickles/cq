@@ -536,19 +536,20 @@ fn main() -> Result<()> {
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;
         }
-        Command::Trace {
-            perfetto,
-            // Accepted now so the flag surface is stable, but windowing lands
-            // with the waterfall renderer that consumes it.
-            from: _,
-            to: _,
-        } => {
+        Command::Trace { perfetto, from, to } => {
             let output = if perfetto {
                 trace::TraceOutput::Perfetto
             } else {
                 trace::TraceOutput::Waterfall
             };
-            trace::run(&conn, &scope, &format, output)?;
+            trace::run(
+                &conn,
+                &scope,
+                &format,
+                output,
+                from.as_deref(),
+                to.as_deref(),
+            )?;
         }
         Command::Sql { query } => {
             if let Err(e) = sql::run(&conn, &query, &format, wide) {

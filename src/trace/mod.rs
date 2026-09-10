@@ -21,6 +21,19 @@ use anyhow::{Context, Result};
 use duckdb::Connection;
 use serde::Serialize;
 
+/// Parse a fixed-width UTC ISO8601 timestamp (as stored on [`Span`]/[`Gap`])
+/// into epoch milliseconds. Unparseable input maps to `0` rather than erroring
+/// -- these timestamps always come from our own SQL layer, so a parse failure
+/// here means something upstream is already broken, and windowing/rendering
+/// degrading gracefully is preferable to a panic over a display detail.
+/// Shared by the waterfall renderer and the `--from`/`--to` window parser so
+/// both agree on what a timestamp means.
+pub fn epoch_ms(ts: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0)
+}
+
 /// A tool call with a measured duration: one `tool_use` joined to its
 /// `tool_result`.
 ///

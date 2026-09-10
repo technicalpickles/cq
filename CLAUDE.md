@@ -2,7 +2,7 @@
 
 CLI tool for querying Claude Code session transcripts with SQL. Rust + DuckDB.
 
-Reads Claude Code's JSONL session files from `~/.claude/projects/`, indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes five SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`, `hook_events`. Sync is incremental: files are re-parsed only when their mtime or size changes.
+Reads Claude Code's JSONL session files from `~/.claude/projects/`, indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes six SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`, `hook_events`, `agents`. Sync is incremental: files are re-parsed only when their mtime or size changes.
 
 The input format is not ours and is not a documented contract. Before you write anything that reads or reasons about transcripts, read `docs/session-storage.md`: it covers the on-disk layout, which record types actually show up, and the places the format will surprise you.
 
@@ -54,7 +54,7 @@ trace/
   waterfall.rs    Terminal waterfall renderer (formatting only, no SQL)
   perfetto.rs     Chrome Trace Event JSON emitter (formatting only, no SQL)
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
-views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the five views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
+views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the six views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema versioning + rebuild
 full_text.rs      Alternating physical message snapshots + DuckDB FTS index lifecycle, atomic generation swap, staleness reporting
