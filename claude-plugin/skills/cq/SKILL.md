@@ -19,7 +19,7 @@ user_invocable: true
 | `cq projects` | Summarize projects by session/message/tool counts |
 | `cq sql "<QUERY>"` | Run raw SQL against the views |
 | `cq schema` | View schemas and example queries (source of truth) |
-| `cq trace --session <ID>` | Render a session as a terminal waterfall (lanes, durations, gaps); `--from`/`--to` to zoom, `--perfetto` for Chrome Trace Event JSON |
+| `cq trace --session <ID>` | Render a session as a terminal waterfall (lanes, durations, gaps) |
 
 ## Global Flags
 
@@ -40,6 +40,7 @@ user_invocable: true
 - **search**: `--type user|assistant`, `--all-matches` (every matching message rather than the best one per session)
 - **tools**: `--grep` (filter inputs, repeatable/OR), `--result-grep` (filter by tool result content, repeatable/OR, ANDs with `--errors`), `--errors` (errors only), `--fields` (extract input fields as columns)
 - **messages**: `--type user|assistant`, `--grep` (repeatable/OR)
+- **trace**: `--session <ID>` (required), `--from`/`--to` (zoom into a time window), `--perfetto` (emit Chrome Trace Event JSON instead of the waterfall)
 
 ## View Schemas
 
