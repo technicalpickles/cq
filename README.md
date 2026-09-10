@@ -165,7 +165,7 @@ Run `cq schema` for full column details.
 
 ## Trace
 
-`cq trace --session <id>` renders a session as a terminal waterfall: one row per lane (main loop first, then subagents by first activity), duration bars scaled to your terminal width, and a header that always states the time-per-column scale.
+`cq trace --session <id>` renders a session as a terminal waterfall: one row per lane (main loop first, then subagents by first activity), duration bars scaled to your terminal width, and a header that always states the time-per-column scale. Tool execution is often a minority of wall clock: one real session ran 344.9 minutes with only 169.3 minutes (49%) inside tool spans, the rest spent waiting on you or on the model.
 
 ```
 $ cq trace --session a1b2c3d4

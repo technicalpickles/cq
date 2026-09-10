@@ -232,7 +232,7 @@ enum Command {
     },
     /// Show view schema documentation
     Schema {
-        /// Show documentation for a specific view [valid: messages, tool_calls, tool_results, hook_events, sessions]
+        /// Show documentation for a specific view [valid: messages, tool_calls, tool_results, hook_events, sessions, agents]
         name: Option<String>,
 
         /// Show example queries
