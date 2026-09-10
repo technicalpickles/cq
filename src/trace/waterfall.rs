@@ -105,9 +105,11 @@ pub fn render(spans: &[Span], gaps: &[Gap]) -> Result<()> {
     let blocked_ms = blocked_on_you_ms(gaps);
 
     println!(
-        "{} spans  {} lanes  {:.1} min wall  [{width} cols = {scale}]",
+        "{} span{}  {} lane{}  {:.1} min wall  [{width} cols = {scale}]",
         spans.len(),
+        if spans.len() == 1 { "" } else { "s" },
         lanes.len(),
+        if lanes.len() == 1 { "" } else { "s" },
         total as f64 / 60_000.0,
     );
     println!(

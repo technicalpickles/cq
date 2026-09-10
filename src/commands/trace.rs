@@ -95,11 +95,38 @@ pub fn run(
 /// Exits on invalid input rather than returning a `Result`, matching this
 /// codebase's other flag-validation helpers (e.g. `validate_count_by` in
 /// `commands/mod.rs`): these are user-input errors caught before any query
-/// runs, not runtime failures worth threading through `?`.
+/// runs, not runtime failures worth threading through `?`. The exit lives
+/// here, at the thin wrapper, so `try_parse_bound` below stays a pure
+/// function unit tests can call directly without killing the test process.
 fn parse_bound(bound: &str, session_start_ms: i64) -> i64 {
+    match try_parse_bound(bound, session_start_ms) {
+        Ok(ms) => ms,
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The actual parsing logic behind `parse_bound`, factored out so it can
+/// return `Err` instead of exiting -- see the note on `parse_bound`.
+fn try_parse_bound(bound: &str, session_start_ms: i64) -> Result<i64, String> {
     if let Some(rest) = bound.strip_prefix('+') {
-        if !rest.is_empty() {
-            let (num, unit) = rest.split_at(rest.len() - 1);
+        // Split on the last *char*, not the last byte: `rest.len() - 1` would
+        // land mid-codepoint for non-ASCII input (e.g. "+5é") and panic with
+        // "byte index is not a char boundary". `char_indices().last()` finds
+        // the last char's byte offset regardless of its width, so the split
+        // is always valid; an empty `rest` (nothing after "+") falls through
+        // to the same "Invalid window offset" error as any other malformed
+        // input, rather than panicking or indexing out of bounds.
+        //
+        // This mirrors `scope::parse_duration`'s grammar shape (used by
+        // `--since`) but isn't shared with it on purpose: the two flag
+        // families use disjoint unit vocabularies (s/m/h here vs d/h/m/s
+        // there), so unifying them would need a parameterized unit set for
+        // little benefit.
+        if let Some((split_at, _)) = rest.char_indices().last() {
+            let (num, unit) = rest.split_at(split_at);
             if let Ok(n) = num.parse::<i64>() {
                 let ms = match unit {
                     "s" => Some(n * 1_000),
@@ -108,24 +135,97 @@ fn parse_bound(bound: &str, session_start_ms: i64) -> i64 {
                     _ => None,
                 };
                 if let Some(ms) = ms {
-                    return session_start_ms + ms;
+                    return Ok(session_start_ms + ms);
                 }
-                eprintln!("Error: Unknown window unit '{unit}' in '{bound}'");
-                eprintln!("Valid units: s, m, h");
-                std::process::exit(1);
+                return Err(format!(
+                    "Error: Unknown window unit '{unit}' in '{bound}'\nValid units: s, m, h"
+                ));
             }
         }
-        eprintln!("Error: Invalid window offset '{bound}'");
-        eprintln!("Expected format: +<number><unit> (e.g. +12m, +90s)");
-        std::process::exit(1);
+        return Err(format!(
+            "Error: Invalid window offset '{bound}'\nExpected format: +<number><unit> (e.g. +12m, +90s)"
+        ));
     }
 
     match chrono::DateTime::parse_from_rfc3339(bound) {
-        Ok(dt) => dt.timestamp_millis(),
-        Err(_) => {
-            eprintln!("Error: Invalid window bound '{bound}'");
-            eprintln!("Expected an offset (+12m) or an ISO timestamp");
-            std::process::exit(1);
-        }
+        Ok(dt) => Ok(dt.timestamp_millis()),
+        Err(_) => Err(format!(
+            "Error: Invalid window bound '{bound}'\nExpected an offset (+12m) or an ISO timestamp"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offset_seconds() {
+        assert_eq!(try_parse_bound("+90s", 1_000).unwrap(), 1_000 + 90_000);
+    }
+
+    #[test]
+    fn offset_minutes() {
+        assert_eq!(try_parse_bound("+12m", 1_000).unwrap(), 1_000 + 12 * 60_000);
+    }
+
+    #[test]
+    fn offset_hours() {
+        assert_eq!(
+            try_parse_bound("+2h", 1_000).unwrap(),
+            1_000 + 2 * 3_600_000
+        );
+    }
+
+    #[test]
+    fn absolute_iso_timestamp() {
+        let ms = try_parse_bound("2026-09-10T12:00:00Z", 0).unwrap();
+        assert_eq!(ms, 1_789_041_600_000);
+    }
+
+    #[test]
+    fn bad_unit_quotes_input() {
+        let err = try_parse_bound("+5x", 0).unwrap_err();
+        assert!(
+            err.contains("+5x"),
+            "expected error to quote '+5x', got: {err}"
+        );
+    }
+
+    #[test]
+    fn bad_number_quotes_input() {
+        let err = try_parse_bound("+xm", 0).unwrap_err();
+        assert!(
+            err.contains("+xm"),
+            "expected error to quote '+xm', got: {err}"
+        );
+    }
+
+    #[test]
+    fn malformed_bound_is_an_error() {
+        let err = try_parse_bound("garbage", 0).unwrap_err();
+        assert!(
+            err.contains("garbage"),
+            "expected error to quote 'garbage', got: {err}"
+        );
+    }
+
+    /// Regression test: `"+5é"` used to panic with "byte index 2 is not a
+    /// char boundary" because the old implementation split `rest` on a byte
+    /// index (`rest.len() - 1`) rather than a char boundary. It must produce
+    /// an ordinary error instead.
+    #[test]
+    fn non_ascii_offset_does_not_panic() {
+        let err = try_parse_bound("+5é", 0).unwrap_err();
+        assert!(
+            err.contains("+5é"),
+            "expected error to quote the bad input '+5é', got: {err}"
+        );
+    }
+
+    #[test]
+    fn empty_offset_after_plus_is_an_error() {
+        let err = try_parse_bound("+", 0).unwrap_err();
+        assert!(err.contains('+'), "expected error to quote '+', got: {err}");
     }
 }
