@@ -12,6 +12,94 @@
 
 ---
 
+## Test fixture: read this before writing any test
+
+A fixture set already exists for this work, built to match **real** Claude Code
+on-disk layout rather than the hand-simplified shape of the older fixtures:
+
+```
+tests/fixtures/a1b2c3d4-0000-4000-8000-000000000001.jsonl
+tests/fixtures/a1b2c3d4-0000-4000-8000-000000000001/subagents/agent-sub1.jsonl
+tests/fixtures/a1b2c3d4-0000-4000-8000-000000000001/subagents/agent-sub1.meta.json
+tests/fixtures/a1b2c3d4-0000-4000-8000-000000000001/subagents/agent-sub2.jsonl
+tests/fixtures/a1b2c3d4-0000-4000-8000-000000000001/subagents/agent-sub2.meta.json
+```
+
+**The filename must be the session UUID.** `session_id_for_file`
+(`src/claude_provider.rs:248`) derives a session id from the *first path
+component* under the project dir — the filename stem, or the directory name for
+a nested subagent file. `--session` then prefix-matches that. This is why the
+older fixtures (`simple_session.jsonl`, whose internal `sessionId` is
+`sess-002`) cannot be targeted with `--session` at all, and why this one is
+named for its UUID.
+
+What the fixture deliberately contains:
+
+| feature | where | why |
+|---|---|---|
+| one `tool_use` per record, one `tool_result` per record | throughout | matches real output; the old `multi_tool_session.jsonl` puts two results in one record, which cannot express overlap |
+| non-nested overlap | `toolu_m1` (12:00:01.000 +3.000s) and `toolu_m2` (12:00:01.012 +5.588s) | the exact shape Task 6 spikes: starts 12ms apart, results out of order |
+| 60s human gap | `a4` prose at 12:00:41 → `u2` text at 12:01:41 | exercises `GapKind::Human` |
+| error result | `toolu_m3` | `is_error` propagation |
+| depth-1 subagent | `agent-sub1`, `toolUseId: toolu_agent1` | lane + parent edge |
+| depth-2 subagent | `agent-sub2`, `toolUseId: toolu_agent2` (spawned from inside sub1) | Task 9's ancestor walk needs two real hops |
+
+Session id constant for tests: `a1b2c3d4-0000-4000-8000-000000000001`
+
+### Integration tests must go through the harness
+
+`tests/integration_test.rs` does **not** invoke `cq` bare. It copies fixtures
+into a temp projects dir and points cq at it with env vars. Use
+`setup_env(&[...])` + `cq_cmd(&env)` — a bare `Command::cargo_bin("cq")` would
+index the developer's real `~/.claude/projects`, which is slow and would not
+contain the fixture session.
+
+`setup_env` copies fixtures **flat** (`std::fs::copy` with no `create_dir_all`),
+so it cannot place the nested subagent files. Add this helper next to it, in
+`tests/integration_test.rs`:
+
+```rust
+/// Copy a fixture tree (a `<uuid>.jsonl` plus its `<uuid>/subagents/` sidecars)
+/// into the temp projects dir, preserving layout. `setup_env` only handles flat
+/// files, but subagent discovery depends on the nested directory structure.
+fn setup_env_tree(session_id: &str) -> TestEnv {
+    let env = setup_env(&[]);
+    let project_dir = env.projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    std::fs::copy(
+        fixture_path(&format!("{session_id}.jsonl")),
+        project_dir.join(format!("{session_id}.jsonl")),
+    )
+    .unwrap();
+
+    let src_subs = fixture_path(session_id).join("subagents");
+    let dest_subs = project_dir.join(session_id).join("subagents");
+    std::fs::create_dir_all(&dest_subs).unwrap();
+    for entry in std::fs::read_dir(&src_subs).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dest_subs.join(entry.file_name())).unwrap();
+    }
+    env
+}
+```
+
+Every integration test in Tasks 4, 5, 7 and 9 uses:
+
+```rust
+const TRACE_SESSION: &str = "a1b2c3d4-0000-4000-8000-000000000001";
+
+let env = setup_env_tree(TRACE_SESSION);
+let output = cq_cmd(&env)
+    .args(["--session", TRACE_SESSION, "trace"])
+    .output()
+    .unwrap();
+```
+
+Every integration test written in the tasks below already uses this pattern.
+
+---
+
 ## File Structure
 
 | File | Responsibility | Tasks |
@@ -148,39 +236,41 @@ computable as result.timestamp - call.timestamp."
 
 - [ ] **Step 1: Write the failing test for sidecar parsing**
 
-Create `tests/fixtures/subagents/agent-sub1.meta.json`:
-
-```json
-{"agentType":"general-purpose","description":"Implement the thing","toolUseId":"toolu_parent1","spawnDepth":1,"requestShape":"background"}
-```
-
-Create `tests/fixtures/subagents/agent-sub1.jsonl`:
-
-```jsonl
-{"type":"user","uuid":"s1u1","sessionId":"sess-trace-0001","timestamp":"2026-09-10T12:00:00.000Z","isSidechain":true,"agentId":"agent-sub1","cwd":"/tmp/proj","message":{"role":"user","content":"go"}}
-{"type":"assistant","uuid":"s1a1","parentUuid":"s1u1","sessionId":"sess-trace-0001","timestamp":"2026-09-10T12:00:01.000Z","isSidechain":true,"agentId":"agent-sub1","cwd":"/tmp/proj","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_sub1","name":"Bash","input":{"command":"echo hi"}}]}}
-{"type":"user","uuid":"s1u2","parentUuid":"s1a1","sessionId":"sess-trace-0001","timestamp":"2026-09-10T12:00:03.500Z","isSidechain":true,"agentId":"agent-sub1","cwd":"/tmp/proj","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_sub1","content":"hi"}]}}
-```
+The fixtures already exist — see "Test fixture" above. Do not create new ones.
 
 Append to `tests/views_test.rs`:
 
 ```rust
 // ---- meta.json sidecar fields ----
 
-#[test]
-fn sidecar_fields_are_parsed_from_meta_json() {
-    let path = fixture_path("subagents/agent-sub1.jsonl");
-    let meta = cq::indexer::read_agent_meta(&path).expect("sidecar should parse");
-    assert_eq!(meta.agent_type.as_deref(), Some("general-purpose"));
-    assert_eq!(meta.parent_tool_use_id.as_deref(), Some("toolu_parent1"));
-    assert_eq!(meta.spawn_depth, Some(1));
-    assert_eq!(meta.description.as_deref(), Some("Implement the thing"));
+const TRACE_SESSION: &str = "a1b2c3d4-0000-4000-8000-000000000001";
+
+fn sub_fixture(name: &str) -> PathBuf {
+    fixture_path(TRACE_SESSION).join("subagents").join(name)
 }
 
 #[test]
-fn sidecar_absent_yields_all_none() {
-    let path = fixture_path("simple_session.jsonl");
-    let meta = cq::indexer::read_agent_meta(&path);
+fn sidecar_fields_are_parsed_from_meta_json() {
+    let meta = cq::indexer::read_agent_meta(&sub_fixture("agent-sub1.jsonl"))
+        .expect("sidecar should parse");
+    assert_eq!(meta.agent_type.as_deref(), Some("general-purpose"));
+    assert_eq!(meta.parent_tool_use_id.as_deref(), Some("toolu_agent1"));
+    assert_eq!(meta.spawn_depth, Some(1));
+    assert_eq!(meta.description.as_deref(), Some("Sub work"));
+}
+
+#[test]
+fn sidecar_reads_depth_two_subagent() {
+    let meta = cq::indexer::read_agent_meta(&sub_fixture("agent-sub2.jsonl"))
+        .expect("sidecar should parse");
+    assert_eq!(meta.agent_type.as_deref(), Some("Explore"));
+    assert_eq!(meta.parent_tool_use_id.as_deref(), Some("toolu_agent2"));
+    assert_eq!(meta.spawn_depth, Some(2));
+}
+
+#[test]
+fn sidecar_absent_yields_none() {
+    let meta = cq::indexer::read_agent_meta(&fixture_path("simple_session.jsonl"));
     assert!(meta.is_none(), "non-subagent files have no sidecar");
 }
 
@@ -196,6 +286,10 @@ fn workflow_sidecar_has_no_parent_edge() {
     }
 }
 ```
+
+`tests/views_test.rs` may not already import `PathBuf` in a way that makes
+`sub_fixture` compile — it does (`use std::path::PathBuf;` at line 2), but check
+rather than assume.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -359,13 +453,13 @@ Schema version 7: an existing v6 cache has no columns for these."
 
 #[test]
 fn agents_view_lists_subagent_lanes() {
-    let conn = setup_db("subagents/agent-sub1.jsonl");
+    let conn = setup_db(&format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl"));
     conn.execute(
         "INSERT INTO file_registry
             (file_path, mtime_ns, file_size, cwd, agent_type, source,
              agent_description, parent_tool_use_id, spawn_depth)
          VALUES (?, 0, 0, '/tmp/proj', 'general-purpose', 'main',
-                 'Implement the thing', 'toolu_parent1', 1)",
+                 'Sub work', 'toolu_agent1', 1)",
         [fixture_path("subagents/agent-sub1.jsonl")
             .to_string_lossy()
             .to_string()],
@@ -383,7 +477,7 @@ fn agents_view_lists_subagent_lanes() {
 
     assert_eq!(agent_id, "agent-sub1");
     assert_eq!(agent_type, "general-purpose");
-    assert_eq!(parent, "toolu_parent1");
+    assert_eq!(parent, "toolu_agent1");
     assert_eq!(depth, 1);
     assert_eq!(calls, 1, "the fixture has exactly one tool call");
 }
@@ -399,7 +493,7 @@ fn agents_view_excludes_main_loop() {
 
 #[test]
 fn agents_view_spans_cover_the_lane() {
-    let conn = setup_db("subagents/agent-sub1.jsonl");
+    let conn = setup_db(&format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl"));
     let (start, end): (String, String) = conn
         .query_row(
             "SELECT started_at, ended_at FROM agents WHERE agent_id = 'agent-sub1'",
@@ -528,13 +622,13 @@ byproduct of a trace, and keeps lane metadata off all N span rows."
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/integration_test.rs`, following the `Command::cargo_bin` pattern already used there:
+Append to `tests/integration_test.rs`. Note it uses `setup_env_tree` + `cq_cmd`, both described in the fixture section above:
 
 ```rust
 #[test]
 fn trace_requires_session() {
-    let mut cmd = Command::cargo_bin("cq").unwrap();
-    let output = cmd.args(["trace"]).output().unwrap();
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env).args(["trace"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("cq trace requires --session"),
@@ -545,12 +639,12 @@ fn trace_requires_session() {
 
 #[test]
 fn trace_json_emits_spans_with_durations() {
-    let mut cmd = Command::cargo_bin("cq").unwrap();
-    let output = cmd
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
         .args([
             "--json",
             "--session",
-            "sess-trace-0001-0000-0000-000000000000",
+            TRACE_SESSION,
             "trace",
         ])
         .output()
@@ -722,8 +816,8 @@ Append to `tests/views_test.rs`:
 ```rust
 #[test]
 fn human_gap_is_distinguished_from_think_gap() {
-    let conn = setup_db("multi_tool_session.jsonl");
-    let gaps = cq::trace::gaps(&conn, "sess-0010-0000-0000-000000000000").unwrap();
+    let conn = setup_db(&format!("{TRACE_SESSION}.jsonl"));
+    let gaps = cq::trace::gaps(&conn, TRACE_SESSION).unwrap();
     // Every gap must classify as exactly one kind, and none may be negative.
     for g in &gaps {
         assert!(g.duration_ms > 0, "gap must have positive duration: {g:?}");
@@ -735,7 +829,7 @@ fn human_gap_is_distinguished_from_think_gap() {
 }
 ```
 
-Replace the session id with whatever `multi_tool_session.jsonl` actually uses — read the fixture's `sessionId` field.
+The fixture contains a deliberate 60s human gap (assistant prose at 12:00:41 -> user text at 12:01:41), so this must find a `GapKind::Human` too. Add that assertion.
 
 - [ ] **Step 5: Wire the command**
 
@@ -879,9 +973,9 @@ Formatters are stubs; --json is the real output for now."
 ```rust
 #[test]
 fn trace_waterfall_shows_lanes_and_scale() {
-    let mut cmd = Command::cargo_bin("cq").unwrap();
-    let output = cmd
-        .args(["--session", "sess-trace-0001-0000-0000-000000000000", "trace"])
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -895,16 +989,15 @@ fn trace_waterfall_shows_lanes_and_scale() {
 
 #[test]
 fn trace_window_narrows_the_span_set() {
-    let mut cmd = Command::cargo_bin("cq").unwrap();
-    let full = cmd
-        .args(["--session", "sess-trace-0001-0000-0000-000000000000", "trace"])
+    let env = setup_env_tree(TRACE_SESSION);
+    let full = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace"])
         .output()
         .unwrap();
-    let mut cmd2 = Command::cargo_bin("cq").unwrap();
-    let windowed = cmd2
+    let windowed = cq_cmd(&env)
         .args([
             "--session",
-            "sess-trace-0001-0000-0000-000000000000",
+            TRACE_SESSION,
             "trace",
             "--from",
             "+0s",
@@ -1175,11 +1268,11 @@ encodings of two non-nested overlapping slices, and which one Task 7 uses."
 ```rust
 #[test]
 fn perfetto_output_is_valid_trace_json() {
-    let mut cmd = Command::cargo_bin("cq").unwrap();
-    let output = cmd
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
         .args([
             "--session",
-            "sess-trace-0001-0000-0000-000000000000",
+            TRACE_SESSION,
             "trace",
             "--perfetto",
         ])
@@ -1212,11 +1305,11 @@ fn perfetto_output_is_valid_trace_json() {
 
 #[test]
 fn perfetto_gaps_are_categorized() {
-    let mut cmd = Command::cargo_bin("cq").unwrap();
-    let output = cmd
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
         .args([
             "--session",
-            "sess-trace-0001-0000-0000-000000000000",
+            TRACE_SESSION,
             "trace",
             "--perfetto",
         ])
@@ -1434,7 +1527,7 @@ git commit -m "docs: document tool_results.timestamp, the agents view, and cq tr
 fn lane_groups_resolve_to_depth_one_ancestor() {
     let conn = setup_db_multi(&["subagents/agent-sub1.jsonl"]);
     // A depth-2 lane must report the depth-1 lane above it as its group.
-    let groups = cq::trace::lane_groups(&conn, "sess-trace-0001").unwrap();
+    let groups = cq::trace::lane_groups(&conn, TRACE_SESSION).unwrap();
     assert_eq!(groups.get("main").map(String::as_str), Some("main"));
 }
 ```
