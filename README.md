@@ -150,17 +150,45 @@ Built-in commands select the active harness by default: `harness = 'codex'` insi
 
 ## Views
 
-Five SQL views, all queryable with `cq sql`:
+Six SQL views, all queryable with `cq sql`:
 
 - **sessions** - one row per session with timestamps, message counts, tool counts (main-loop only), plus a `subagent_count`
 - **messages** - one row per conversation turn (user or assistant)
 - **tool_calls** - one row per tool invocation, with input as queryable JSON
 - **tool_results** - one row per tool response, with an error flag
 - **hook_events** - one row per hook injection - SessionStart context, PreToolUse/PostToolUse output - fanned out per plugin for `hook_additional_context` records
+- **agents** - one row per subagent lane (Claude-only), with its type, description, parent tool call, and spawn depth
 
 Every view includes a `harness` column (`claude` or `codex`). Subagent activity is indexed for Claude Code: `messages`, `tool_calls`, and `tool_results` carry `is_sidechain`, `agent_id`, `agent_type`, and `workflow_id` so you can include, exclude, or focus subagents. `cq sessions` stays main-loop-only.
 
 Run `cq schema` for full column details.
+
+## Trace
+
+`cq trace --session <id>` renders a session as a terminal waterfall: one row per lane (main loop first, then subagents by first activity), duration bars scaled to your terminal width, and a header that always states the time-per-column scale. Tool execution is often a minority of wall clock: one real session ran 344.9 minutes with only 169.3 minutes (49%) inside tool spans, the rest spent waiting on you or on the model.
+
+```
+$ cq trace --session a1b2c3d4
+7 spans  3 lanes  1.7 min wall  [72 cols = 1.4 s/col]
+1.0 min of tool work across 3 lanes   blocked on you 1.0 min
+main                  4 ████████████████████████████                          ██
+sub1                  2       ███████████████
+sub2                  1          █
+```
+
+Use `--from`/`--to` to zoom into a slice of the session, as an offset from session start (`+12m`, `+90s`, `+2h`) or an absolute ISO timestamp:
+
+```bash
+cq trace --session <id> --from +12m --to +17m
+```
+
+Add `--perfetto` to emit Chrome Trace Event JSON on stdout instead of the waterfall, for opening in [Perfetto](https://ui.perfetto.dev/), Firefox Profiler, or Speedscope:
+
+```bash
+cq trace --session <id> --perfetto > trace.json
+```
+
+The global `--json` flag returns span rows instead of either renderer: one object per paired tool call, with `lane`, `duration_ms`, and `is_error`.
 
 ## Use cases
 

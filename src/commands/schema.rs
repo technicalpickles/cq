@@ -15,12 +15,13 @@ fn print_view(name: &str) {
         "tool_results" => Some(TOOL_RESULTS_SCHEMA),
         "hook_events" => Some(HOOK_EVENTS_SCHEMA),
         "sessions" => Some(SESSIONS_SCHEMA),
+        "agents" => Some(AGENTS_SCHEMA),
         _ => None,
     };
     match section {
         Some(s) => println!("{}", s),
         None => {
-            eprintln!("Error: Unknown view '{}'\nValid views: messages, tool_calls, tool_results, hook_events, sessions", name);
+            eprintln!("Error: Unknown view '{}'\nValid views: messages, tool_calls, tool_results, hook_events, sessions, agents", name);
             std::process::exit(1);
         }
     }
@@ -70,6 +71,7 @@ const TOOL_RESULTS_SCHEMA: &str = r#"tool_results
   project             VARCHAR   Project name
   source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   harness             VARCHAR   The tool that produced the transcript (claude, codex, opencode)
+  timestamp           VARCHAR   ISO 8601 timestamp string
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
   content             VARCHAR   Tool result content (text); advisor() results are unwrapped from {type, text}
@@ -106,6 +108,22 @@ const SESSIONS_SCHEMA: &str = r#"sessions
   user_message_count  BIGINT    Number of user turns
   subagent_count      BIGINT    Distinct subagents spawned in this session
   first_user_message  VARCHAR   Text of the first user message"#;
+
+const AGENTS_SCHEMA: &str = r#"agents
+------
+  session_id          VARCHAR   Parent session identifier
+  project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
+  harness             VARCHAR   The tool that produced the transcript (claude only; codex has no subagents)
+  agent_id            VARCHAR   Subagent identifier
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore')
+  description         VARCHAR   Subagent description from meta.json; NULL for workflow subagents
+  parent_tool_use_id  VARCHAR   tool_use_id of the Task call that spawned this subagent; NULL for workflow subagents
+  spawn_depth         BIGINT    Nesting depth (1 = spawned directly by the main loop)
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
+  started_at          VARCHAR   Timestamp of the subagent's first message
+  ended_at            VARCHAR   Timestamp of the subagent's last message
+  tool_call_count     BIGINT    Number of tool calls made by this subagent"#;
 
 const EXAMPLE_QUERIES: &str = r#"Example Queries
 ===============
@@ -225,6 +243,7 @@ tool_results
   project             VARCHAR   Project name
   source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
   harness             VARCHAR   The tool that produced the transcript (claude, codex, opencode)
+  timestamp           VARCHAR   ISO 8601 timestamp string
   tool_use_id         VARCHAR   Matches tool_calls.tool_use_id
   is_error            BOOLEAN   true if the tool call returned an error
   content             VARCHAR   Tool result content (text); advisor() results are unwrapped from {type, text}
@@ -261,6 +280,22 @@ sessions
   user_message_count  BIGINT    Number of user turns
   subagent_count      BIGINT    Distinct subagents spawned in this session
   first_user_message  VARCHAR   Text of the first user message
+
+agents
+------
+  session_id          VARCHAR   Parent session identifier
+  project             VARCHAR   Project name
+  source              VARCHAR   Source the transcript came from (`main` or a cenv env name)
+  harness             VARCHAR   The tool that produced the transcript (claude only; codex has no subagents)
+  agent_id            VARCHAR   Subagent identifier
+  agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore')
+  description         VARCHAR   Subagent description from meta.json; NULL for workflow subagents
+  parent_tool_use_id  VARCHAR   tool_use_id of the Task call that spawned this subagent; NULL for workflow subagents
+  spawn_depth         BIGINT    Nesting depth (1 = spawned directly by the main loop)
+  workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
+  started_at          VARCHAR   Timestamp of the subagent's first message
+  ended_at            VARCHAR   Timestamp of the subagent's last message
+  tool_call_count     BIGINT    Number of tool calls made by this subagent
 
 
 Example Queries

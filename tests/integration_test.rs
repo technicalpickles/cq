@@ -33,6 +33,30 @@ fn setup_env(fixtures: &[&str]) -> TestEnv {
     }
 }
 
+/// Copy a fixture tree (a `<uuid>.jsonl` plus its `<uuid>/subagents/` sidecars)
+/// into the temp projects dir, preserving layout. `setup_env` only handles flat
+/// files, but subagent discovery depends on the nested directory structure.
+fn setup_env_tree(session_id: &str) -> TestEnv {
+    let env = setup_env(&[]);
+    let project_dir = env.projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    std::fs::copy(
+        fixture_path(&format!("{session_id}.jsonl")),
+        project_dir.join(format!("{session_id}.jsonl")),
+    )
+    .unwrap();
+
+    let src_subs = fixture_path(session_id).join("subagents");
+    let dest_subs = project_dir.join(session_id).join("subagents");
+    std::fs::create_dir_all(&dest_subs).unwrap();
+    for entry in std::fs::read_dir(&src_subs).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dest_subs.join(entry.file_name())).unwrap();
+    }
+    env
+}
+
 fn cq_cmd(env: &TestEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
@@ -3104,4 +3128,191 @@ fn table_context_single_group_no_separator() {
         separator_lines, 0,
         "single group should not have '--' separator, got:\n{stdout}"
     );
+}
+
+// ---- cq trace ----
+
+const TRACE_SESSION: &str = "a1b2c3d4-0000-4000-8000-000000000001";
+
+#[test]
+fn trace_requires_session() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env).args(["trace"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cq trace requires --session"),
+        "got: {stderr}"
+    );
+    assert!(!output.status.success());
+}
+
+#[test]
+fn trace_json_emits_spans_with_durations() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--json", "--session", TRACE_SESSION, "trace"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = rows.as_array().expect("array of spans");
+    assert_eq!(arr.len(), 7, "fixture has 7 paired spans, got: {stdout}");
+
+    // Durations must be real, not all zero.
+    let total: i64 = arr.iter().map(|s| s["duration_ms"].as_i64().unwrap()).sum();
+    assert_eq!(total, 3000 + 5588 + 32000 + 1500 + 18000 + 200 + 1000);
+
+    // The error span is flagged.
+    assert_eq!(
+        arr.iter().filter(|s| s["is_error"] == true).count(),
+        1,
+        "exactly one span is an error"
+    );
+
+    // All three lanes appear.
+    let lanes: std::collections::BTreeSet<&str> =
+        arr.iter().filter_map(|s| s["lane"].as_str()).collect();
+    assert_eq!(lanes.len(), 3, "main + 2 subagent lanes, got {lanes:?}");
+    assert!(lanes.contains("main"));
+}
+
+#[test]
+fn trace_waterfall_shows_lanes_and_scale() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("main"), "expected a main lane: {stdout}");
+    assert!(
+        stdout.contains("min/col") || stdout.contains("s/col"),
+        "expected an explicit time scale in the header: {stdout}"
+    );
+    assert!(stdout.contains('\u{2588}'), "expected bar glyphs: {stdout}");
+}
+
+#[test]
+fn trace_window_narrows_the_span_set() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let full = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace"])
+        .output()
+        .unwrap();
+    let windowed = cq_cmd(&env)
+        .args([
+            "--session",
+            TRACE_SESSION,
+            "trace",
+            "--from",
+            "+0s",
+            "--to",
+            "+1s",
+        ])
+        .output()
+        .unwrap();
+    assert_ne!(
+        String::from_utf8_lossy(&full.stdout),
+        String::from_utf8_lossy(&windowed.stdout),
+        "a 1-second window must not render identically to the whole session"
+    );
+}
+
+#[test]
+fn perfetto_output_is_valid_trace_json() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--perfetto"])
+        .output()
+        .unwrap();
+    let events: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("must be valid JSON");
+    let arr = events.as_array().expect("trace is a JSON array");
+
+    // Metadata naming every process and thread.
+    assert!(
+        arr.iter()
+            .any(|e| e["ph"] == "M" && e["name"] == "process_name"),
+        "expected process_name metadata"
+    );
+    assert!(
+        arr.iter()
+            .any(|e| e["ph"] == "M" && e["name"] == "thread_name"),
+        "expected thread_name metadata"
+    );
+    // At least one real span, in microseconds.
+    let span = arr
+        .iter()
+        .find(|e| e["cat"] == "tool")
+        .expect("expected a tool span");
+    assert!(span["ts"].is_number());
+    assert!(span["pid"].is_number());
+    assert!(span["tid"].is_number());
+    // Args carry the tool input verbatim.
+    assert!(span["args"].is_object(), "expected an args object");
+
+    // Pin the async b/e pairing invariant (settled by the overlap spike --
+    // see src/trace/perfetto.rs's module doc comment): tool spans must never
+    // regress to ph:"X" complete events. TRACE_SESSION's fixture has 7 spans
+    // (4 on main, 2 on agent-sub1, 1 on agent-sub2), so there must be exactly
+    // 14 tool-cat events, and every distinct `id` must have exactly one
+    // ph:"b" and one ph:"e".
+    let tool_events: Vec<&serde_json::Value> = arr.iter().filter(|e| e["cat"] == "tool").collect();
+    assert_eq!(
+        tool_events.len(),
+        14,
+        "expected 14 tool-cat events (7 begin + 7 end) for the fixture's 7 spans: {tool_events:?}"
+    );
+    let mut by_id: std::collections::HashMap<String, Vec<&str>> = std::collections::HashMap::new();
+    for e in &tool_events {
+        let ph = e["ph"].as_str().expect("ph must be a string");
+        assert!(
+            ph == "b" || ph == "e",
+            "tool-cat event must be ph:\"b\" or ph:\"e\", got ph:{ph:?}: {e}"
+        );
+        let id = e["id"].as_str().expect("id must be a string").to_string();
+        by_id.entry(id).or_default().push(ph);
+    }
+    assert_eq!(
+        by_id.len(),
+        7,
+        "expected 7 distinct tool_use_ids: {by_id:?}"
+    );
+    for (id, mut phs) in by_id {
+        phs.sort_unstable();
+        assert_eq!(
+            phs,
+            vec!["b", "e"],
+            "id {id} must have exactly one ph:\"b\" and one ph:\"e\", got {phs:?}"
+        );
+    }
+}
+
+#[test]
+fn perfetto_gaps_are_categorized() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--perfetto"])
+        .output()
+        .unwrap();
+    let events: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        events.as_array().unwrap().iter().any(|e| e["cat"] == "gap"),
+        "expected gap slices"
+    );
+}
+
+#[test]
+fn trace_unknown_session_reports_not_found() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", "ffffffff-0000-4000-8000-000000000000", "trace"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "expected a not-found message: {stderr}"
+    );
+    assert!(output.status.success(), "not-found is not a hard error");
 }

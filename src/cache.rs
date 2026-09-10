@@ -3,7 +3,7 @@ use duckdb::Connection;
 use duckdb::OptionalExt;
 use std::path::Path;
 
-pub const SCHEMA_VERSION: i32 = 6;
+pub const SCHEMA_VERSION: i32 = 7;
 
 /// Open or create the cache database. Creates tables if missing,
 /// rebuilds if schema version mismatches or force_rebuild is true.
@@ -102,6 +102,9 @@ fn rebuild(conn: &Connection) -> Result<()> {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         );
 

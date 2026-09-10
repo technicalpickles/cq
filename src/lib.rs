@@ -11,4 +11,5 @@ pub mod scope;
 pub mod source;
 pub mod style;
 pub mod sync_scope;
+pub mod trace;
 pub mod views;

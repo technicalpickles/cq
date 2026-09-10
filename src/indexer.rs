@@ -351,9 +351,24 @@ fn collect_jsonl(dir: &Path, files: &mut HashMap<PathBuf, FileInfo>) -> Result<(
     Ok(())
 }
 
-/// Read `agentType` from the sibling `agent-<id>.meta.json`, if this file is a
-/// subagent transcript and the sidecar exists.
-fn read_agent_type(file: &Path) -> Option<String> {
+/// Fields read from a subagent's sibling `agent-<id>.meta.json`.
+///
+/// Plain subagents carry all four. Workflow subagents (under
+/// `subagents/workflows/wf_<id>/`) carry only `agentType` and `spawnDepth`,
+/// so `parent_tool_use_id` and `description` are None for them and their
+/// parentage has to come from the path-derived `workflow_id` instead.
+#[derive(Debug, Default, Clone)]
+pub struct AgentMeta {
+    pub agent_type: Option<String>,
+    pub description: Option<String>,
+    pub parent_tool_use_id: Option<String>,
+    pub spawn_depth: Option<i64>,
+}
+
+/// Read the sidecar `agent-<id>.meta.json` next to a subagent transcript.
+/// Returns None when this isn't a subagent transcript or the sidecar is
+/// missing or unparseable.
+pub fn read_agent_meta(file: &Path) -> Option<AgentMeta> {
     let name = file.file_name()?.to_str()?;
     if !name.starts_with("agent-") {
         return None;
@@ -362,7 +377,21 @@ fn read_agent_type(file: &Path) -> Option<String> {
     let meta = file.with_file_name(format!("{stem}.meta.json"));
     let data = std::fs::read_to_string(&meta).ok()?;
     let value: serde_json::Value = serde_json::from_str(&data).ok()?;
-    value.get("agentType")?.as_str().map(|s| s.to_string())
+    Some(AgentMeta {
+        agent_type: value
+            .get("agentType")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        description: value
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        parent_tool_use_id: value
+            .get("toolUseId")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        spawn_depth: value.get("spawnDepth").and_then(|v| v.as_i64()),
+    })
 }
 
 /// A `.jsonl` transcript we should index. Excludes workflow `journal.jsonl`
@@ -481,7 +510,7 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
             )
             .ok();
 
-        let agent_type = read_agent_type(file);
+        let meta = read_agent_meta(file).unwrap_or_default();
 
         let metadata = std::fs::metadata(file)?;
         let mtime_ns = metadata
@@ -493,8 +522,21 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
         let file_size = metadata.len() as i64;
 
         conn.execute(
-            "INSERT INTO file_registry (file_path, mtime_ns, file_size, cwd, agent_type, source) VALUES (?, ?, ?, ?, ?, ?)",
-            duckdb::params![path_str, mtime_ns, file_size, cwd, agent_type, source_name],
+            "INSERT INTO file_registry
+                (file_path, mtime_ns, file_size, cwd, agent_type, source,
+                 agent_description, parent_tool_use_id, spawn_depth)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            duckdb::params![
+                path_str,
+                mtime_ns,
+                file_size,
+                cwd,
+                meta.agent_type,
+                source_name,
+                meta.description,
+                meta.parent_tool_use_id,
+                meta.spawn_depth
+            ],
         )?;
     }
     Ok(())

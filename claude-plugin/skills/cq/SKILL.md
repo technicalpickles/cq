@@ -19,6 +19,7 @@ user_invocable: true
 | `cq projects` | Summarize projects by session/message/tool counts |
 | `cq sql "<QUERY>"` | Run raw SQL against the views |
 | `cq schema` | View schemas and example queries (source of truth) |
+| `cq trace --session <ID>` | Render a session as a terminal waterfall (lanes, durations, gaps) |
 
 ## Global Flags
 
@@ -39,6 +40,7 @@ user_invocable: true
 - **search**: `--type user|assistant`, `--all-matches` (every matching message rather than the best one per session)
 - **tools**: `--grep` (filter inputs, repeatable/OR), `--result-grep` (filter by tool result content, repeatable/OR, ANDs with `--errors`), `--errors` (errors only), `--fields` (extract input fields as columns)
 - **messages**: `--type user|assistant`, `--grep` (repeatable/OR)
+- **trace**: `--session <ID>` (required), `--from`/`--to` (zoom into a time window), `--perfetto` (emit Chrome Trace Event JSON instead of the waterfall)
 
 ## View Schemas
 
@@ -48,7 +50,9 @@ user_invocable: true
 
 **tool_calls**: session_id, project, source, harness, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` invocations appear here too, with `name = 'advisor'` (they use a `server_tool_use` block under the hood, not the standard `tool_use`).
 
-**tool_results**: session_id, project, source, harness, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` results appear here with `content` already unwrapped to the advisor's text.
+**tool_results**: session_id, project, source, harness, timestamp, tool_use_id, is_error, content, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` results appear here with `content` already unwrapped to the advisor's text.
+
+**agents**: session_id, project, source, harness, agent_id, agent_type, description, parent_tool_use_id, spawn_depth, workflow_id, started_at, ended_at, tool_call_count. One row per subagent lane (Claude-only); backs `cq trace`'s lane names.
 
 Subagent rows carry the parent `session_id`. Filter with `WHERE NOT is_sidechain` (main loop), `WHERE is_sidechain` (subagents), `WHERE agent_type = 'Explore'`, or `WHERE workflow_id IS NOT NULL`.
 
@@ -144,6 +148,7 @@ What to do about it:
 - Use `--all` to remove inferred current-context scope and query more broadly. Explicit filters still apply.
 - When searching for work done in a different repo (e.g. karafka sessions while in pickleton), use `--project <name>` or `--all`. Auto-scoping only matches sessions from the current directory's project.
 - `cq projects` always shows all projects regardless of auto-scoping, so you can see what's available.
+- `cq trace --session <ID> --perfetto` emits Chrome Trace Event JSON. Pipe it into `trace_processor` for local SQL queries over the trace, or open it in the [Perfetto web UI](https://ui.perfetto.dev/) or [Firefox Profiler](https://profiler.firefox.com/).
 
 ## Tips for `cq sql`
 

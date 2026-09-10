@@ -215,6 +215,7 @@ impl TranscriptProvider for ClaudeProvider {
             View::ToolCalls => crate::views::claude_tool_calls_sql(),
             View::ToolResults => crate::views::claude_tool_results_sql(),
             View::HookEvents => crate::views::claude_hook_events_sql(),
+            View::Agents => crate::views::claude_agents_sql(),
             View::Sessions => crate::views::claude_sessions_sql(),
         })
     }

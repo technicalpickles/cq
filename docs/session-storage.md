@@ -80,7 +80,7 @@ Each line is one JSON object with a `type`. It's a mixed event log, not a messag
 | `file-history-delta` | 257 | file state tracking |
 | `agent-name` | 63 | bookkeeping |
 
-Two consequences. First, `SELECT count(*) FROM raw_records` is not a message count and never was. Second, cq's five views model only a slice of this, so a `type` you care about may be sitting in `raw_records` with no view over it. Check before assuming a view covers it.
+Two consequences. First, `SELECT count(*) FROM raw_records` is not a message count and never was. Second, cq's six views model only a slice of this, so a `type` you care about may be sitting in `raw_records` with no view over it. Check before assuming a view covers it.
 
 ### Where the views get their rows
 

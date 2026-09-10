@@ -20,6 +20,9 @@ fn setup_db(fixture: &str) -> Connection {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -41,6 +44,9 @@ fn setup_db_multi(fixtures: &[&str]) -> Connection {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -516,6 +522,9 @@ fn agent_type_flows_from_registry() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -560,6 +569,9 @@ fn sessions_single_row_across_cwds() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -626,6 +638,9 @@ fn sessions_filter_by_source() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -697,6 +712,9 @@ fn tool_calls_filter_by_source() {
             cwd TEXT,
             agent_type TEXT,
             source TEXT,
+            agent_description TEXT,
+            parent_tool_use_id TEXT,
+            spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -834,6 +852,7 @@ fn empty_views_have_harness_column() {
         "CREATE TABLE file_registry (
             file_path TEXT PRIMARY KEY, mtime_ns BIGINT, file_size BIGINT,
             cwd TEXT, agent_type TEXT, source TEXT,
+            agent_description TEXT, parent_tool_use_id TEXT, spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -956,6 +975,7 @@ fn empty_hook_events_view_has_correct_schema() {
         "CREATE TABLE file_registry (
             file_path TEXT PRIMARY KEY, mtime_ns BIGINT, file_size BIGINT,
             cwd TEXT, agent_type TEXT, source TEXT,
+            agent_description TEXT, parent_tool_use_id TEXT, spawn_depth BIGINT,
             indexed_at TIMESTAMP DEFAULT current_timestamp
         )",
     )
@@ -979,4 +999,358 @@ fn empty_hook_events_view_has_correct_schema() {
         )
         .unwrap();
     assert_eq!(n, 0, "hook_events should be empty");
+}
+
+// ---- tool_results.timestamp ----
+
+#[test]
+fn tool_results_expose_timestamp() {
+    let conn = setup_db("multi_tool_session.jsonl");
+    let ts: String = conn
+        .query_row(
+            "SELECT timestamp FROM tool_results WHERE tool_use_id = 'toolu_010'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        ts.starts_with("20") && ts.ends_with('Z'),
+        "expected ISO8601 timestamp, got {ts:?}"
+    );
+}
+
+#[test]
+fn tool_result_timestamp_is_at_or_after_its_call() {
+    let conn = setup_db("multi_tool_session.jsonl");
+    // The `with_timestamps` count is the load-bearing assertion, and it is not
+    // the obvious one. SQL three-valued logic makes `NULL < anything` evaluate
+    // to NULL rather than false, so "no rows are out of order" is satisfied for
+    // free by an all-NULL column. Counting paired rows does NOT catch that --
+    // the JOIN is on tool_use_id, so pairing still succeeds with every
+    // timestamp NULL. Only counting non-NULL timestamps does.
+    // (`COUNT(expr)` skips NULLs; `COUNT(*)` does not.)
+    let (paired, with_timestamps, out_of_order): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*),
+                    COUNT(tc.timestamp) + COUNT(tr.timestamp),
+                    COUNT(*) FILTER (WHERE tr.timestamp < tc.timestamp)
+             FROM tool_calls tc
+             JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert!(paired > 0, "fixture must actually pair calls to results");
+    assert_eq!(
+        with_timestamps,
+        paired * 2,
+        "every paired call and result must carry a non-NULL timestamp"
+    );
+    assert_eq!(out_of_order, 0, "no result may predate its own call");
+}
+
+// ---- meta.json sidecar fields ----
+
+const TRACE_SESSION: &str = "a1b2c3d4-0000-4000-8000-000000000001";
+
+fn sub_fixture(name: &str) -> PathBuf {
+    fixture_path(TRACE_SESSION).join("subagents").join(name)
+}
+
+#[test]
+fn sidecar_fields_are_parsed_from_meta_json() {
+    let meta = cq::indexer::read_agent_meta(&sub_fixture("agent-sub1.jsonl"))
+        .expect("sidecar should parse");
+    assert_eq!(meta.agent_type.as_deref(), Some("general-purpose"));
+    assert_eq!(meta.parent_tool_use_id.as_deref(), Some("toolu_agent1"));
+    assert_eq!(meta.spawn_depth, Some(1));
+    assert_eq!(meta.description.as_deref(), Some("Sub work"));
+}
+
+#[test]
+fn sidecar_reads_depth_two_subagent() {
+    let meta = cq::indexer::read_agent_meta(&sub_fixture("agent-sub2.jsonl"))
+        .expect("sidecar should parse");
+    assert_eq!(meta.agent_type.as_deref(), Some("Explore"));
+    assert_eq!(meta.parent_tool_use_id.as_deref(), Some("toolu_agent2"));
+    assert_eq!(meta.spawn_depth, Some(2));
+}
+
+#[test]
+fn sidecar_absent_yields_none() {
+    let meta = cq::indexer::read_agent_meta(&fixture_path("simple_session.jsonl"));
+    assert!(meta.is_none(), "non-subagent files have no sidecar");
+}
+
+#[test]
+fn workflow_sidecar_has_no_parent_edge() {
+    // Workflow subagents carry only {agentType, spawnDepth, model} -- no
+    // toolUseId and no description -- so their parentage is unrecoverable from
+    // the sidecar and has to come from the path-derived workflow_id instead.
+    //
+    // This asserts unconditionally on purpose. An `if let Some(meta)` guard
+    // here would make the test pass vacuously whenever the sidecar is absent,
+    // including if the code started inventing a parent for workflow subagents.
+    let path = fixture_path("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+    let meta = cq::indexer::read_agent_meta(&path)
+        .expect("the workflow fixture must have a sidecar for this test to mean anything");
+    assert_eq!(meta.agent_type.as_deref(), Some("Explore"));
+    assert_eq!(meta.spawn_depth, Some(1));
+    assert_eq!(
+        meta.parent_tool_use_id, None,
+        "workflow subagents have no resolvable parent"
+    );
+    assert_eq!(
+        meta.description, None,
+        "workflow sidecars carry no description"
+    );
+}
+
+// ---- agents view ----
+
+#[test]
+fn agents_view_lists_subagent_lanes() {
+    let conn = setup_db(&format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl"));
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'general-purpose', 'main',
+                 'Sub work', 'toolu_agent1', 1)",
+        [sub_fixture("agent-sub1.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+
+    let (agent_id, agent_type, desc, parent, depth, tool_call_count): (
+        String, String, String, String, i64, i64,
+    ) = conn
+        .query_row(
+            "SELECT agent_id, agent_type, description, parent_tool_use_id, spawn_depth, tool_call_count
+             FROM agents WHERE agent_id = 'agent-sub1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .unwrap();
+
+    assert_eq!(agent_id, "agent-sub1");
+    assert_eq!(agent_type, "general-purpose");
+    assert_eq!(desc, "Sub work");
+    assert_eq!(parent, "toolu_agent1");
+    assert_eq!(depth, 1);
+    assert_eq!(
+        tool_call_count, 2,
+        "agent-sub1's lane has one Grep tool_use and one Agent tool_use"
+    );
+}
+
+#[test]
+fn agents_view_excludes_main_loop() {
+    let conn = setup_db(&format!("{TRACE_SESSION}.jsonl"));
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM agents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "the main-loop transcript contributes no agent lanes"
+    );
+}
+
+#[test]
+fn agents_view_bounds_cover_the_lane() {
+    let conn = setup_db(&format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl"));
+    let (start, end, rows): (String, String, i64) = conn
+        .query_row(
+            "SELECT started_at, ended_at, COUNT(*) OVER () FROM agents
+             WHERE agent_id = 'agent-sub1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(rows, 1, "one row per lane, not one per record");
+    assert!(
+        !start.is_empty() && !end.is_empty(),
+        "bounds must be populated"
+    );
+    assert!(
+        start < end,
+        "started_at must precede ended_at, got {start} .. {end}"
+    );
+}
+
+// ---- trace gaps ----
+
+#[test]
+fn gaps_classify_the_fixtures_human_gap() {
+    // setup_db takes one path, and the human gap plus the subagent lanes only
+    // coexist across the whole tree, so this needs setup_db_multi.
+    let main = format!("{TRACE_SESSION}.jsonl");
+    let sub1 = format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl");
+    let sub2 = format!("{TRACE_SESSION}/subagents/agent-sub2.jsonl");
+    let conn = setup_db_multi(&[&main, &sub1, &sub2]);
+
+    let gaps = cq::trace::gaps(&conn, TRACE_SESSION).expect("gap query should run");
+
+    // Anchor the "every gap is positive" claim below: without a non-zero count
+    // it would hold vacuously for a query that returned nothing.
+    assert_eq!(
+        gaps.len(),
+        16,
+        "10 gaps on main, 4 on agent-sub1, 2 on agent-sub2, got {gaps:#?}"
+    );
+    assert!(
+        gaps.iter().all(|g| g.duration_ms > 0),
+        "zero-length and out-of-order intervals are filtered out, got {gaps:#?}"
+    );
+
+    // The fixture's one deliberate human gap: assistant prose at 12:00:41
+    // followed by a genuine user turn at 12:01:41.
+    let human: Vec<&cq::trace::Gap> = gaps
+        .iter()
+        .filter(|g| g.kind == cq::trace::GapKind::Human)
+        .collect();
+    assert_eq!(
+        human.len(),
+        1,
+        "exactly one human gap in the fixture, got {human:#?}"
+    );
+    assert_eq!(human[0].duration_ms, 60_000);
+    assert_eq!(human[0].lane, "main", "the human gap is on the main lane");
+
+    // And the rest classify the other way, so 'human' isn't the only branch
+    // this query can produce.
+    assert_eq!(
+        gaps.iter()
+            .filter(|g| g.kind == cq::trace::GapKind::Think)
+            .count(),
+        15,
+        "every other gap is a think gap, got {gaps:#?}"
+    );
+}
+
+// ---- lane_groups ----
+
+/// Populate `file_registry` for the two real subagent fixtures the way the
+/// indexer would at index time (mirroring their `.meta.json` sidecars),
+/// since `setup_db_multi` registers views directly against the raw fixture
+/// files without running the indexer.
+fn seed_lane_group_sidecars(conn: &Connection) {
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'general-purpose', 'main',
+                 'Sub work', 'toolu_agent1', 1)",
+        [sub_fixture("agent-sub1.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'Explore', 'main',
+                 'Deep dig', 'toolu_agent2', 2)",
+        [sub_fixture("agent-sub2.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+}
+
+#[test]
+fn lane_groups_resolve_to_depth_one_ancestor() {
+    // toolu_agent2 (agent-sub1's dispatch of agent-sub2) is a real tool_use
+    // record inside agent-sub1.jsonl (see agent-sub1.jsonl line 4, id
+    // "toolu_agent2", agentId "agent-sub1"), so this is a genuine two-hop
+    // edge already present in the fixture set -- no new fixture data needed.
+    let main = format!("{TRACE_SESSION}.jsonl");
+    let sub1 = format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl");
+    let sub2 = format!("{TRACE_SESSION}/subagents/agent-sub2.jsonl");
+    let conn = setup_db_multi(&[&main, &sub1, &sub2]);
+    seed_lane_group_sidecars(&conn);
+
+    let groups = cq::trace::lane_groups(&conn, TRACE_SESSION).unwrap();
+
+    assert_eq!(groups.get("main").map(String::as_str), Some("main"));
+    assert_eq!(
+        groups.get("agent-sub1").map(String::as_str),
+        Some("agent-sub1"),
+        "a depth-1 lane groups under itself"
+    );
+    assert_eq!(
+        groups.get("agent-sub2").map(String::as_str),
+        Some("agent-sub1"),
+        "a depth-2 lane must report the depth-1 lane above it as its group"
+    );
+}
+
+#[test]
+fn lane_groups_workflow_subagent_groups_by_workflow_id() {
+    // The workflow fixture's sidecar has no toolUseId/parentToolUseId
+    // (see workflow_sidecar_has_no_parent_edge), so its only path to a
+    // group is the path-derived workflow_id -- no file_registry seeding
+    // needed, since WORKFLOW_ID_EXPR reads the file path, not the sidecar.
+    let conn = setup_db("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+
+    let groups = cq::trace::lane_groups(&conn, "sess-wf").unwrap();
+
+    assert_eq!(
+        groups.get("agentWF").map(String::as_str),
+        Some("wf_testrun"),
+        "a workflow subagent with no parent edge groups by its workflow_id"
+    );
+}
+
+#[test]
+fn lane_groups_cycle_guard_does_not_hang() {
+    // Corrupt both lanes' parent_tool_use_id so each points at a tool_use
+    // owned by the *other* lane: agent-sub1's parent is toolu_s2 (owned by
+    // agent-sub2), and agent-sub2's parent is toolu_s1 (owned by
+    // agent-sub1). Walking either lane's chain now cycles between the two
+    // forever unless the cycle guard stops it. This test's real assertion is
+    // that `lane_groups` returns at all -- the harness only gets a timeout
+    // if it doesn't -- plus a check that the fallback grouping is sane
+    // rather than garbage.
+    let main = format!("{TRACE_SESSION}.jsonl");
+    let sub1 = format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl");
+    let sub2 = format!("{TRACE_SESSION}/subagents/agent-sub2.jsonl");
+    let conn = setup_db_multi(&[&main, &sub1, &sub2]);
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'general-purpose', 'main',
+                 'Sub work', 'toolu_s2', 1)",
+        [sub_fixture("agent-sub1.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'Explore', 'main',
+                 'Deep dig', 'toolu_s1', 2)",
+        [sub_fixture("agent-sub2.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+
+    let groups = cq::trace::lane_groups(&conn, TRACE_SESSION).expect("must terminate, not hang");
+
+    // Both lanes fall back to grouping under themselves: the cycle is
+    // detected before either lane's chain is attributed to the other.
+    assert_eq!(
+        groups.get("agent-sub1").map(String::as_str),
+        Some("agent-sub1")
+    );
+    assert_eq!(
+        groups.get("agent-sub2").map(String::as_str),
+        Some("agent-sub2")
+    );
 }
