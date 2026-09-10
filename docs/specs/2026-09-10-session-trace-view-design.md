@@ -17,11 +17,25 @@ questions that actually come up when you stare at a long session:
 A flat event log does not answer these. They are trace questions, and they want a
 trace viewer: duration bars, parallel lanes, zoom.
 
-An earlier design (`docs/superpowers/specs/2026-04-16-cli-ux-features-design.md`,
-Feature 4) specified a `sessions --timeline` flag that printed interleaved
-call/result rows. It was never implemented. This design supersedes it: the flat
-row list it described cannot express duration, overlap, or lane structure, which
-is the entire point.
+`cq sessions --session <id> --timeline` already exists
+(`src/commands/sessions.rs:573`, `run_timeline`), shipped from
+`docs/superpowers/specs/2026-04-16-cli-ux-features-design.md` Feature 4. It
+prints interleaved `call`/`result` rows ordered by timestamp:
+
+```
+14:02:05  call    Bash    cargo test
+14:02:15  result  Bash    error (2,456 bytes)
+```
+
+That is the flat event log, and having it shipped is useful evidence rather than
+a gap: you can run it today and watch it fail to answer any of the questions
+above. It has no duration column (it prints two rows and leaves the subtraction
+to you), no lane column, and no way to show that two calls overlapped.
+
+**`cq trace` supersedes it functionally without removing it.** `--timeline` is a
+released flag, it is cheap to keep, and deleting it would be a breaking change
+this work does not need. The two coexist; `--timeline` is the terse "what
+happened next" list, `cq trace` is the shape of the session.
 
 ## On-disk facts
 
