@@ -23,18 +23,30 @@
 //! Gaps don't have this problem -- by construction two gaps on the same lane
 //! never overlap -- so gaps stay as `ph: "X"` complete events with `dur`.
 
-use crate::trace::{Gap, GapKind, Span};
+use crate::trace::{epoch_ms, Gap, GapKind, Span};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+/// Microsecond epoch for a span/gap timestamp. Perfetto's `ts`/`dur` fields
+/// are in microseconds while the shared `epoch_ms` helper (also used by
+/// `waterfall.rs` and the `--from`/`--to` window parser) is millisecond
+/// precision; the underlying data has no sub-millisecond resolution, so this
+/// just widens `epoch_ms`'s result rather than re-parsing the RFC3339 string.
 fn epoch_us(ts: &str) -> i64 {
-    chrono::DateTime::parse_from_rfc3339(ts)
-        .map(|d| d.timestamp_micros())
-        .unwrap_or(0)
+    epoch_ms(ts) * 1000
 }
 
 pub fn emit(spans: &[Span], gaps: &[Gap], session_id: &str) -> Result<()> {
+    let events = build_events(spans, gaps, session_id);
+    println!("{}", serde_json::to_string(&events)?);
+    Ok(())
+}
+
+/// Build the Chrome Trace Event array for one session, without printing it.
+/// Pulled out of [`emit`] so tests can assert on the structured events
+/// directly instead of capturing stdout.
+fn build_events(spans: &[Span], gaps: &[Gap], session_id: &str) -> Vec<Value> {
     let mut events: Vec<Value> = Vec::new();
 
     // Assign a tid per lane, main first so it sorts to tid 1.
@@ -48,8 +60,8 @@ pub fn emit(spans: &[Span], gaps: &[Gap], session_id: &str) -> Result<()> {
         }
     }
 
-    // Until the parent edge is threaded through (agents view join), every lane
-    // shares one process. Task 7 follow-up: group by depth-1 ancestor.
+    // Task 9 groups lanes by their depth-1 ancestor; until then every lane
+    // shares one process.
     let pid = 1;
 
     events.push(json!({
@@ -112,6 +124,78 @@ pub fn emit(spans: &[Span], gaps: &[Gap], session_id: &str) -> Result<()> {
         }));
     }
 
-    println!("{}", serde_json::to_string(&events)?);
-    Ok(())
+    events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(lane: &str, tool_use_id: &str, start: &str, duration_ms: i64) -> Span {
+        Span {
+            lane: lane.to_string(),
+            agent_type: None,
+            name: "Bash".to_string(),
+            start: start.to_string(),
+            end: start.to_string(),
+            duration_ms,
+            is_error: false,
+            tool_use_id: tool_use_id.to_string(),
+            input: None,
+        }
+    }
+
+    /// Mutation target for the `ph:"X"` complete-event regression the plan's
+    /// original skeleton shipped (see this module's doc comment): every tool
+    /// span must land as a `ph:"b"`/`ph:"e"` pair, never a single `ph:"X"`
+    /// event, and every `id` among tool-cat events must appear in exactly one
+    /// begin and one end.
+    #[test]
+    fn tool_spans_emit_as_matched_begin_end_pairs() {
+        let spans = vec![
+            span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100),
+            span("agent-sub1", "toolu_2", "2026-09-10T12:00:01.000Z", 200),
+            span("agent-sub2", "toolu_3", "2026-09-10T12:00:02.000Z", 300),
+        ];
+        let events = build_events(&spans, &[], "a1b2c3d4-0000-4000-8000-000000000001");
+
+        let tool_events: Vec<&Value> = events.iter().filter(|e| e["cat"] == "tool").collect();
+        assert_eq!(
+            tool_events.len(),
+            2 * spans.len(),
+            "expected a begin and an end event per span"
+        );
+
+        for s in &spans {
+            let matching: Vec<&&Value> = tool_events
+                .iter()
+                .filter(|e| e["id"] == json!(s.tool_use_id))
+                .collect();
+            assert_eq!(
+                matching.len(),
+                2,
+                "expected exactly 2 events for id {}",
+                s.tool_use_id
+            );
+
+            let phs: Vec<&str> = matching.iter().map(|e| e["ph"].as_str().unwrap()).collect();
+            assert!(
+                phs.contains(&"b") && phs.contains(&"e"),
+                "expected one \"b\" and one \"e\" for id {}, got {phs:?}",
+                s.tool_use_id
+            );
+            assert!(
+                phs.iter().all(|ph| *ph != "X"),
+                "tool spans must never be ph:\"X\" complete events, got {phs:?}"
+            );
+
+            assert_eq!(matching[0]["pid"], 1);
+            assert_eq!(matching[1]["pid"], 1);
+            assert_eq!(
+                matching[0]["tid"], matching[1]["tid"],
+                "begin and end for id {} must share a tid",
+                s.tool_use_id
+            );
+        }
+    }
 }

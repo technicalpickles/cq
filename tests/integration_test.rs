@@ -3250,6 +3250,42 @@ fn perfetto_output_is_valid_trace_json() {
     assert!(span["tid"].is_number());
     // Args carry the tool input verbatim.
     assert!(span["args"].is_object(), "expected an args object");
+
+    // Pin the async b/e pairing invariant (settled by the overlap spike --
+    // see src/trace/perfetto.rs's module doc comment): tool spans must never
+    // regress to ph:"X" complete events. TRACE_SESSION's fixture has 7 spans
+    // (4 on main, 2 on agent-sub1, 1 on agent-sub2), so there must be exactly
+    // 14 tool-cat events, and every distinct `id` must have exactly one
+    // ph:"b" and one ph:"e".
+    let tool_events: Vec<&serde_json::Value> = arr.iter().filter(|e| e["cat"] == "tool").collect();
+    assert_eq!(
+        tool_events.len(),
+        14,
+        "expected 14 tool-cat events (7 begin + 7 end) for the fixture's 7 spans: {tool_events:?}"
+    );
+    let mut by_id: std::collections::HashMap<String, Vec<&str>> = std::collections::HashMap::new();
+    for e in &tool_events {
+        let ph = e["ph"].as_str().expect("ph must be a string");
+        assert!(
+            ph == "b" || ph == "e",
+            "tool-cat event must be ph:\"b\" or ph:\"e\", got ph:{ph:?}: {e}"
+        );
+        let id = e["id"].as_str().expect("id must be a string").to_string();
+        by_id.entry(id).or_default().push(ph);
+    }
+    assert_eq!(
+        by_id.len(),
+        7,
+        "expected 7 distinct tool_use_ids: {by_id:?}"
+    );
+    for (id, mut phs) in by_id {
+        phs.sort_unstable();
+        assert_eq!(
+            phs,
+            vec!["b", "e"],
+            "id {id} must have exactly one ph:\"b\" and one ph:\"e\", got {phs:?}"
+        );
+    }
 }
 
 #[test]
