@@ -33,11 +33,12 @@ const SOURCE_EXPR: &str =
 
 /// Register all queryable views against the given JSONL transcript files.
 ///
-/// Creates five views:
+/// Creates six views:
 /// - `messages`: one row per user/assistant turn
 /// - `tool_calls`: one row per tool_use block (from assistant messages)
 /// - `tool_results`: one row per tool_result block (from user messages with array content)
 /// - `hook_events`: one row per hook injection (SessionStart context, PreToolUse/PostToolUse output)
+/// - `agents`: one row per subagent lane (Claude-only; the spawn tree)
 /// - `sessions`: aggregated session-level metrics
 ///
 /// When `files` is empty, creates empty views with the correct schema so queries
@@ -319,6 +320,81 @@ pub fn claude_sessions_sql() -> String {
         GROUP BY session_id".to_string()
 }
 
+/// The Claude `agents` view body: one row per subagent lane (main-loop rows
+/// excluded).
+///
+/// A lane is identified by `source_file` -- each subagent's transcript is its
+/// own JSONL file, one file per lane, whether it's a plain subagent
+/// (`subagents/agent-<id>.jsonl`) or a workflow subagent
+/// (`subagents/workflows/wf_<id>/agent-<id>.jsonl`). `{AGENT_ID_EXPR}` reads
+/// `agentId` off each record within that file; it's constant per lane, so
+/// grouping by it alongside `source_file` is redundant but harmless, and
+/// filtering on it `IS NOT NULL` is what excludes the main loop (whose
+/// records carry no `agentId`).
+///
+/// `agent_type`, `description`, `parent_tool_use_id`, and `spawn_depth` all
+/// come from the sidecar `agent-<id>.meta.json`, read at index time into
+/// `file_registry` and joined back in here the same way `{AGENT_TYPE_EXPR}`
+/// already does -- a correlated subquery keyed on `source_file`. For workflow
+/// subagents the sidecar carries no `toolUseId`/`description`, so those two
+/// columns come out NULL and `workflow_id` (parsed from the file path via
+/// `{WORKFLOW_ID_EXPR}`) is what a caller groups workflow lanes by instead.
+///
+/// `started_at`/`ended_at` are the lane's first and last record timestamps.
+/// `tool_call_count` counts `tool_use`/`server_tool_use` blocks across the
+/// lane's assistant records -- the same block shapes `claude_tool_calls_sql`
+/// counts, just aggregated per lane instead of exploded per block. A record
+/// can in principle carry more than one such block; the per-lane count sums
+/// across all of them via `GROUP BY source_file` in the `tool_counts` CTE.
+///
+/// The count is computed in its own CTE, joined back by `source_file`,
+/// rather than inline as a `CASE`-guarded scalar subquery. DuckDB evaluates a
+/// `CASE`'s subquery branches eagerly regardless of which branch the row's
+/// condition selects, so `CAST(json_extract(...) AS JSON[])` still runs (and
+/// errors, `Expected ARRAY, but got VARCHAR`) on string-content rows even
+/// when the `CASE` condition would have skipped them. A `LATERAL` join, by
+/// contrast, only ever runs for rows the surrounding `WHERE` lets through --
+/// the same reason `claude_tool_calls_sql`'s `LATERAL UNNEST` is safe over
+/// mixed string/array content.
+pub fn claude_agents_sql() -> String {
+    format!(
+        "WITH tool_counts AS (
+            SELECT source_file, COUNT(*) AS n
+            FROM raw_records,
+            LATERAL (
+                SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
+            )
+            WHERE json_extract_string(json, '$.type') = 'assistant'
+            AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
+            AND json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use')
+            GROUP BY source_file
+        )
+        SELECT
+            MAX(json_extract_string(json, '$.sessionId')) AS session_id,
+            MAX({PROJECT_EXPR}) AS project,
+            MAX({SOURCE_EXPR}) AS source,
+            'claude' AS harness,
+            {AGENT_ID_EXPR} AS agent_id,
+            MAX({AGENT_TYPE_EXPR}) AS agent_type,
+            MAX((SELECT fr.agent_description FROM file_registry fr WHERE fr.file_path = raw_records.source_file)) AS description,
+            MAX((SELECT fr.parent_tool_use_id FROM file_registry fr WHERE fr.file_path = raw_records.source_file)) AS parent_tool_use_id,
+            MAX((SELECT fr.spawn_depth FROM file_registry fr WHERE fr.file_path = raw_records.source_file)) AS spawn_depth,
+            MAX({WORKFLOW_ID_EXPR}) AS workflow_id,
+            MIN(json_extract_string(json, '$.timestamp')) AS started_at,
+            MAX(json_extract_string(json, '$.timestamp')) AS ended_at,
+            CAST(COALESCE(MAX(tool_counts.n), 0) AS BIGINT) AS tool_call_count
+        FROM raw_records
+        LEFT JOIN tool_counts USING (source_file)
+        WHERE {AGENT_ID_EXPR} IS NOT NULL
+        GROUP BY raw_records.source_file, {AGENT_ID_EXPR}"
+    )
+}
+
+/// Codex has no subagents, so it contributes nothing to the `agents` view.
+pub fn codex_agents_sql() -> Option<String> {
+    None
+}
+
 /// The Codex `messages` view body. Codex keeps session metadata and response
 /// items in one JSONL file. Message content is an array of input/output text
 /// items, so each response item becomes one cq message row.
@@ -597,6 +673,23 @@ fn empty_view_sql(view: View) -> &'static str {
             NULL::VARCHAR AS attachment_type,
             NULL::VARCHAR AS content,
             NULL::BIGINT AS content_size
+        WHERE 1=0"
+        }
+        View::Agents => {
+            "SELECT
+            NULL::VARCHAR AS session_id,
+            NULL::VARCHAR AS project,
+            NULL::VARCHAR AS source,
+            NULL::VARCHAR AS harness,
+            NULL::VARCHAR AS agent_id,
+            NULL::VARCHAR AS agent_type,
+            NULL::VARCHAR AS description,
+            NULL::VARCHAR AS parent_tool_use_id,
+            NULL::BIGINT AS spawn_depth,
+            NULL::VARCHAR AS workflow_id,
+            NULL::VARCHAR AS started_at,
+            NULL::VARCHAR AS ended_at,
+            CAST(0 AS BIGINT) AS tool_call_count
         WHERE 1=0"
         }
         View::Sessions => {

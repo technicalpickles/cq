@@ -1105,3 +1105,76 @@ fn workflow_sidecar_has_no_parent_edge() {
         "workflow sidecars carry no description"
     );
 }
+
+// ---- agents view ----
+
+#[test]
+fn agents_view_lists_subagent_lanes() {
+    let conn = setup_db(&format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl"));
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'general-purpose', 'main',
+                 'Sub work', 'toolu_agent1', 1)",
+        [sub_fixture("agent-sub1.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+
+    let (agent_id, agent_type, desc, parent, depth, tool_call_count): (
+        String, String, String, String, i64, i64,
+    ) = conn
+        .query_row(
+            "SELECT agent_id, agent_type, description, parent_tool_use_id, spawn_depth, tool_call_count
+             FROM agents WHERE agent_id = 'agent-sub1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .unwrap();
+
+    assert_eq!(agent_id, "agent-sub1");
+    assert_eq!(agent_type, "general-purpose");
+    assert_eq!(desc, "Sub work");
+    assert_eq!(parent, "toolu_agent1");
+    assert_eq!(depth, 1);
+    assert_eq!(
+        tool_call_count, 2,
+        "agent-sub1's lane has one Grep tool_use and one Agent tool_use"
+    );
+}
+
+#[test]
+fn agents_view_excludes_main_loop() {
+    let conn = setup_db(&format!("{TRACE_SESSION}.jsonl"));
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM agents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "the main-loop transcript contributes no agent lanes"
+    );
+}
+
+#[test]
+fn agents_view_bounds_cover_the_lane() {
+    let conn = setup_db(&format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl"));
+    let (start, end, rows): (String, String, i64) = conn
+        .query_row(
+            "SELECT started_at, ended_at, COUNT(*) OVER () FROM agents
+             WHERE agent_id = 'agent-sub1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(rows, 1, "one row per lane, not one per record");
+    assert!(
+        !start.is_empty() && !end.is_empty(),
+        "bounds must be populated"
+    );
+    assert!(
+        start < end,
+        "started_at must precede ended_at, got {start} .. {end}"
+    );
+}

@@ -81,6 +81,7 @@ impl TranscriptProvider for CodexProvider {
             View::ToolCalls => Some(views::codex_tool_calls_sql()),
             View::ToolResults => Some(views::codex_tool_results_sql()),
             View::HookEvents => views::codex_hook_events_sql(),
+            View::Agents => views::codex_agents_sql(),
             View::Sessions => Some(views::codex_sessions_sql()),
         }
     }
