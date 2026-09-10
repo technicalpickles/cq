@@ -33,6 +33,30 @@ fn setup_env(fixtures: &[&str]) -> TestEnv {
     }
 }
 
+/// Copy a fixture tree (a `<uuid>.jsonl` plus its `<uuid>/subagents/` sidecars)
+/// into the temp projects dir, preserving layout. `setup_env` only handles flat
+/// files, but subagent discovery depends on the nested directory structure.
+fn setup_env_tree(session_id: &str) -> TestEnv {
+    let env = setup_env(&[]);
+    let project_dir = env.projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    std::fs::copy(
+        fixture_path(&format!("{session_id}.jsonl")),
+        project_dir.join(format!("{session_id}.jsonl")),
+    )
+    .unwrap();
+
+    let src_subs = fixture_path(session_id).join("subagents");
+    let dest_subs = project_dir.join(session_id).join("subagents");
+    std::fs::create_dir_all(&dest_subs).unwrap();
+    for entry in std::fs::read_dir(&src_subs).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), dest_subs.join(entry.file_name())).unwrap();
+    }
+    env
+}
+
 fn cq_cmd(env: &TestEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
@@ -3104,4 +3128,50 @@ fn table_context_single_group_no_separator() {
         separator_lines, 0,
         "single group should not have '--' separator, got:\n{stdout}"
     );
+}
+
+// ---- cq trace ----
+
+const TRACE_SESSION: &str = "a1b2c3d4-0000-4000-8000-000000000001";
+
+#[test]
+fn trace_requires_session() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env).args(["trace"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cq trace requires --session"),
+        "got: {stderr}"
+    );
+    assert!(!output.status.success());
+}
+
+#[test]
+fn trace_json_emits_spans_with_durations() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--json", "--session", TRACE_SESSION, "trace"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = rows.as_array().expect("array of spans");
+    assert_eq!(arr.len(), 7, "fixture has 7 paired spans, got: {stdout}");
+
+    // Durations must be real, not all zero.
+    let total: i64 = arr.iter().map(|s| s["duration_ms"].as_i64().unwrap()).sum();
+    assert_eq!(total, 3000 + 5588 + 32000 + 1500 + 18000 + 200 + 1000);
+
+    // The error span is flagged.
+    assert_eq!(
+        arr.iter().filter(|s| s["is_error"] == true).count(),
+        1,
+        "exactly one span is an error"
+    );
+
+    // All three lanes appear.
+    let lanes: std::collections::BTreeSet<&str> =
+        arr.iter().filter_map(|s| s["lane"].as_str()).collect();
+    assert_eq!(lanes.len(), 3, "main + 2 subagent lanes, got {lanes:?}");
+    assert!(lanes.contains("main"));
 }

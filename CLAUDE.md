@@ -47,7 +47,12 @@ commands/
   mod.rs          Shared arg validators (count-by, fields, context-window conflicts)
   sql.rs          Raw SQL passthrough (intentionally unparameterized)
   schema.rs       View schema docs + example queries (pure text, no DB needed)
+  trace.rs        `cq trace`: flag validation, then --json rows or one of the trace renderers
 output.rs         Shared rendering: table (comfy-table) or JSON, accepts params
+trace/
+  mod.rs          Span + gap model for one session: the SQL both trace renderers read from
+  waterfall.rs    Terminal waterfall renderer (formatting only, no SQL)
+  perfetto.rs     Chrome Trace Event JSON emitter (formatting only, no SQL)
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
 views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the five views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup

@@ -7,6 +7,7 @@ pub mod search;
 pub mod sessions;
 pub mod sql;
 pub mod tools;
+pub mod trace;
 
 pub use context::ContextSqlBuilder;
 

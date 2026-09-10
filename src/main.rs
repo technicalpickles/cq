@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use cq::claude_provider::ClaudeProvider;
 use cq::codex_provider::CodexProvider;
-use cq::commands::{hooks, messages, projects, schema, search, sessions, sql, tools};
+use cq::commands::{hooks, messages, projects, schema, search, sessions, sql, tools, trace};
 use cq::db;
 use cq::output::OutputFormat;
 use cq::scope::QueryScope;
@@ -210,6 +210,20 @@ enum Command {
         /// Show skill names used per project
         #[arg(long)]
         skills: bool,
+    },
+    /// Render a session as a trace: one lane per subagent, duration bars per tool call, gaps between
+    Trace {
+        /// Emit Chrome Trace Event JSON on stdout (loads in Perfetto, Firefox Profiler, Speedscope)
+        #[arg(long)]
+        perfetto: bool,
+
+        /// Window start: offset from session start (e.g. +12m, +90s) or an absolute ISO timestamp
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Window end: offset from session start (e.g. +17m, +90s) or an absolute ISO timestamp
+        #[arg(long)]
+        to: Option<String>,
     },
     /// Run a raw SQL query
     Sql {
@@ -521,6 +535,20 @@ fn main() -> Result<()> {
         }
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;
+        }
+        Command::Trace {
+            perfetto,
+            // Accepted now so the flag surface is stable, but windowing lands
+            // with the waterfall renderer that consumes it.
+            from: _,
+            to: _,
+        } => {
+            let output = if perfetto {
+                trace::TraceOutput::Perfetto
+            } else {
+                trace::TraceOutput::Waterfall
+            };
+            trace::run(&conn, &scope, &format, output)?;
         }
         Command::Sql { query } => {
             if let Err(e) = sql::run(&conn, &query, &format, wide) {

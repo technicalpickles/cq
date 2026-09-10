@@ -1178,3 +1178,53 @@ fn agents_view_bounds_cover_the_lane() {
         "started_at must precede ended_at, got {start} .. {end}"
     );
 }
+
+// ---- trace gaps ----
+
+#[test]
+fn gaps_classify_the_fixtures_human_gap() {
+    // setup_db takes one path, and the human gap plus the subagent lanes only
+    // coexist across the whole tree, so this needs setup_db_multi.
+    let main = format!("{TRACE_SESSION}.jsonl");
+    let sub1 = format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl");
+    let sub2 = format!("{TRACE_SESSION}/subagents/agent-sub2.jsonl");
+    let conn = setup_db_multi(&[&main, &sub1, &sub2]);
+
+    let gaps = cq::trace::gaps(&conn, TRACE_SESSION).expect("gap query should run");
+
+    // Anchor the "every gap is positive" claim below: without a non-zero count
+    // it would hold vacuously for a query that returned nothing.
+    assert_eq!(
+        gaps.len(),
+        16,
+        "10 gaps on main, 4 on agent-sub1, 2 on agent-sub2, got {gaps:#?}"
+    );
+    assert!(
+        gaps.iter().all(|g| g.duration_ms > 0),
+        "zero-length and out-of-order intervals are filtered out, got {gaps:#?}"
+    );
+
+    // The fixture's one deliberate human gap: assistant prose at 12:00:41
+    // followed by a genuine user turn at 12:01:41.
+    let human: Vec<&cq::trace::Gap> = gaps
+        .iter()
+        .filter(|g| g.kind == cq::trace::GapKind::Human)
+        .collect();
+    assert_eq!(
+        human.len(),
+        1,
+        "exactly one human gap in the fixture, got {human:#?}"
+    );
+    assert_eq!(human[0].duration_ms, 60_000);
+    assert_eq!(human[0].lane, "main", "the human gap is on the main lane");
+
+    // And the rest classify the other way, so 'human' isn't the only branch
+    // this query can produce.
+    assert_eq!(
+        gaps.iter()
+            .filter(|g| g.kind == cq::trace::GapKind::Think)
+            .count(),
+        15,
+        "every other gap is a think gap, got {gaps:#?}"
+    );
+}
