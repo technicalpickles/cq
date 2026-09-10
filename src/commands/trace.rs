@@ -122,9 +122,10 @@ fn try_parse_bound(bound: &str, session_start_ms: i64) -> Result<i64, String> {
         //
         // This mirrors `scope::parse_duration`'s grammar shape (used by
         // `--since`) but isn't shared with it on purpose: the two flag
-        // families use disjoint unit vocabularies (s/m/h here vs d/h/m/s
-        // there), so unifying them would need a parameterized unit set for
-        // little benefit.
+        // families use different unit vocabularies (s/m/h here vs
+        // d/h/m/s there), so unifying them would need a parameterized
+        // unit set for little benefit. `parse_duration` has the same
+        // char-boundary risk this fix addresses; it wasn't touched here.
         if let Some((split_at, _)) = rest.char_indices().last() {
             let (num, unit) = rest.split_at(split_at);
             if let Ok(n) = num.parse::<i64>() {
