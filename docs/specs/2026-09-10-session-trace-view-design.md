@@ -106,6 +106,58 @@ makes gap classification possible.
 
 ## Approach: export to Perfetto, don't build a viewer
 
+### What Perfetto is, and why target it
+
+[Perfetto](https://perfetto.dev/) is an open-source tracing and trace-analysis
+stack from Google. It is the default tracing system for Android and Chromium, so
+it is heavily exercised and unlikely to be abandoned. Three parts matter here:
+
+- **[The UI](https://perfetto.dev/docs/visualization/perfetto-ui)** at
+  `ui.perfetto.dev`: a browser-based trace viewer with zoom, pan, span search,
+  collapsible track groups, flow-arrow following, and an args inspector. No
+  install.
+- **[`trace_processor`](https://perfetto.dev/docs/analysis/trace-processor)**: a
+  library and CLI that loads a trace and exposes it as **SQL tables**.
+- **Ingest breadth**: it reads its own protobuf format plus Chrome JSON, Firefox
+  Profiler JSON, Linux `perf`, ftrace, macOS Instruments, and Fuchsia traces.
+
+It is the right target for three reasons.
+
+**Zoom is the hard part and it is already solved.** A session spans hours and
+contains sub-second bursts; that is four or five orders of magnitude. Every
+renderer cq could plausibly ship (terminal or hand-written HTML) would spend most
+of its effort re-implementing pan and zoom badly.
+
+**The mental model already fits.** A session *is* a trace: concurrent lanes of
+timed work with causal edges between them. Subagents map to tracks, tool calls to
+slices, `Agent` dispatches to flow arrows. Nothing has to be contorted.
+
+**It keeps cq a query tool.** `trace_processor` means the exported trace stays
+queryable with SQL, so the export is not a dead-end picture. That is continuous
+with `cq sql`, not a departure from it.
+
+The cost is a two-step ritual (emit a file, open it somewhere) and a vocabulary
+built for CPU profiling rather than agents: tracks are called "threads," lane
+groups are "processes."
+
+### Data handling
+
+Session transcripts contain real work content, so where the trace goes matters.
+
+Perfetto ships
+[`open_trace_in_ui`](https://github.com/google/perfetto/blob/main/tools/open_trace_in_ui),
+which serves the trace from a local HTTP server and points the UI at
+`127.0.0.1`. Since perfetto.dev's servers cannot reach a loopback address, the
+browser must be doing the parsing locally in that mode. `trace_processor` is also
+a plain local CLI with no network involvement at all.
+
+What is **not** documented anywhere I could find is whether dragging a file onto
+`ui.perfetto.dev` is equally local. The docs make no privacy, data-residency, or
+client-side-processing statement. Treat that path as unverified and prefer
+`open_trace_in_ui` or `trace_processor` until someone confirms it.
+
+### Renderers considered
+
 Three renderers were considered.
 
 **Terminal waterfall alone.** Prototyped against real data. The lane cascade
@@ -130,7 +182,11 @@ browser. It is a convenience, not the answer to the zoom problem.
 Perfetto ingests two things: the legacy Chrome Trace Event JSON format, and its
 native TrackEvent protobuf.
 
-Verified from Perfetto's docs rather than assumed:
+Verified against
+[Visualizing external trace formats](https://perfetto.dev/docs/getting-started/other-formats)
+and
+[Building synthetic traces with TrackEvent](https://perfetto.dev/docs/reference/synthetic-track-event)
+rather than assumed:
 
 | capability | legacy JSON | TrackEvent protobuf |
 |---|---|---|
@@ -147,7 +203,10 @@ Verified from Perfetto's docs rather than assumed:
 Two findings decided this.
 
 `thread_sort_index` and `process_sort_index` **are not supported by Perfetto and
-are not planned**. They work in `chrome://tracing` and do nothing here. So legacy
+are not planned** ([perfetto-dev
+thread](https://groups.google.com/g/perfetto-dev/c/zOe_Y2FxGGk),
+[issue #764](https://github.com/google/perfetto/issues/764)). They work in
+`chrome://tracing` and do nothing here. So legacy
 JSON offers no control over row order at all, which removes the obvious way to
 place child lanes under their parents.
 
