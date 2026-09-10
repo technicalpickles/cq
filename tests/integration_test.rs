@@ -3219,6 +3219,54 @@ fn trace_window_narrows_the_span_set() {
 }
 
 #[test]
+fn perfetto_output_is_valid_trace_json() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--perfetto"])
+        .output()
+        .unwrap();
+    let events: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("must be valid JSON");
+    let arr = events.as_array().expect("trace is a JSON array");
+
+    // Metadata naming every process and thread.
+    assert!(
+        arr.iter()
+            .any(|e| e["ph"] == "M" && e["name"] == "process_name"),
+        "expected process_name metadata"
+    );
+    assert!(
+        arr.iter()
+            .any(|e| e["ph"] == "M" && e["name"] == "thread_name"),
+        "expected thread_name metadata"
+    );
+    // At least one real span, in microseconds.
+    let span = arr
+        .iter()
+        .find(|e| e["cat"] == "tool")
+        .expect("expected a tool span");
+    assert!(span["ts"].is_number());
+    assert!(span["pid"].is_number());
+    assert!(span["tid"].is_number());
+    // Args carry the tool input verbatim.
+    assert!(span["args"].is_object(), "expected an args object");
+}
+
+#[test]
+fn perfetto_gaps_are_categorized() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--perfetto"])
+        .output()
+        .unwrap();
+    let events: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        events.as_array().unwrap().iter().any(|e| e["cat"] == "gap"),
+        "expected gap slices"
+    );
+}
+
+#[test]
 fn trace_unknown_session_reports_not_found() {
     let env = setup_env_tree(TRACE_SESSION);
     let output = cq_cmd(&env)
