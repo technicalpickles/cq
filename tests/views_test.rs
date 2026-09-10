@@ -980,3 +980,36 @@ fn empty_hook_events_view_has_correct_schema() {
         .unwrap();
     assert_eq!(n, 0, "hook_events should be empty");
 }
+
+// ---- tool_results.timestamp ----
+
+#[test]
+fn tool_results_expose_timestamp() {
+    let conn = setup_db("multi_tool_session.jsonl");
+    let ts: String = conn
+        .query_row(
+            "SELECT timestamp FROM tool_results WHERE tool_use_id = 'toolu_010'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        ts.starts_with("20") && ts.ends_with('Z'),
+        "expected ISO8601 timestamp, got {ts:?}"
+    );
+}
+
+#[test]
+fn tool_result_timestamp_is_at_or_after_its_call() {
+    let conn = setup_db("multi_tool_session.jsonl");
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tool_calls tc
+             JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
+             WHERE tr.timestamp < tc.timestamp",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0, "no result may predate its own call");
+}
