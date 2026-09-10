@@ -6,7 +6,10 @@
 //! Hierarchy mapping: pid = a top-level dispatch (main loop, or a depth-1
 //! subagent and everything it spawned); tid = the individual lane. Perfetto
 //! ignores thread_sort_index, so pid grouping is the only real nesting
-//! available in this format.
+//! available in this format. The pid a lane belongs to comes from
+//! [`crate::trace::lane_groups`], computed once by the caller and passed in
+//! -- this module stays formatting-only, no SQL, per the split described in
+//! `trace/mod.rs`'s module doc.
 //!
 //! Tool-call spans are encoded as async `ph: "b"`/`"e"` pairs (a begin and an
 //! end event sharing an `id`), not `ph: "X"` complete events. This was
@@ -37,8 +40,13 @@ fn epoch_us(ts: &str) -> i64 {
     epoch_ms(ts) * 1000
 }
 
-pub fn emit(spans: &[Span], gaps: &[Gap], session_id: &str) -> Result<()> {
-    let events = build_events(spans, gaps, session_id);
+pub fn emit(
+    spans: &[Span],
+    gaps: &[Gap],
+    session_id: &str,
+    groups: &HashMap<String, String>,
+) -> Result<()> {
+    let events = build_events(spans, gaps, session_id, groups);
     println!("{}", serde_json::to_string(&events)?);
     Ok(())
 }
@@ -46,29 +54,81 @@ pub fn emit(spans: &[Span], gaps: &[Gap], session_id: &str) -> Result<()> {
 /// Build the Chrome Trace Event array for one session, without printing it.
 /// Pulled out of [`emit`] so tests can assert on the structured events
 /// directly instead of capturing stdout.
-fn build_events(spans: &[Span], gaps: &[Gap], session_id: &str) -> Vec<Value> {
+///
+/// `groups` maps each lane to the depth-1 ancestor that is its pid group
+/// (see [`crate::trace::lane_groups`]); a lane absent from the map (should
+/// not happen in practice, since the caller derives it from the same
+/// session) falls back to grouping under itself rather than panicking.
+fn build_events(
+    spans: &[Span],
+    gaps: &[Gap],
+    session_id: &str,
+    groups: &HashMap<String, String>,
+) -> Vec<Value> {
     let mut events: Vec<Value> = Vec::new();
+
+    let group_of = |lane: &str| -> String {
+        groups
+            .get(lane)
+            .cloned()
+            .unwrap_or_else(|| lane.to_string())
+    };
 
     // Assign a tid per lane, main first so it sorts to tid 1.
     let mut tids: HashMap<&str, i64> = HashMap::new();
     tids.insert("main", 1);
-    let mut next = 2;
+    let mut next_tid = 2;
     for s in spans {
         if !tids.contains_key(s.lane.as_str()) {
-            tids.insert(s.lane.as_str(), next);
-            next += 1;
+            tids.insert(s.lane.as_str(), next_tid);
+            next_tid += 1;
         }
     }
 
-    // Task 9 groups lanes by their depth-1 ancestor; until then every lane
-    // shares one process.
-    let pid = 1;
+    // Assign a pid per group, main first so it sorts to pid 1. Every lane a
+    // span names has a group (falling back to itself via `group_of` above),
+    // so this covers every pid the spans/gaps below will reference.
+    let mut pids: HashMap<String, i64> = HashMap::new();
+    pids.insert("main".to_string(), 1);
+    let mut next_pid = 2;
+    for s in spans {
+        let g = group_of(&s.lane);
+        if let std::collections::hash_map::Entry::Vacant(e) = pids.entry(g) {
+            e.insert(next_pid);
+            next_pid += 1;
+        }
+    }
 
-    events.push(json!({
-        "ph": "M", "name": "process_name", "pid": pid, "tid": 0,
-        "args": {"name": format!("session {}", &session_id[..8.min(session_id.len())])}
-    }));
+    // A group's own agent_type, read off a span whose lane *is* the group
+    // (its own dispatch, not a descendant's) -- used to label that group's
+    // process_name. A group with no direct spans of its own (shouldn't
+    // happen: a group is always the lane that did the dispatching) is left
+    // unlabeled and falls back to the bare lane id.
+    let mut group_agent_type: HashMap<&str, &str> = HashMap::new();
+    for s in spans {
+        if group_of(&s.lane) == s.lane {
+            if let Some(t) = s.agent_type.as_deref() {
+                group_agent_type.entry(s.lane.as_str()).or_insert(t);
+            }
+        }
+    }
+
+    for (group, pid) in &pids {
+        let name = if group == "main" {
+            format!("session {}", &session_id[..8.min(session_id.len())])
+        } else {
+            match group_agent_type.get(group.as_str()) {
+                Some(agent_type) => format!("{group} ({agent_type})"),
+                None => group.clone(),
+            }
+        };
+        events.push(json!({
+            "ph": "M", "name": "process_name", "pid": pid, "tid": 0,
+            "args": {"name": name}
+        }));
+    }
     for (lane, tid) in &tids {
+        let pid = pids[&group_of(lane)];
         events.push(json!({
             "ph": "M", "name": "thread_name", "pid": pid, "tid": tid,
             "args": {"name": *lane}
@@ -83,6 +143,7 @@ fn build_events(spans: &[Span], gaps: &[Gap], session_id: &str) -> Vec<Value> {
     // to duplicate them onto the end event too.
     for s in spans {
         let tid = tids[s.lane.as_str()];
+        let pid = pids[&group_of(&s.lane)];
         let name = if s.is_error {
             format!("{} (error)", s.name)
         } else {
@@ -109,9 +170,10 @@ fn build_events(spans: &[Span], gaps: &[Gap], session_id: &str) -> Vec<Value> {
     }
 
     for g in gaps {
-        let Some(tid) = tids.get(g.lane.as_str()) else {
+        let Some(&tid) = tids.get(g.lane.as_str()) else {
             continue;
         };
+        let pid = pids[&group_of(&g.lane)];
         events.push(json!({
             "ph": "X",
             "name": match g.kind { GapKind::Human => "blocked on you", GapKind::Think => "think" },
@@ -145,6 +207,18 @@ mod tests {
         }
     }
 
+    /// The fixture's real shape: agent-sub2 is a depth-2 lane dispatched from
+    /// inside agent-sub1, so its group is agent-sub1, not itself.
+    fn fixture_groups() -> HashMap<String, String> {
+        [
+            ("main".to_string(), "main".to_string()),
+            ("agent-sub1".to_string(), "agent-sub1".to_string()),
+            ("agent-sub2".to_string(), "agent-sub1".to_string()),
+        ]
+        .into_iter()
+        .collect()
+    }
+
     /// Mutation target for the `ph:"X"` complete-event regression the plan's
     /// original skeleton shipped (see this module's doc comment): every tool
     /// span must land as a `ph:"b"`/`ph:"e"` pair, never a single `ph:"X"`
@@ -157,7 +231,12 @@ mod tests {
             span("agent-sub1", "toolu_2", "2026-09-10T12:00:01.000Z", 200),
             span("agent-sub2", "toolu_3", "2026-09-10T12:00:02.000Z", 300),
         ];
-        let events = build_events(&spans, &[], "a1b2c3d4-0000-4000-8000-000000000001");
+        let events = build_events(
+            &spans,
+            &[],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
 
         let tool_events: Vec<&Value> = events.iter().filter(|e| e["cat"] == "tool").collect();
         assert_eq!(
@@ -189,13 +268,66 @@ mod tests {
                 "tool spans must never be ph:\"X\" complete events, got {phs:?}"
             );
 
-            assert_eq!(matching[0]["pid"], 1);
-            assert_eq!(matching[1]["pid"], 1);
+            assert_eq!(
+                matching[0]["pid"], matching[1]["pid"],
+                "begin and end for id {} must share a pid",
+                s.tool_use_id
+            );
             assert_eq!(
                 matching[0]["tid"], matching[1]["tid"],
                 "begin and end for id {} must share a tid",
                 s.tool_use_id
             );
         }
+    }
+
+    /// Task 9's actual point: pid reflects the depth-1 dispatch tree, not one
+    /// shared process. agent-sub2 (depth 2, dispatched from inside
+    /// agent-sub1) must land on agent-sub1's pid, and main must land on its
+    /// own, distinct pid.
+    #[test]
+    fn pid_groups_a_depth_two_lane_under_its_depth_one_ancestor() {
+        let spans = vec![
+            span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100),
+            span("agent-sub1", "toolu_2", "2026-09-10T12:00:01.000Z", 200),
+            span("agent-sub2", "toolu_3", "2026-09-10T12:00:02.000Z", 300),
+        ];
+        let events = build_events(
+            &spans,
+            &[],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let pid_of = |tool_use_id: &str| -> Value {
+            events
+                .iter()
+                .find(|e| e["cat"] == "tool" && e["id"] == json!(tool_use_id))
+                .expect("span must have emitted at least one event")["pid"]
+                .clone()
+        };
+
+        let main_pid = pid_of("toolu_1");
+        let sub1_pid = pid_of("toolu_2");
+        let sub2_pid = pid_of("toolu_3");
+
+        assert_ne!(
+            main_pid, sub1_pid,
+            "main and the depth-1 dispatch must be different processes"
+        );
+        assert_eq!(
+            sub1_pid, sub2_pid,
+            "agent-sub2 must share agent-sub1's pid, not get its own"
+        );
+
+        let process_names: Vec<&Value> = events
+            .iter()
+            .filter(|e| e["name"] == "process_name")
+            .collect();
+        assert_eq!(
+            process_names.len(),
+            2,
+            "exactly one process per group -- main's, and agent-sub1's (which also covers agent-sub2)"
+        );
     }
 }

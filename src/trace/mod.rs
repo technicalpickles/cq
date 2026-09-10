@@ -20,6 +20,7 @@ pub mod waterfall;
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 
 /// Parse a fixed-width UTC ISO8601 timestamp (as stored on [`Span`]/[`Gap`])
 /// into epoch milliseconds. Unparseable input maps to `0` rather than erroring
@@ -198,4 +199,118 @@ pub fn gaps(conn: &Connection, session_id: &str) -> Result<Vec<Gap>> {
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("reading trace gap rows")?;
     Ok(rows)
+}
+
+/// Map every lane in a session to the depth-1 lane that contains it. `main`
+/// maps to itself; a depth-1 lane maps to itself; a deeper lane maps to the
+/// depth-1 ancestor at the top of its dispatch chain.
+///
+/// Resolved in Rust, not SQL. The chain is `agents.parent_tool_use_id ->
+/// tool_calls.tool_use_id -> tool_calls.agent_id`, walked upward one hop per
+/// spawn. A recursive CTE can express that walk, but expressing "stop the
+/// moment an ancestor repeats one already on this path" -- the cycle guard a
+/// malformed sidecar demands -- inside a recursive CTE means threading a path
+/// array through every recursive step and checking `list_contains` on it each
+/// time; a `HashSet` in a loop says the same thing directly. Correctness
+/// matters more than doing it in SQL, so this takes the loop.
+///
+/// A lane whose sidecar carries no `parent_tool_use_id` (a workflow subagent,
+/// per `docs/session-storage.md`) has no chain to walk: it groups under its
+/// own `workflow_id`, or its own lane id if even that's absent. `main` itself
+/// never appears in the `agents` view (main-loop rows are excluded there by
+/// construction -- see `claude_agents_sql`), so it's seeded directly rather
+/// than resolved.
+///
+/// Cycle guard: a per-lane visited set stops the walk the instant an ancestor
+/// repeats one already seen while resolving *that* lane, falling back to
+/// grouping the lane under itself rather than looping. A hard cap on loop
+/// iterations (bounded by the number of lanes in the session) backs that up
+/// in case the visited-set logic itself has a bug -- belt and suspenders, so
+/// a corrupted sidecar can never hang `cq trace --perfetto`.
+pub fn lane_groups(conn: &Connection, session_id: &str) -> Result<HashMap<String, String>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT agent_id, parent_tool_use_id, workflow_id FROM agents WHERE session_id = ?",
+        )
+        .context("preparing lane_groups agents query")?;
+    let agent_rows: Vec<(String, Option<String>, Option<String>)> = stmt
+        .query_map([session_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .context("running lane_groups agents query")?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("reading lane_groups agent rows")?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT tool_use_id, COALESCE(agent_id, 'main') FROM tool_calls WHERE session_id = ?",
+        )
+        .context("preparing lane_groups tool_calls query")?;
+    let tool_use_to_lane: HashMap<String, String> = stmt
+        .query_map([session_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .context("running lane_groups tool_calls query")?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("reading lane_groups tool_call rows")?
+        .into_iter()
+        .collect();
+
+    // agent_id -> (parent_tool_use_id, workflow_id), owned rather than
+    // borrowed: the chain-walk below reassigns `current` on every hop, and
+    // keeping everything owned sidesteps the double-reference lifetime
+    // tangle a `HashMap<&str, (&Option<String>, ..)>` would create for no
+    // real benefit -- these are small strings, not a hot loop.
+    let agents_by_id: HashMap<String, (Option<String>, Option<String>)> = agent_rows
+        .iter()
+        .map(|(id, parent, workflow)| (id.clone(), (parent.clone(), workflow.clone())))
+        .collect();
+
+    let mut out: HashMap<String, String> = HashMap::new();
+    out.insert("main".to_string(), "main".to_string());
+
+    for (agent_id, _, _) in &agent_rows {
+        let mut current = agent_id.clone();
+        let mut visited: HashSet<String> = HashSet::new();
+        visited.insert(current.clone());
+
+        // Bounded by the number of lanes: the real chain can never be longer
+        // than that, cycle or not.
+        let max_steps = agent_rows.len() + 1;
+        let mut group = current.clone();
+        for _ in 0..max_steps {
+            let Some((parent_tool_use_id, workflow_id)) = agents_by_id.get(&current) else {
+                // current always comes from the agents table, so this
+                // shouldn't happen; group under wherever we got to.
+                group = current.clone();
+                break;
+            };
+            let Some(ptid) = parent_tool_use_id else {
+                // No parent edge: a workflow subagent. Group by workflow_id,
+                // or its own lane id if even that's missing.
+                group = workflow_id.clone().unwrap_or_else(|| current.clone());
+                break;
+            };
+            let ancestor = tool_use_to_lane
+                .get(ptid)
+                .cloned()
+                .unwrap_or_else(|| "main".to_string());
+
+            if ancestor == "main" {
+                // current is a depth-1 lane; it groups under itself.
+                group = current.clone();
+                break;
+            }
+            if !visited.insert(ancestor.clone()) {
+                // Cycle: this ancestor is already on the path we've walked
+                // resolving this lane. Group the lane under itself rather
+                // than loop forever chasing a malformed sidecar.
+                group = agent_id.clone();
+                break;
+            }
+            current = ancestor;
+            group = current.clone();
+        }
+        out.insert(agent_id.clone(), group);
+    }
+
+    Ok(out)
 }

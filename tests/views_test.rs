@@ -1228,3 +1228,129 @@ fn gaps_classify_the_fixtures_human_gap() {
         "every other gap is a think gap, got {gaps:#?}"
     );
 }
+
+// ---- lane_groups ----
+
+/// Populate `file_registry` for the two real subagent fixtures the way the
+/// indexer would at index time (mirroring their `.meta.json` sidecars),
+/// since `setup_db_multi` registers views directly against the raw fixture
+/// files without running the indexer.
+fn seed_lane_group_sidecars(conn: &Connection) {
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'general-purpose', 'main',
+                 'Sub work', 'toolu_agent1', 1)",
+        [sub_fixture("agent-sub1.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'Explore', 'main',
+                 'Deep dig', 'toolu_agent2', 2)",
+        [sub_fixture("agent-sub2.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+}
+
+#[test]
+fn lane_groups_resolve_to_depth_one_ancestor() {
+    // toolu_agent2 (agent-sub1's dispatch of agent-sub2) is a real tool_use
+    // record inside agent-sub1.jsonl (see agent-sub1.jsonl line 4, id
+    // "toolu_agent2", agentId "agent-sub1"), so this is a genuine two-hop
+    // edge already present in the fixture set -- no new fixture data needed.
+    let main = format!("{TRACE_SESSION}.jsonl");
+    let sub1 = format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl");
+    let sub2 = format!("{TRACE_SESSION}/subagents/agent-sub2.jsonl");
+    let conn = setup_db_multi(&[&main, &sub1, &sub2]);
+    seed_lane_group_sidecars(&conn);
+
+    let groups = cq::trace::lane_groups(&conn, TRACE_SESSION).unwrap();
+
+    assert_eq!(groups.get("main").map(String::as_str), Some("main"));
+    assert_eq!(
+        groups.get("agent-sub1").map(String::as_str),
+        Some("agent-sub1"),
+        "a depth-1 lane groups under itself"
+    );
+    assert_eq!(
+        groups.get("agent-sub2").map(String::as_str),
+        Some("agent-sub1"),
+        "a depth-2 lane must report the depth-1 lane above it as its group"
+    );
+}
+
+#[test]
+fn lane_groups_workflow_subagent_groups_by_workflow_id() {
+    // The workflow fixture's sidecar has no toolUseId/parentToolUseId
+    // (see workflow_sidecar_has_no_parent_edge), so its only path to a
+    // group is the path-derived workflow_id -- no file_registry seeding
+    // needed, since WORKFLOW_ID_EXPR reads the file path, not the sidecar.
+    let conn = setup_db("subagents/workflows/wf_testrun/agent-wf1.jsonl");
+
+    let groups = cq::trace::lane_groups(&conn, "sess-wf").unwrap();
+
+    assert_eq!(
+        groups.get("agentWF").map(String::as_str),
+        Some("wf_testrun"),
+        "a workflow subagent with no parent edge groups by its workflow_id"
+    );
+}
+
+#[test]
+fn lane_groups_cycle_guard_does_not_hang() {
+    // Corrupt both lanes' parent_tool_use_id so each points at a tool_use
+    // owned by the *other* lane: agent-sub1's parent is toolu_s2 (owned by
+    // agent-sub2), and agent-sub2's parent is toolu_s1 (owned by
+    // agent-sub1). Walking either lane's chain now cycles between the two
+    // forever unless the cycle guard stops it. This test's real assertion is
+    // that `lane_groups` returns at all -- the harness only gets a timeout
+    // if it doesn't -- plus a check that the fallback grouping is sane
+    // rather than garbage.
+    let main = format!("{TRACE_SESSION}.jsonl");
+    let sub1 = format!("{TRACE_SESSION}/subagents/agent-sub1.jsonl");
+    let sub2 = format!("{TRACE_SESSION}/subagents/agent-sub2.jsonl");
+    let conn = setup_db_multi(&[&main, &sub1, &sub2]);
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'general-purpose', 'main',
+                 'Sub work', 'toolu_s2', 1)",
+        [sub_fixture("agent-sub1.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry
+            (file_path, mtime_ns, file_size, cwd, agent_type, source,
+             agent_description, parent_tool_use_id, spawn_depth)
+         VALUES (?, 0, 0, '/Users/test/myproject', 'Explore', 'main',
+                 'Deep dig', 'toolu_s1', 2)",
+        [sub_fixture("agent-sub2.jsonl")
+            .to_string_lossy()
+            .to_string()],
+    )
+    .unwrap();
+
+    let groups = cq::trace::lane_groups(&conn, TRACE_SESSION).expect("must terminate, not hang");
+
+    // Both lanes fall back to grouping under themselves: the cycle is
+    // detected before either lane's chain is attributed to the other.
+    assert_eq!(
+        groups.get("agent-sub1").map(String::as_str),
+        Some("agent-sub1")
+    );
+    assert_eq!(
+        groups.get("agent-sub2").map(String::as_str),
+        Some("agent-sub2")
+    );
+}

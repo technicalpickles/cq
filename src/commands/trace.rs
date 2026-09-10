@@ -85,7 +85,12 @@ pub fn run(
 
     match output {
         TraceOutput::Waterfall => trace::waterfall::render(&spans, &gaps),
-        TraceOutput::Perfetto => trace::perfetto::emit(&spans, &gaps, session_id),
+        TraceOutput::Perfetto => {
+            // Only the Perfetto renderer groups lanes into processes;
+            // waterfall has no notion of pid, so this query is skipped for it.
+            let groups = trace::lane_groups(conn, session_id)?;
+            trace::perfetto::emit(&spans, &gaps, session_id, &groups)
+        }
     }
 }
 

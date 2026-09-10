@@ -213,3 +213,78 @@ positions. Screenshot captured during the session at
 `/Users/josh.nichols/Library/Caches/superpowers/browser/2026-09-10/session-1789067396890/004-click.png`
 (a local, ephemeral browser-automation cache path, not part of this
 repo).
+
+## Task 9 implementation: `trace_processor` re-verification of pid grouping
+
+Task 9 replaced the fixed `pid = 1` with `trace::lane_groups`, so `pid` now
+means a top-level dispatch (main, or a depth-1 subagent and everything it
+spawned) instead of the whole session sharing one process. Re-ran the same
+kind of check Task 7 did, against real emitter output, not a hand-written
+fixture.
+
+Seeded a temp project tree (`CQ_PROJECTS_DIR` pointed at it, `CENV_BASE`
+pointed at a nonexistent path to keep the real host's transcripts out of
+the sync -- omitting that the first time round pulled in 279 unrelated
+real session files) with the `TRACE_SESSION` fixture's main + `agent-sub1`
++ `agent-sub2` files, then ran:
+
+```
+cargo run -- --session a1b2c3d4-0000-4000-8000-000000000001 trace --perfetto
+```
+
+and fed the output to the same `trace_processor_shell` prebuilt cached from
+Tasks 6/7 (`~/.local/share/perfetto/prebuilts/`).
+
+### Process count: 2, not 1
+
+```sql
+SELECT upid, pid, name FROM process ORDER BY pid;
+```
+
+```
+"upid","pid","name"
+0,0,"[NULL]"
+2,1,"session a1b2c3d4"
+1,2,"agent-sub1 (general-purpose)"
+```
+
+`upid`/`pid` 0 is `trace_processor`'s own synthetic bookkeeping process (the
+same kind of artifact Task 7 noted for `tid: 0`), not one of the fixture's
+lanes. The two real processes are pid 1 (`main`'s group, named from the
+session id) and pid 2 (`agent-sub1`'s group, named from its own
+`agent_type`) -- exactly the fixture's two depth-1 dispatches: `main` itself
+never dispatches anything besides `agent-sub1`, and `agent-sub2` is a
+depth-2 lane spawned from inside `agent-sub1`, so it does not get a third
+process of its own.
+
+No import errors or spill/overlap warnings: `SELECT name, value FROM stats
+WHERE value > 0 AND (name LIKE '%spill%' OR name LIKE '%overlap%' OR
+severity='error')` returns zero rows, same clean result as Task 7.
+
+### Collapsing pid 2 folds `agent-sub2`'s slices under it
+
+```sql
+SELECT p.pid, t.tid, t.name AS thread_name, COUNT(*) AS slice_count
+FROM slice s
+JOIN thread_track tt ON s.track_id = tt.id
+JOIN thread t ON tt.utid = t.utid
+JOIN process p ON t.upid = p.upid
+GROUP BY p.pid, t.tid, t.name
+ORDER BY p.pid, t.tid;
+```
+
+```
+"pid","tid","thread_name","slice_count"
+0,0,"[NULL]",0
+1,1,"main",10
+2,2,"agent-sub1",4
+2,3,"agent-sub2",2
+```
+
+Both `agent-sub1` (tid 2, 4 slices) and `agent-sub2` (tid 3, 2 slices) sit
+under pid 2. Since a UI's "collapse process" acts on every thread sharing
+that `pid`, collapsing pid 2 folds `agent-sub2`'s slices in with
+`agent-sub1`'s rather than leaving them as a separate top-level row --
+confirmed directly from this grouped count, not by opening a UI. That is
+the actual point of Task 9: `agent-sub2`'s tool calls are counted under the
+same process as the lane that spawned it, not under their own.
