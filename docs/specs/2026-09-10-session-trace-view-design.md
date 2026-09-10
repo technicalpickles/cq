@@ -100,7 +100,9 @@ makes gap classification possible.
 
 - Live or streaming traces. cq answers questions about sessions that have
   happened (`docs/design-principles.md`).
-- Multi-session traces. One session per invocation.
+- Multi-session traces. One session per invocation. Perfetto's
+  `batch_trace_processor` already queries across ~1000 trace files, so this stays
+  outside cq deliberately rather than as a gap.
 - Token and context-size counter tracks. Deferred until counters prove useful.
 - A cq-authored HTML trace viewer. Rejected below.
 
@@ -112,14 +114,37 @@ makes gap classification possible.
 stack from Google. It is the default tracing system for Android and Chromium, so
 it is heavily exercised and unlikely to be abandoned. Three parts matter here:
 
-- **[The UI](https://perfetto.dev/docs/visualization/perfetto-ui)** at
-  `ui.perfetto.dev`: a browser-based trace viewer with zoom, pan, span search,
-  collapsible track groups, flow-arrow following, and an args inspector. No
-  install.
+- **[The UI](https://perfetto.dev/docs/visualization/perfetto-ui)**: a
+  browser-based trace viewer with zoom, pan, span search, collapsible track
+  groups, flow-arrow following, and an args inspector. Hosted at
+  `ui.perfetto.dev`, but it is a **static bundle** and not web-only. See
+  "Ways to run it" below.
 - **[`trace_processor`](https://perfetto.dev/docs/analysis/trace-processor)**: a
   library and CLI that loads a trace and exposes it as **SQL tables**.
 - **Ingest breadth**: it reads its own protobuf format plus Chrome JSON, Firefox
   Profiler JSON, Linux `perf`, ftrace, macOS Instruments, and Fuchsia traces.
+
+#### Ways to run it
+
+Perfetto is not a website with a CLI bolted on; the viewer and the analysis
+engine are separable, and neither requires the hosted page.
+
+| | what it is | network |
+|---|---|---|
+| `ui.perfetto.dev` | the hosted viewer | page from their CDN |
+| self-hosted UI | `tools/install-build-deps --ui` then `tools/ninja -C out/debug ui`; the bundle lands in `ui/out/dist/` and can be served anywhere ([UI dev docs](https://perfetto.dev/docs/contributing/ui-getting-started)) | none once served |
+| community Docker | `rse-ops/perfetto-compose`, `--serve` on a port | none |
+| Chrome extension | ["Perfetto UI"](https://chromewebstore.google.com/detail/perfetto-ui/lfmkphfpdbjijhpomgecfikhfohaoine) on the Web Store | n/a |
+| `trace_processor` binary | `curl -LO https://get.perfetto.dev/trace_processor`, caches under `~/.local/share/perfetto/prebuilts`; interactive SQL shell plus `query`/`metrics`/`summarize` and a server/RPC mode the UI can attach to | download only |
+| `pip install perfetto` | Python bindings; **a client wrapper, not a reimplementation** — `platform.py` holds `SHELL_URL = 'https://get.perfetto.dev/trace_processor'` and drives that same binary over HTTP RPC. Adds pandas/polars result frames and `batch_trace_processor` for interactive queries across up to ~1000 traces. At 0.58.2 with 32 releases. | fetches the binary |
+
+There is **no Homebrew formula** (checked 2026-09-10: `brew info perfetto`
+reports no such formula).
+
+`batch_trace_processor` is why the "multi-session traces" non-goal is safe to
+keep. If cq emits one trace file per session, comparing the shape of fifty
+sessions is a pandas expression against tooling somebody else maintains, not a
+feature cq has to grow.
 
 It is the right target for three reasons.
 
@@ -134,7 +159,10 @@ slices, `Agent` dispatches to flow arrows. Nothing has to be contorted.
 
 **It keeps cq a query tool.** `trace_processor` means the exported trace stays
 queryable with SQL, so the export is not a dead-end picture. That is continuous
-with `cq sql`, not a departure from it.
+with `cq sql`, not a departure from it. Worth stating plainly: for *asking
+questions*, `cq trace --perfetto | trace_processor` is a better fit for cq's
+character than any browser is. The UI is for when you want to look at the shape;
+`trace_processor` is for when you want an answer.
 
 The cost is a two-step ritual (emit a file, open it somewhere) and a vocabulary
 built for CPU profiling rather than agents: tracks are called "threads," lane
@@ -142,19 +170,29 @@ groups are "processes."
 
 ### Data handling
 
-Session transcripts contain real work content, so where the trace goes matters.
+Session transcripts contain real work content and verbatim tool arguments, so
+where the trace goes matters.
 
-Perfetto ships
-[`open_trace_in_ui`](https://github.com/google/perfetto/blob/main/tools/open_trace_in_ui),
-which serves the trace from a local HTTP server and points the UI at
-`127.0.0.1`. Since perfetto.dev's servers cannot reach a loopback address, the
-browser must be doing the parsing locally in that mode. `trace_processor` is also
-a plain local CLI with no network involvement at all.
+Three things establish that local-only paths exist:
 
-What is **not** documented anywhere I could find is whether dragging a file onto
-`ui.perfetto.dev` is equally local. The docs make no privacy, data-residency, or
-client-side-processing statement. Treat that path as unverified and prefer
-`open_trace_in_ui` or `trace_processor` until someone confirms it.
+- The Perfetto UI is a static bundle you can build and serve yourself, so there
+  is no server-side trace processing in the architecture at all.
+- [`open_trace_in_ui`](https://github.com/google/perfetto/blob/main/tools/open_trace_in_ui)
+  serves the trace from a local HTTP server and points the UI at `127.0.0.1`,
+  which perfetto.dev's servers could not reach even if they wanted to.
+- `trace_processor` is a plain local binary.
+
+What Perfetto does **not** publish is any explicit privacy, data-residency, or
+client-side-processing statement. The local-only conclusion above is an
+inference from how the thing is built, which is reasonable but is not a
+guarantee anyone has made.
+
+Firefox Profiler does publish one, which is the main reason it is worth keeping
+around (see below).
+
+Practical guidance: prefer a self-hosted UI, `open_trace_in_ui`, or
+`trace_processor`. Reserve the hosted page for traces you would not mind
+handing to someone.
 
 ### Renderers considered
 
@@ -198,7 +236,7 @@ rather than assumed:
 | row ordering | **none** | `child_ordering` + `sibling_order_rank` |
 | same-named lanes | distinct `tid` keeps them apart | merge by default |
 | support posture | legacy, best-effort | native |
-| other viewers | `chrome://tracing`, Speedscope | Perfetto only |
+| other viewers | Firefox Profiler, Speedscope | Perfetto only |
 
 Two findings decided this.
 
@@ -225,8 +263,72 @@ Perfetto's `.proto` files to keep current; the `perfetto` crate on crates.io is 
 `serde`, `serde_json`, `chrono`, `anyhow`, `dirs`, `fs2`, `owo-colors`, with no
 protobuf toolchain anywhere.
 
+(To be fair to protobuf: the vendoring burden is a Rust problem, not a universal
+one. The `perfetto` PyPI package ships `perfetto_trace_pb2.py` pregenerated, so
+in Python the schema is just there. cq is Rust, so the cost stands, but it is
+not evidence that the format is inherently painful.)
+
 Legacy JSON adds zero dependencies and zero build steps. The emitter sits behind
 the span model, so switching to protobuf later changes one module.
+
+#### Longevity risk on the JSON choice
+
+There is a Chromium issue titled ["Chrometto: Deprecate and remove JSON trace
+format support from Chrome"](https://issues.chromium.org/issues/40110077). It is
+behind a sign-in wall and **was not read**, so what follows is reasoning from the
+title alone and should be confirmed by someone who can open it.
+
+The title reads as Chrome's own trace *emitter*, not Perfetto's *importer*, and
+Perfetto imports several legacy formats it never emitted (Firefox Profiler JSON,
+Linux `perf`, ftrace, macOS Instruments), so importer support does not obviously
+follow Chrome's emitter. Perfetto also describes its JSON support as "legacy" and
+"best-effort" already, which is a posture rather than a deprecation.
+
+If JSON import were ever dropped, the fallback is the protobuf emitter described
+above, behind the same span model. That is the concrete reason to keep the
+emitter as one isolated module rather than letting trace-format details leak
+into the span layer.
+
+### Firefox Profiler as a secondary viewer
+
+[Firefox Profiler](https://profiler.firefox.com/) (MPL v2,
+[source](https://github.com/firefox-devtools/profiler)) occupies the same space
+and **already imports Chrome trace JSON**, so the file this design emits should
+load there with no extra work. It was evaluated as a primary target and rejected,
+but it is worth naming because it wins on one axis outright.
+
+**Why not primary: the data model is a poor fit.** Perfetto's core model is
+slices on tracks, which is exactly this data. Firefox Profiler's core model is
+samples and stacks; variable durations are *markers*, a secondary view. From its
+[importer docs](https://github.com/firefox-devtools/profiler/blob/main/docs-developer/custom-importer.md):
+samples "don't support variable durations — it's assumed 1 sample is equal in
+length to the sampling interval," while markers "can have start and end times."
+This data is 100% variable-duration and has no call stacks at all, so it is all
+markers: the Stack Chart and Flame Graph that the tool is built around render
+empty. Its docs even advise that an importer "should include at least one sample
+at the start and end," meaning synthesizing fake samples to satisfy a model we
+do not fit. It also has no SQL, no CLI, no batch mode, and no general causal
+arrows between lanes.
+
+Its importers are in-tree with no plugin API, so a bespoke cq importer would
+mean upstreaming JS to Mozilla. Emitting Chrome JSON sidesteps that entirely.
+
+**Why keep it: it is the only one with a published privacy guarantee.** Firefox
+Profiler states that "the upload step can be skipped and the profile downloaded
+(it has not left the machine at this point)," and offers sanitization checkboxes
+to strip data before any upload. It also has real shareable links, which
+Perfetto has none of.
+
+So Firefox Profiler is the better answer in two specific situations:
+
+- when a guarantee is wanted rather than an inference about the trace staying
+  local
+- when handing a trace to another person, where share links plus a sanitize step
+  matter, because the args pane holds verbatim tool inputs
+
+This is a retroactive argument for the format choice. Legacy JSON is the one
+input both tools accept; protobuf would have locked out the tool with the better
+privacy story.
 
 ## Data layer
 
@@ -333,6 +435,18 @@ Hint: Run 'cq sessions' to find session IDs
 would collide with the existing global `--json` and `--table` flags. One
 mechanism per concern.
 
+`--perfetto` writes to stdout so it composes, which is the point:
+
+```bash
+cq trace --session <id> --perfetto > trace.json
+trace_processor trace.json                    # local SQL shell over the trace
+open_trace_in_ui -i trace.json                # local server, UI attaches
+```
+
+The name `--perfetto` describes the format, not the destination. The same file
+loads in Firefox Profiler and Speedscope, so the flag should not be renamed to
+imply otherwise.
+
 ## Perfetto mapping
 
 | trace concept | cq |
@@ -376,9 +490,14 @@ if the rendering is poor.
 - A fixture session engineered to contain: two overlapping parallel calls, a
   depth-3 subagent, an error result, and a human gap.
 - A golden-file test on the emitted trace JSON.
-- One manual load of the golden file into Perfetto. A file that is
-  schema-shaped but silently mangled on import passes every automated test, so
-  this check cannot be skipped on the first implementation.
+- One manual load of the golden file into Perfetto, via `trace_processor` or
+  `open_trace_in_ui` rather than the hosted page. A file that is schema-shaped
+  but silently mangled on import passes every automated test, so this check
+  cannot be skipped on the first implementation.
+- One manual load into Firefox Profiler as well. The claim that the same file
+  works in both is currently an inference from its documented Chrome-JSON
+  importer, not something anyone has observed with a cq-generated file. Cheap to
+  confirm, and if it fails the "secondary viewer" section above needs rewriting.
 
 ## Implementation order
 
