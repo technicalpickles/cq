@@ -214,6 +214,71 @@ Run: `cargo test --test views_test`
 
 Expected: PASS, including the two new tests and every pre-existing one. If a pre-existing test fails on column count, one of the three bodies above was missed.
 
+- [ ] **Step 8 (follow-up): strengthen the ordering test**
+
+`tool_result_timestamp_is_at_or_after_its_call` as written above is
+**vacuous on its own**. Verified in DuckDB: `NULL < '2026-01-01'` evaluates to
+`NULL`, not `false`, so a `WHERE tr.timestamp < tc.timestamp` matches zero rows
+when the column is entirely NULL, and `assert_eq!(count, 0)` passes while
+proving nothing. It only has teeth because the companion test separately
+asserts a non-NULL ISO string.
+
+The obvious guard — asserting the JOIN produced rows — **does not work**, and
+this was proven by mutation rather than argued. Forcing
+`claude_tool_results_sql` to emit `NULL::VARCHAR AS timestamp` and re-running
+the test showed it still passing: the JOIN is on `tool_use_id`, so pairing
+succeeds perfectly well with every timestamp NULL. `paired > 0` proves the join
+works, not that the column has values.
+
+What actually catches it is counting non-NULL timestamps, since `COUNT(expr)`
+skips NULLs while `COUNT(*)` does not:
+
+```rust
+#[test]
+fn tool_result_timestamp_is_at_or_after_its_call() {
+    let conn = setup_db("multi_tool_session.jsonl");
+    let (paired, with_timestamps, out_of_order): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*),
+                    COUNT(tc.timestamp) + COUNT(tr.timestamp),
+                    COUNT(*) FILTER (WHERE tr.timestamp < tc.timestamp)
+             FROM tool_calls tc
+             JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert!(paired > 0, "fixture must actually pair calls to results");
+    assert_eq!(
+        with_timestamps,
+        paired * 2,
+        "every paired call and result must carry a non-NULL timestamp"
+    );
+    assert_eq!(out_of_order, 0, "no result may predate its own call");
+}
+```
+
+Under the all-NULL mutation this fails with `left: 4, right: 8`, which is the
+proof the first version never had.
+
+**Two rules for the rest of this plan**, both of which the gap and span tests in
+Tasks 4 and 9 will need:
+
+1. A test whose only assertion is "a filtered count is zero" proves nothing on
+   its own. Pair it with a count of the non-NULL values the filter depends on.
+2. **Verify a hardened assertion by mutation.** Break the thing it claims to
+   catch, confirm the test fails, then revert. A guard that was never observed
+   failing is a guess. This exact fix looked correct and was not.
+
+The same class of bug shipped in Task 2's `workflow_sidecar_has_no_parent_edge`,
+which wrapped its assertion in `if let Some(meta)` while the workflow fixture
+had no sidecar at all on disk — so it asserted nothing whatsoever and would pass
+even if the code invented a parent for workflow subagents. Fixed by adding
+`tests/fixtures/subagents/workflows/wf_testrun/agent-wf1.meta.json` (real
+workflow shape: `agentType` and `spawnDepth` only, no `toolUseId`) and asserting
+unconditionally. Verified by mutation: returning a bogus
+`parent_tool_use_id` makes it fail.
+
 - [ ] **Step 7: Commit**
 
 ```bash

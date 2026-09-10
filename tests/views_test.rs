@@ -1022,16 +1022,31 @@ fn tool_results_expose_timestamp() {
 #[test]
 fn tool_result_timestamp_is_at_or_after_its_call() {
     let conn = setup_db("multi_tool_session.jsonl");
-    let count: i64 = conn
+    // The `with_timestamps` count is the load-bearing assertion, and it is not
+    // the obvious one. SQL three-valued logic makes `NULL < anything` evaluate
+    // to NULL rather than false, so "no rows are out of order" is satisfied for
+    // free by an all-NULL column. Counting paired rows does NOT catch that --
+    // the JOIN is on tool_use_id, so pairing still succeeds with every
+    // timestamp NULL. Only counting non-NULL timestamps does.
+    // (`COUNT(expr)` skips NULLs; `COUNT(*)` does not.)
+    let (paired, with_timestamps, out_of_order): (i64, i64, i64) = conn
         .query_row(
-            "SELECT COUNT(*) FROM tool_calls tc
-             JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id
-             WHERE tr.timestamp < tc.timestamp",
+            "SELECT COUNT(*),
+                    COUNT(tc.timestamp) + COUNT(tr.timestamp),
+                    COUNT(*) FILTER (WHERE tr.timestamp < tc.timestamp)
+             FROM tool_calls tc
+             JOIN tool_results tr ON tc.tool_use_id = tr.tool_use_id",
             [],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
-    assert_eq!(count, 0, "no result may predate its own call");
+    assert!(paired > 0, "fixture must actually pair calls to results");
+    assert_eq!(
+        with_timestamps,
+        paired * 2,
+        "every paired call and result must carry a non-NULL timestamp"
+    );
+    assert_eq!(out_of_order, 0, "no result may predate its own call");
 }
 
 // ---- meta.json sidecar fields ----
@@ -1069,12 +1084,24 @@ fn sidecar_absent_yields_none() {
 
 #[test]
 fn workflow_sidecar_has_no_parent_edge() {
-    // Workflow subagents carry only {agentType, spawnDepth, model} -- no toolUseId.
+    // Workflow subagents carry only {agentType, spawnDepth, model} -- no
+    // toolUseId and no description -- so their parentage is unrecoverable from
+    // the sidecar and has to come from the path-derived workflow_id instead.
+    //
+    // This asserts unconditionally on purpose. An `if let Some(meta)` guard
+    // here would make the test pass vacuously whenever the sidecar is absent,
+    // including if the code started inventing a parent for workflow subagents.
     let path = fixture_path("subagents/workflows/wf_testrun/agent-wf1.jsonl");
-    if let Some(meta) = cq::indexer::read_agent_meta(&path) {
-        assert_eq!(
-            meta.parent_tool_use_id, None,
-            "workflow subagents have no resolvable parent"
-        );
-    }
+    let meta = cq::indexer::read_agent_meta(&path)
+        .expect("the workflow fixture must have a sidecar for this test to mean anything");
+    assert_eq!(meta.agent_type.as_deref(), Some("Explore"));
+    assert_eq!(meta.spawn_depth, Some(1));
+    assert_eq!(
+        meta.parent_tool_use_id, None,
+        "workflow subagents have no resolvable parent"
+    );
+    assert_eq!(
+        meta.description, None,
+        "workflow sidecars carry no description"
+    );
 }
