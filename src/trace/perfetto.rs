@@ -40,6 +40,25 @@ fn epoch_us(ts: &str) -> i64 {
     epoch_ms(ts) * 1000
 }
 
+/// Cap placed on every `args.detail` string this module emits (see
+/// [`marker_detail`] and the gap-closing-text handling in `build_events`),
+/// so one oversized command or pasted message can't blow up a marker's
+/// on-chart label.
+const MAX_DETAIL_LEN: usize = 200;
+
+/// Truncate `s` to [`MAX_DETAIL_LEN`] characters, marking truncation with a
+/// trailing ellipsis. Character-counted, not byte-counted, so this never
+/// splits a multi-byte UTF-8 sequence.
+fn truncate_for_marker(s: &str) -> String {
+    if s.chars().count() <= MAX_DETAIL_LEN {
+        s.to_string()
+    } else {
+        let mut truncated: String = s.chars().take(MAX_DETAIL_LEN).collect();
+        truncated.push('…');
+        truncated
+    }
+}
+
 /// A short, single-line summary of a tool call's `input`, placed at
 /// `args.detail` on the emitted event.
 ///
@@ -60,16 +79,8 @@ fn epoch_us(ts: &str) -> i64 {
 /// (MCP tools, new skills, ...) as they show up. Rendering the whole value
 /// as compact JSON costs nothing to keep current.
 fn marker_detail(input: &Option<Value>) -> Option<String> {
-    const MAX_LEN: usize = 200;
     let input = input.as_ref()?;
-    let compact = input.to_string();
-    if compact.chars().count() <= MAX_LEN {
-        Some(compact)
-    } else {
-        let mut truncated: String = compact.chars().take(MAX_LEN).collect();
-        truncated.push('…');
-        Some(truncated)
-    }
+    Some(truncate_for_marker(&input.to_string()))
 }
 
 pub fn emit(
@@ -218,6 +229,16 @@ fn build_events(
             continue;
         };
         let pid = pids[&group_of(&g.lane)];
+        let mut args = json!({"duration_ms": g.duration_ms});
+        // The closing record's text, if any: the human's message for a
+        // `blocked on you` gap, or the assistant's own text for a `think`
+        // gap that happened to produce one. Blank/whitespace-only text
+        // (seen on some records) is worth no more than the missing case.
+        if let Some(text) = g.closing_text.as_deref().map(str::trim) {
+            if !text.is_empty() {
+                args["detail"] = json!(truncate_for_marker(text));
+            }
+        }
         events.push(json!({
             "ph": "X",
             "name": match g.kind { GapKind::Human => "blocked on you", GapKind::Think => "think" },
@@ -226,7 +247,7 @@ fn build_events(
             "tid": tid,
             "ts": epoch_us(&g.start),
             "dur": (g.duration_ms * 1000).max(1),
-            "args": {"duration_ms": g.duration_ms}
+            "args": args
         }));
     }
 
@@ -448,5 +469,77 @@ mod tests {
             "begin event args should have no detail key when input is None, got {:?}",
             begin["args"]
         );
+    }
+
+    fn gap(kind: GapKind, closing_text: Option<&str>) -> Gap {
+        Gap {
+            lane: "main".to_string(),
+            kind,
+            start: "2026-09-10T12:00:00.000Z".to_string(),
+            end: "2026-09-10T12:00:01.000Z".to_string(),
+            duration_ms: 1000,
+            closing_text: closing_text.map(str::to_string),
+        }
+    }
+
+    /// This is the point of the gap-detail change: a `blocked on you` gap
+    /// should carry what the human actually said, not just its duration.
+    #[test]
+    fn human_gap_event_carries_the_closing_message_as_detail() {
+        let events = build_events(
+            &[],
+            &[gap(GapKind::Human, Some("go ahead"))],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let gap_event = events
+            .iter()
+            .find(|e| e["cat"] == "gap")
+            .expect("must have a gap event");
+        assert_eq!(gap_event["args"]["detail"], json!("go ahead"));
+    }
+
+    #[test]
+    fn gap_event_omits_detail_when_closing_text_is_absent_or_blank() {
+        for closing_text in [None, Some("   ")] {
+            let events = build_events(
+                &[],
+                &[gap(GapKind::Think, closing_text)],
+                "a1b2c3d4-0000-4000-8000-000000000001",
+                &fixture_groups(),
+            );
+
+            let gap_event = events
+                .iter()
+                .find(|e| e["cat"] == "gap")
+                .expect("must have a gap event");
+            assert!(
+                gap_event["args"].get("detail").is_none(),
+                "closing_text {closing_text:?} should not produce a detail key, got {:?}",
+                gap_event["args"]
+            );
+        }
+    }
+
+    #[test]
+    fn gap_event_detail_is_truncated_like_tool_span_detail() {
+        let long_text = "x".repeat(500);
+        let events = build_events(
+            &[],
+            &[gap(GapKind::Think, Some(&long_text))],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let gap_event = events
+            .iter()
+            .find(|e| e["cat"] == "gap")
+            .expect("must have a gap event");
+        let detail = gap_event["args"]["detail"]
+            .as_str()
+            .expect("detail must be a string");
+        assert!(detail.ends_with('…'));
+        assert_eq!(detail.chars().count(), MAX_DETAIL_LEN + 1);
     }
 }
