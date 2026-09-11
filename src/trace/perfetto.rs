@@ -26,7 +26,7 @@
 //! Gaps don't have this problem -- by construction two gaps on the same lane
 //! never overlap -- so gaps stay as `ph: "X"` complete events with `dur`.
 
-use crate::trace::{epoch_ms, Gap, GapKind, Span};
+use crate::trace::{epoch_ms, marker_detail, truncate_for_marker, Gap, GapKind, Span};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -38,49 +38,6 @@ use std::collections::HashMap;
 /// just widens `epoch_ms`'s result rather than re-parsing the RFC3339 string.
 fn epoch_us(ts: &str) -> i64 {
     epoch_ms(ts) * 1000
-}
-
-/// Cap placed on every `args.detail` string this module emits (see
-/// [`marker_detail`] and the gap-closing-text handling in `build_events`),
-/// so one oversized command or pasted message can't blow up a marker's
-/// on-chart label.
-const MAX_DETAIL_LEN: usize = 200;
-
-/// Truncate `s` to [`MAX_DETAIL_LEN`] characters, marking truncation with a
-/// trailing ellipsis. Character-counted, not byte-counted, so this never
-/// splits a multi-byte UTF-8 sequence.
-fn truncate_for_marker(s: &str) -> String {
-    if s.chars().count() <= MAX_DETAIL_LEN {
-        s.to_string()
-    } else {
-        let mut truncated: String = s.chars().take(MAX_DETAIL_LEN).collect();
-        truncated.push('…');
-        truncated
-    }
-}
-
-/// A short, single-line summary of a tool call's `input`, placed at
-/// `args.detail` on the emitted event.
-///
-/// This is the one shape Firefox Profiler's Chrome Trace importer turns into
-/// a visible label -- on the Marker Chart, the Marker Table's Details
-/// column, and the tooltip, with no click or hover needed. Every other
-/// shape `args` takes here (`input`, `tool_use_id`, `duration_ms`,
-/// `is_error`) gets silently dropped by that importer, since it only reads
-/// `args.data` (an object) or `args.detail` (a string); see
-/// `firefox-devtools/profiler`'s `src/profile-logic/import/chrome.ts` and
-/// this project's issue #46. Perfetto's own UI shows `args` regardless of
-/// shape, so adding `detail` doesn't cost that viewer anything.
-///
-/// Deliberately generic rather than keyed on known fields like `command` or
-/// `file_path`: `input`'s shape isn't a documented contract any more than
-/// the transcript format itself is (see `docs/session-storage.md`), and a
-/// fixed set of known tool names would silently stop covering new tools
-/// (MCP tools, new skills, ...) as they show up. Rendering the whole value
-/// as compact JSON costs nothing to keep current.
-fn marker_detail(input: &Option<Value>) -> Option<String> {
-    let input = input.as_ref()?;
-    Some(truncate_for_marker(&input.to_string()))
 }
 
 pub fn emit(
@@ -257,6 +214,7 @@ fn build_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trace::MAX_DETAIL_LEN;
 
     fn span(lane: &str, tool_use_id: &str, start: &str, duration_ms: i64) -> Span {
         Span {
@@ -394,32 +352,6 @@ mod tests {
             2,
             "exactly one process per group -- main's, and agent-sub1's (which also covers agent-sub2)"
         );
-    }
-
-    #[test]
-    fn marker_detail_is_none_without_input() {
-        assert_eq!(marker_detail(&None), None);
-    }
-
-    #[test]
-    fn marker_detail_renders_short_input_verbatim_as_compact_json() {
-        let input = Some(json!({"command": "git status", "description": "Check status"}));
-        assert_eq!(
-            marker_detail(&input),
-            Some(r#"{"command":"git status","description":"Check status"}"#.to_string())
-        );
-    }
-
-    #[test]
-    fn marker_detail_truncates_long_input_with_an_ellipsis() {
-        let input = Some(json!({"command": "x".repeat(500)}));
-        let detail = marker_detail(&input).expect("input is Some, so detail must be Some");
-        assert!(
-            detail.ends_with('…'),
-            "truncated detail must end with an ellipsis, got {detail:?}"
-        );
-        // 200 chars of content plus the ellipsis marker itself.
-        assert_eq!(detail.chars().count(), 201);
     }
 
     /// This is the regression this whole change exists to prevent: a tool
