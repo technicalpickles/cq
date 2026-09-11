@@ -153,6 +153,7 @@ mod tests {
             start: String::new(),
             end: String::new(),
             duration_ms,
+            closing_text: None,
         }
     }
 

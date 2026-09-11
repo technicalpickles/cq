@@ -89,6 +89,12 @@ pub struct Gap {
     /// `end - start` in milliseconds; always positive (zero-length and
     /// out-of-order intervals are filtered out).
     pub duration_ms: i64,
+    /// The text of the record that closes the gap, if it carried any --
+    /// the human's message for a [`GapKind::Human`] gap, or the assistant's
+    /// own text for a [`GapKind::Think`] gap that happened to produce one.
+    /// `None` when the closing record had no text (e.g. a `tool_result`-only
+    /// user turn, or an assistant turn that was pure tool calls).
+    pub closing_text: Option<String>,
 }
 
 /// Every paired tool call in the session, ordered by call time.
@@ -159,21 +165,23 @@ pub fn spans(conn: &Connection, session_id: &str) -> Result<Vec<Span>> {
 pub fn gaps(conn: &Connection, session_id: &str) -> Result<Vec<Gap>> {
     let sql = "WITH lane_events AS (
             SELECT COALESCE(agent_id, 'main') AS lane, timestamp, type,
-                   text IS NOT NULL AS has_text
+                   text IS NOT NULL AS has_text, text
             FROM messages WHERE session_id = ?
         ),
         ordered AS (
             SELECT lane, timestamp,
                    LEAD(timestamp) OVER (PARTITION BY lane ORDER BY timestamp) AS next_ts,
                    LEAD(type)      OVER (PARTITION BY lane ORDER BY timestamp) AS next_type,
-                   LEAD(has_text)  OVER (PARTITION BY lane ORDER BY timestamp) AS next_has_text
+                   LEAD(has_text)  OVER (PARTITION BY lane ORDER BY timestamp) AS next_has_text,
+                   LEAD(text)      OVER (PARTITION BY lane ORDER BY timestamp) AS next_text
             FROM lane_events
         )
         SELECT lane,
                CASE WHEN next_type = 'user' AND next_has_text THEN 'human' ELSE 'think' END AS kind,
                timestamp AS gap_start, next_ts AS gap_end,
                CAST((epoch_ms(CAST(next_ts AS TIMESTAMP))
-                   - epoch_ms(CAST(timestamp AS TIMESTAMP))) AS BIGINT) AS duration_ms
+                   - epoch_ms(CAST(timestamp AS TIMESTAMP))) AS BIGINT) AS duration_ms,
+               next_text AS closing_text
         FROM ordered
         WHERE next_ts IS NOT NULL
           AND epoch_ms(CAST(next_ts AS TIMESTAMP)) - epoch_ms(CAST(timestamp AS TIMESTAMP)) > 0
@@ -193,6 +201,7 @@ pub fn gaps(conn: &Connection, session_id: &str) -> Result<Vec<Gap>> {
                 start: row.get(2)?,
                 end: row.get(3)?,
                 duration_ms: row.get(4)?,
+                closing_text: row.get(5)?,
             })
         })
         .context("running trace gap query")?

@@ -40,6 +40,49 @@ fn epoch_us(ts: &str) -> i64 {
     epoch_ms(ts) * 1000
 }
 
+/// Cap placed on every `args.detail` string this module emits (see
+/// [`marker_detail`] and the gap-closing-text handling in `build_events`),
+/// so one oversized command or pasted message can't blow up a marker's
+/// on-chart label.
+const MAX_DETAIL_LEN: usize = 200;
+
+/// Truncate `s` to [`MAX_DETAIL_LEN`] characters, marking truncation with a
+/// trailing ellipsis. Character-counted, not byte-counted, so this never
+/// splits a multi-byte UTF-8 sequence.
+fn truncate_for_marker(s: &str) -> String {
+    if s.chars().count() <= MAX_DETAIL_LEN {
+        s.to_string()
+    } else {
+        let mut truncated: String = s.chars().take(MAX_DETAIL_LEN).collect();
+        truncated.push('…');
+        truncated
+    }
+}
+
+/// A short, single-line summary of a tool call's `input`, placed at
+/// `args.detail` on the emitted event.
+///
+/// This is the one shape Firefox Profiler's Chrome Trace importer turns into
+/// a visible label -- on the Marker Chart, the Marker Table's Details
+/// column, and the tooltip, with no click or hover needed. Every other
+/// shape `args` takes here (`input`, `tool_use_id`, `duration_ms`,
+/// `is_error`) gets silently dropped by that importer, since it only reads
+/// `args.data` (an object) or `args.detail` (a string); see
+/// `firefox-devtools/profiler`'s `src/profile-logic/import/chrome.ts` and
+/// this project's issue #46. Perfetto's own UI shows `args` regardless of
+/// shape, so adding `detail` doesn't cost that viewer anything.
+///
+/// Deliberately generic rather than keyed on known fields like `command` or
+/// `file_path`: `input`'s shape isn't a documented contract any more than
+/// the transcript format itself is (see `docs/session-storage.md`), and a
+/// fixed set of known tool names would silently stop covering new tools
+/// (MCP tools, new skills, ...) as they show up. Rendering the whole value
+/// as compact JSON costs nothing to keep current.
+fn marker_detail(input: &Option<Value>) -> Option<String> {
+    let input = input.as_ref()?;
+    Some(truncate_for_marker(&input.to_string()))
+}
+
 pub fn emit(
     spans: &[Span],
     gaps: &[Gap],
@@ -160,12 +203,15 @@ fn build_events(
         };
         let start_us = epoch_us(&s.start);
         let dur_us = (s.duration_ms * 1000).max(1);
-        let args = json!({
+        let mut args = json!({
             "input": s.input,
             "tool_use_id": s.tool_use_id,
             "duration_ms": s.duration_ms,
             "is_error": s.is_error,
         });
+        if let Some(detail) = marker_detail(&s.input) {
+            args["detail"] = json!(detail);
+        }
         events.push(json!({
             "ph": "b", "name": name.clone(), "cat": "tool",
             "pid": pid, "tid": tid, "ts": start_us,
@@ -183,6 +229,16 @@ fn build_events(
             continue;
         };
         let pid = pids[&group_of(&g.lane)];
+        let mut args = json!({"duration_ms": g.duration_ms});
+        // The closing record's text, if any: the human's message for a
+        // `blocked on you` gap, or the assistant's own text for a `think`
+        // gap that happened to produce one. Blank/whitespace-only text
+        // (seen on some records) is worth no more than the missing case.
+        if let Some(text) = g.closing_text.as_deref().map(str::trim) {
+            if !text.is_empty() {
+                args["detail"] = json!(truncate_for_marker(text));
+            }
+        }
         events.push(json!({
             "ph": "X",
             "name": match g.kind { GapKind::Human => "blocked on you", GapKind::Think => "think" },
@@ -191,7 +247,7 @@ fn build_events(
             "tid": tid,
             "ts": epoch_us(&g.start),
             "dur": (g.duration_ms * 1000).max(1),
-            "args": {"duration_ms": g.duration_ms}
+            "args": args
         }));
     }
 
@@ -338,5 +394,152 @@ mod tests {
             2,
             "exactly one process per group -- main's, and agent-sub1's (which also covers agent-sub2)"
         );
+    }
+
+    #[test]
+    fn marker_detail_is_none_without_input() {
+        assert_eq!(marker_detail(&None), None);
+    }
+
+    #[test]
+    fn marker_detail_renders_short_input_verbatim_as_compact_json() {
+        let input = Some(json!({"command": "git status", "description": "Check status"}));
+        assert_eq!(
+            marker_detail(&input),
+            Some(r#"{"command":"git status","description":"Check status"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn marker_detail_truncates_long_input_with_an_ellipsis() {
+        let input = Some(json!({"command": "x".repeat(500)}));
+        let detail = marker_detail(&input).expect("input is Some, so detail must be Some");
+        assert!(
+            detail.ends_with('…'),
+            "truncated detail must end with an ellipsis, got {detail:?}"
+        );
+        // 200 chars of content plus the ellipsis marker itself.
+        assert_eq!(detail.chars().count(), 201);
+    }
+
+    /// This is the regression this whole change exists to prevent: a tool
+    /// span's begin event must carry a `detail` string in `args`, because
+    /// that's the one shape Firefox Profiler's Chrome Trace importer turns
+    /// into a visible label (issue #46). Every other field in `args` here
+    /// is invisible in that viewer.
+    #[test]
+    fn tool_span_begin_event_carries_detail_when_input_is_present() {
+        let mut s = span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100);
+        s.input = Some(json!({"command": "echo hi"}));
+        let events = build_events(
+            &[s],
+            &[],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let begin = events
+            .iter()
+            .find(|e| e["cat"] == "tool" && e["ph"] == "b")
+            .expect("must have a begin event");
+        assert_eq!(
+            begin["args"]["detail"],
+            json!(r#"{"command":"echo hi"}"#),
+            "begin event args: {:?}",
+            begin["args"]
+        );
+    }
+
+    #[test]
+    fn tool_span_begin_event_omits_detail_when_input_is_absent() {
+        let s = span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100);
+        let events = build_events(
+            &[s],
+            &[],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let begin = events
+            .iter()
+            .find(|e| e["cat"] == "tool" && e["ph"] == "b")
+            .expect("must have a begin event");
+        assert!(
+            begin["args"].get("detail").is_none(),
+            "begin event args should have no detail key when input is None, got {:?}",
+            begin["args"]
+        );
+    }
+
+    fn gap(kind: GapKind, closing_text: Option<&str>) -> Gap {
+        Gap {
+            lane: "main".to_string(),
+            kind,
+            start: "2026-09-10T12:00:00.000Z".to_string(),
+            end: "2026-09-10T12:00:01.000Z".to_string(),
+            duration_ms: 1000,
+            closing_text: closing_text.map(str::to_string),
+        }
+    }
+
+    /// This is the point of the gap-detail change: a `blocked on you` gap
+    /// should carry what the human actually said, not just its duration.
+    #[test]
+    fn human_gap_event_carries_the_closing_message_as_detail() {
+        let events = build_events(
+            &[],
+            &[gap(GapKind::Human, Some("go ahead"))],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let gap_event = events
+            .iter()
+            .find(|e| e["cat"] == "gap")
+            .expect("must have a gap event");
+        assert_eq!(gap_event["args"]["detail"], json!("go ahead"));
+    }
+
+    #[test]
+    fn gap_event_omits_detail_when_closing_text_is_absent_or_blank() {
+        for closing_text in [None, Some("   ")] {
+            let events = build_events(
+                &[],
+                &[gap(GapKind::Think, closing_text)],
+                "a1b2c3d4-0000-4000-8000-000000000001",
+                &fixture_groups(),
+            );
+
+            let gap_event = events
+                .iter()
+                .find(|e| e["cat"] == "gap")
+                .expect("must have a gap event");
+            assert!(
+                gap_event["args"].get("detail").is_none(),
+                "closing_text {closing_text:?} should not produce a detail key, got {:?}",
+                gap_event["args"]
+            );
+        }
+    }
+
+    #[test]
+    fn gap_event_detail_is_truncated_like_tool_span_detail() {
+        let long_text = "x".repeat(500);
+        let events = build_events(
+            &[],
+            &[gap(GapKind::Think, Some(&long_text))],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let gap_event = events
+            .iter()
+            .find(|e| e["cat"] == "gap")
+            .expect("must have a gap event");
+        let detail = gap_event["args"]["detail"]
+            .as_str()
+            .expect("detail must be a string");
+        assert!(detail.ends_with('…'));
+        assert_eq!(detail.chars().count(), MAX_DETAIL_LEN + 1);
     }
 }
