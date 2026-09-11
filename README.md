@@ -188,6 +188,8 @@ Add `--perfetto` to emit Chrome Trace Event JSON on stdout instead of the waterf
 cq trace --session <id> --perfetto > trace.json
 ```
 
+Tool spans and "blocked on you" gaps carry a compact `args.detail` string too (the tool's input, or the message that ended the gap, truncated at 200 chars) — Firefox Profiler renders it straight into the Marker Chart, Marker Table, and tooltip with no click needed; Perfetto shows the full `args` object regardless.
+
 The global `--json` flag returns span rows instead of either renderer: one object per paired tool call, with `lane`, `duration_ms`, and `is_error`.
 
 ## Use cases

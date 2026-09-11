@@ -40,7 +40,7 @@ user_invocable: true
 - **search**: `--type user|assistant`, `--all-matches` (every matching message rather than the best one per session)
 - **tools**: `--grep` (filter inputs, repeatable/OR), `--result-grep` (filter by tool result content, repeatable/OR, ANDs with `--errors`), `--errors` (errors only), `--fields` (extract input fields as columns)
 - **messages**: `--type user|assistant`, `--grep` (repeatable/OR)
-- **trace**: `--session <ID>` (required), `--from`/`--to` (zoom into a time window), `--perfetto` (emit Chrome Trace Event JSON instead of the waterfall)
+- **trace**: `--session <ID>` (required), `--from`/`--to` (zoom into a time window), `--perfetto` (emit Chrome Trace Event JSON instead of the waterfall). `--perfetto` output's tool spans and "blocked on you" gaps carry an `args.detail` string (tool input, or the gap-closing message, truncated at 200 chars) so it renders directly in Firefox Profiler without a click.
 
 ## View Schemas
 
