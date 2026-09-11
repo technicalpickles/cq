@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.7.0](https://github.com/technicalpickles/cq/compare/v0.6.0...v0.7.0) (2026-09-11)
+
+
+### Features
+
+* **indexer:** read spawn metadata from subagent sidecars ([1db6542](https://github.com/technicalpickles/cq/commit/1db6542f88a694437b387f65ce217880482b5e5b))
+* **trace:** add span and gap model behind cq trace --json ([29cf19e](https://github.com/technicalpickles/cq/commit/29cf19e50a8ec14b7ef1dc3622ec768285d0363e))
+* **trace:** emit Chrome Trace Event JSON for Perfetto ([1c162ee](https://github.com/technicalpickles/cq/commit/1c162ee1c271b5c9117d94d47d8e9379274b7b67))
+* **trace:** group lanes under their depth-1 ancestor ([c44a91b](https://github.com/technicalpickles/cq/commit/c44a91b93df4188500bc5e2d3316f4ec832d3f57))
+* **trace:** render a terminal waterfall with an explicit scale ([90e6014](https://github.com/technicalpickles/cq/commit/90e60143d6bd44edd605974d4f2d35dcbc6e9ed9))
+* **trace:** surface a gap's closing text as args.detail too ([0098e69](https://github.com/technicalpickles/cq/commit/0098e695733adcadf1dac40c46f506ec80279607))
+* **views:** add agents view, one row per subagent lane ([742279e](https://github.com/technicalpickles/cq/commit/742279e1eaf5972efb784712051352809ee3a9fe))
+* **views:** expose timestamp on tool_results ([8059009](https://github.com/technicalpickles/cq/commit/805900990d8803dbd6bb21037fdd2def66dfffc0))
+
+
+### Bug Fixes
+
+* **trace:** avoid panic on non-ASCII window bounds, add parse_bound tests ([c748dd8](https://github.com/technicalpickles/cq/commit/c748dd84fa0b0c80e55001d2901697e88cdb2c02))
+* **trace:** surface tool-call args to Firefox Profiler via args.detail ([0cea000](https://github.com/technicalpickles/cq/commit/0cea000e36874e6d016ee6401b04046434e85547))
+
 ## [0.6.0](https://github.com/technicalpickles/cq/compare/v0.5.0...v0.6.0) (2026-08-28)
 
 
