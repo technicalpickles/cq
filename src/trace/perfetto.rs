@@ -40,6 +40,38 @@ fn epoch_us(ts: &str) -> i64 {
     epoch_ms(ts) * 1000
 }
 
+/// A short, single-line summary of a tool call's `input`, placed at
+/// `args.detail` on the emitted event.
+///
+/// This is the one shape Firefox Profiler's Chrome Trace importer turns into
+/// a visible label -- on the Marker Chart, the Marker Table's Details
+/// column, and the tooltip, with no click or hover needed. Every other
+/// shape `args` takes here (`input`, `tool_use_id`, `duration_ms`,
+/// `is_error`) gets silently dropped by that importer, since it only reads
+/// `args.data` (an object) or `args.detail` (a string); see
+/// `firefox-devtools/profiler`'s `src/profile-logic/import/chrome.ts` and
+/// this project's issue #46. Perfetto's own UI shows `args` regardless of
+/// shape, so adding `detail` doesn't cost that viewer anything.
+///
+/// Deliberately generic rather than keyed on known fields like `command` or
+/// `file_path`: `input`'s shape isn't a documented contract any more than
+/// the transcript format itself is (see `docs/session-storage.md`), and a
+/// fixed set of known tool names would silently stop covering new tools
+/// (MCP tools, new skills, ...) as they show up. Rendering the whole value
+/// as compact JSON costs nothing to keep current.
+fn marker_detail(input: &Option<Value>) -> Option<String> {
+    const MAX_LEN: usize = 200;
+    let input = input.as_ref()?;
+    let compact = input.to_string();
+    if compact.chars().count() <= MAX_LEN {
+        Some(compact)
+    } else {
+        let mut truncated: String = compact.chars().take(MAX_LEN).collect();
+        truncated.push('…');
+        Some(truncated)
+    }
+}
+
 pub fn emit(
     spans: &[Span],
     gaps: &[Gap],
@@ -160,12 +192,15 @@ fn build_events(
         };
         let start_us = epoch_us(&s.start);
         let dur_us = (s.duration_ms * 1000).max(1);
-        let args = json!({
+        let mut args = json!({
             "input": s.input,
             "tool_use_id": s.tool_use_id,
             "duration_ms": s.duration_ms,
             "is_error": s.is_error,
         });
+        if let Some(detail) = marker_detail(&s.input) {
+            args["detail"] = json!(detail);
+        }
         events.push(json!({
             "ph": "b", "name": name.clone(), "cat": "tool",
             "pid": pid, "tid": tid, "ts": start_us,
@@ -337,6 +372,81 @@ mod tests {
             process_names.len(),
             2,
             "exactly one process per group -- main's, and agent-sub1's (which also covers agent-sub2)"
+        );
+    }
+
+    #[test]
+    fn marker_detail_is_none_without_input() {
+        assert_eq!(marker_detail(&None), None);
+    }
+
+    #[test]
+    fn marker_detail_renders_short_input_verbatim_as_compact_json() {
+        let input = Some(json!({"command": "git status", "description": "Check status"}));
+        assert_eq!(
+            marker_detail(&input),
+            Some(r#"{"command":"git status","description":"Check status"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn marker_detail_truncates_long_input_with_an_ellipsis() {
+        let input = Some(json!({"command": "x".repeat(500)}));
+        let detail = marker_detail(&input).expect("input is Some, so detail must be Some");
+        assert!(
+            detail.ends_with('…'),
+            "truncated detail must end with an ellipsis, got {detail:?}"
+        );
+        // 200 chars of content plus the ellipsis marker itself.
+        assert_eq!(detail.chars().count(), 201);
+    }
+
+    /// This is the regression this whole change exists to prevent: a tool
+    /// span's begin event must carry a `detail` string in `args`, because
+    /// that's the one shape Firefox Profiler's Chrome Trace importer turns
+    /// into a visible label (issue #46). Every other field in `args` here
+    /// is invisible in that viewer.
+    #[test]
+    fn tool_span_begin_event_carries_detail_when_input_is_present() {
+        let mut s = span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100);
+        s.input = Some(json!({"command": "echo hi"}));
+        let events = build_events(
+            &[s],
+            &[],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let begin = events
+            .iter()
+            .find(|e| e["cat"] == "tool" && e["ph"] == "b")
+            .expect("must have a begin event");
+        assert_eq!(
+            begin["args"]["detail"],
+            json!(r#"{"command":"echo hi"}"#),
+            "begin event args: {:?}",
+            begin["args"]
+        );
+    }
+
+    #[test]
+    fn tool_span_begin_event_omits_detail_when_input_is_absent() {
+        let s = span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100);
+        let events = build_events(
+            &[s],
+            &[],
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            &fixture_groups(),
+        );
+
+        let begin = events
+            .iter()
+            .find(|e| e["cat"] == "tool" && e["ph"] == "b")
+            .expect("must have a begin event");
+        assert!(
+            begin["args"].get("detail").is_none(),
+            "begin event args should have no detail key when input is None, got {:?}",
+            begin["args"]
         );
     }
 }
