@@ -20,7 +20,8 @@ pub fn serve_and_open(
     cors_origin: &str,
     make_browser_url: impl FnOnce(&str) -> String,
 ) -> Result<()> {
-    let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| anyhow::anyhow!("{e}"))?;
+    let server = tiny_http::Server::http("127.0.0.1:0")
+        .map_err(|e| anyhow::anyhow!("starting local trace server: {e}"))?;
     let port = server
         .server_addr()
         .to_ip()
