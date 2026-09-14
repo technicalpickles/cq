@@ -37,6 +37,20 @@ For values that are dynamic or depend on context, point to where the user can di
 
 The examples in parentheses do a lot of heavy lifting. They're worth the few extra characters.
 
+### Replacing a boolean flag with a fixed-value one
+
+When a boolean flag (`--perfetto`) needs to grow into a choice of several outputs, add a new `[valid: ...]` flag rather than bolting more booleans on. `cq trace` did this when Perfetto got a Firefox Profiler sibling:
+
+```
+--format <FORMAT>   Which renderer to use [valid: waterfall, perfetto, firefox-profiler]
+--perfetto           Deprecated: use `--format perfetto` instead. Emits Chrome Trace
+                     Event JSON on stdout (loads in Perfetto, Firefox Profiler, Speedscope)
+```
+
+- The old flag keeps working (`--perfetto` still maps to `TraceOutput::Perfetto`) but is hidden from `--help` (`hide = true`) so new users see one clear choice.
+- `--format` and the deprecated flag conflict with each other (`conflicts_with`), so a user can't pass both and get an ambiguous result.
+- The deprecated flag's help string still exists (even hidden, `--help` text is what a user finds when grepping source or old docs) and names its replacement.
+
 ## Error messages
 
 ### The template

@@ -24,6 +24,15 @@ impl Harness {
     }
 }
 
+/// Which renderer `cq trace` should use. See `TraceOutput` in
+/// `commands/trace.rs` for what each one actually does.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TraceFormat {
+    Waterfall,
+    Perfetto,
+    FirefoxProfiler,
+}
+
 #[derive(Parser)]
 #[command(
     name = "cq",
@@ -213,8 +222,13 @@ enum Command {
     },
     /// Render a session as a trace: one lane per subagent, duration bars per tool call, gaps between
     Trace {
-        /// Emit Chrome Trace Event JSON on stdout (loads in Perfetto, Firefox Profiler, Speedscope)
-        #[arg(long)]
+        /// Which renderer to use [valid: waterfall, perfetto, firefox-profiler]
+        #[arg(long = "format", value_enum, conflicts_with = "perfetto")]
+        trace_format: Option<TraceFormat>,
+
+        /// Deprecated: use `--format perfetto` instead. Emits Chrome Trace
+        /// Event JSON on stdout (loads in Perfetto, Firefox Profiler, Speedscope)
+        #[arg(long, hide = true)]
         perfetto: bool,
 
         /// Window start: offset from session start (e.g. +12m, +90s) or an absolute ISO timestamp
@@ -536,11 +550,20 @@ fn main() -> Result<()> {
         Command::Projects { skills } => {
             projects::run(&conn, &scope, skills, &format, cli.limit, cli.offset, wide)?;
         }
-        Command::Trace { perfetto, from, to } => {
-            let output = if perfetto {
-                trace::TraceOutput::Perfetto
-            } else {
-                trace::TraceOutput::Waterfall
+        Command::Trace {
+            trace_format,
+            perfetto,
+            from,
+            to,
+        } => {
+            // clap's `conflicts_with` on `trace_format` already rules out
+            // both being set, so only one of these two branches can apply.
+            let output = match trace_format {
+                Some(TraceFormat::Waterfall) => trace::TraceOutput::Waterfall,
+                Some(TraceFormat::Perfetto) => trace::TraceOutput::Perfetto,
+                Some(TraceFormat::FirefoxProfiler) => trace::TraceOutput::FirefoxProfiler,
+                None if perfetto => trace::TraceOutput::Perfetto,
+                None => trace::TraceOutput::Waterfall,
             };
             trace::run(
                 &conn,

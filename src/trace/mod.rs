@@ -14,6 +14,7 @@
 //! stays isolated behind this model. See
 //! `docs/specs/2026-09-10-session-trace-view-design.md`.
 
+pub mod firefox_profiler;
 pub mod perfetto;
 pub mod waterfall;
 
@@ -33,6 +34,71 @@ pub fn epoch_ms(ts: &str) -> i64 {
     chrono::DateTime::parse_from_rfc3339(ts)
         .map(|d| d.timestamp_millis())
         .unwrap_or(0)
+}
+
+/// Cap placed on every `args.detail`/field string a trace-format emitter
+/// produces (see [`marker_detail`] and each emitter's gap-closing-text
+/// handling), so one oversized command or pasted message can't blow up a
+/// marker's on-chart label. Shared by every emitter, not just Perfetto's.
+pub(crate) const MAX_DETAIL_LEN: usize = 200;
+
+/// Truncate `s` to [`MAX_DETAIL_LEN`] characters, marking truncation with a
+/// trailing ellipsis. Character-counted, not byte-counted, so this never
+/// splits a multi-byte UTF-8 sequence.
+pub(crate) fn truncate_for_marker(s: &str) -> String {
+    if s.chars().count() <= MAX_DETAIL_LEN {
+        s.to_string()
+    } else {
+        let mut truncated: String = s.chars().take(MAX_DETAIL_LEN).collect();
+        truncated.push('…');
+        truncated
+    }
+}
+
+/// A short, single-line summary of a tool call's `input`, shared by every
+/// trace-format emitter.
+///
+/// This is the one shape Firefox Profiler's Chrome Trace importer turns into
+/// a visible label; see `perfetto.rs`'s original doc comment for the full
+/// history. Deliberately generic rather than keyed on known fields like
+/// `command` or `file_path`: `input`'s shape isn't a documented contract any
+/// more than the transcript format itself is, and a fixed set of known tool
+/// names would silently stop covering new tools (MCP tools, new skills, ...)
+/// as they show up.
+pub(crate) fn marker_detail(input: &Option<serde_json::Value>) -> Option<String> {
+    let input = input.as_ref()?;
+    Some(truncate_for_marker(&input.to_string()))
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn marker_detail_is_none_without_input() {
+        assert_eq!(marker_detail(&None), None);
+    }
+
+    #[test]
+    fn marker_detail_renders_short_input_verbatim_as_compact_json() {
+        let input = Some(json!({"command": "git status", "description": "Check status"}));
+        assert_eq!(
+            marker_detail(&input),
+            Some(r#"{"command":"git status","description":"Check status"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn marker_detail_truncates_long_input_with_an_ellipsis() {
+        let input = Some(json!({"command": "x".repeat(500)}));
+        let detail = marker_detail(&input).expect("input is Some, so detail must be Some");
+        assert!(
+            detail.ends_with('…'),
+            "truncated detail must end with an ellipsis, got {detail:?}"
+        );
+        assert_eq!(detail.chars().count(), MAX_DETAIL_LEN + 1);
+    }
 }
 
 /// A tool call with a measured duration: one `tool_use` joined to its

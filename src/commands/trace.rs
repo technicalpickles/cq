@@ -5,13 +5,17 @@ use crate::output::OutputFormat;
 use crate::scope::QueryScope;
 use crate::trace;
 
-/// Which renderer `cq trace` dispatches to. `--json` bypasses both.
+/// Which renderer `cq trace` dispatches to. `--json` bypasses all of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TraceOutput {
     /// Terminal waterfall (default).
     Waterfall,
-    /// Chrome Trace Event JSON on stdout (`--perfetto`).
+    /// Chrome Trace Event JSON on stdout (`--format perfetto`, or the
+    /// deprecated `--perfetto` alias).
     Perfetto,
+    /// Firefox Profiler native processed-profile JSON on stdout
+    /// (`--format firefox-profiler`).
+    FirefoxProfiler,
 }
 
 pub fn run(
@@ -86,10 +90,14 @@ pub fn run(
     match output {
         TraceOutput::Waterfall => trace::waterfall::render(&spans, &gaps),
         TraceOutput::Perfetto => {
-            // Only the Perfetto renderer groups lanes into processes;
+            // Only the process-grouped renderers need lane groups;
             // waterfall has no notion of pid, so this query is skipped for it.
             let groups = trace::lane_groups(conn, session_id)?;
             trace::perfetto::emit(&spans, &gaps, session_id, &groups)
+        }
+        TraceOutput::FirefoxProfiler => {
+            let groups = trace::lane_groups(conn, session_id)?;
+            trace::firefox_profiler::emit(&spans, &gaps, session_id, &groups)
         }
     }
 }
