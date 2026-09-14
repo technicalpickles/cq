@@ -310,7 +310,7 @@ pub fn to_json(
 }
 
 /// Build the processed-profile JSON object for one session, without
-/// printing it. Pulled out of [`emit`] so tests can assert on the
+/// printing it. Pulled out of [`to_json`] so tests can assert on the
 /// structured value directly, mirroring `perfetto::build_events`.
 ///
 /// `groups` maps each lane to the depth-1 ancestor that is its pid group
