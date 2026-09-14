@@ -191,6 +191,15 @@ cq trace --session <id> --format perfetto > trace.json
 
 `--format firefox-profiler` emits Firefox Profiler's native processed-profile JSON directly — open it at [profiler.firefox.com](https://profiler.firefox.com/) for real per-category colors in the Marker Chart (Firefox Profiler's own Chrome Trace importer grays every marker out). `--format perfetto` emits Chrome Trace Event JSON, for opening in [Perfetto](https://ui.perfetto.dev/) or Speedscope; it also still loads in Firefox Profiler, just without native colors. The old `--perfetto` boolean flag is a deprecated alias for `--format perfetto` and still works, but new scripts should use `--format`.
 
+Add `--open` to skip the file entirely and jump straight to the browser:
+
+```bash
+cq trace --session <id> --open                    # implies --format firefox-profiler
+cq trace --session <id> --format perfetto --open
+```
+
+`--open` serves the trace from a local httpd and launches your OS browser straight to Firefox Profiler or Perfetto, instead of printing or saving JSON. It's not valid with `--format waterfall` or `--json`, since neither produces a file a browser can load. Without `--open`, running `--format firefox-profiler`/`--format perfetto` on an interactive terminal writes to a deterministic tmp file and prints its path instead of dumping raw JSON at you; piped or redirected output is unaffected.
+
 Tool spans and "blocked on you" gaps carry a compact `args.detail` string too (the tool's input, or the message that ended the gap, truncated at 200 chars) — Firefox Profiler renders it straight into the Marker Chart, Marker Table, and tooltip with no click needed; Perfetto shows the full `args` object regardless.
 
 The global `--json` flag returns span rows instead of either renderer: one object per paired tool call, with `lane`, `duration_ms`, and `is_error`.
