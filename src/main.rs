@@ -231,6 +231,12 @@ enum Command {
         #[arg(long, hide = true)]
         perfetto: bool,
 
+        /// Open the trace directly in a browser (firefox-profiler or perfetto)
+        /// instead of printing/saving its JSON. Implies --format
+        /// firefox-profiler when --format is omitted.
+        #[arg(long)]
+        open: bool,
+
         /// Window start: offset from session start (e.g. +12m, +90s) or an absolute ISO timestamp
         #[arg(long)]
         from: Option<String>,
@@ -553,6 +559,7 @@ fn main() -> Result<()> {
         Command::Trace {
             trace_format,
             perfetto,
+            open,
             from,
             to,
         } => {
@@ -563,6 +570,9 @@ fn main() -> Result<()> {
                 Some(TraceFormat::Perfetto) => trace::TraceOutput::Perfetto,
                 Some(TraceFormat::FirefoxProfiler) => trace::TraceOutput::FirefoxProfiler,
                 None if perfetto => trace::TraceOutput::Perfetto,
+                // --open with no explicit --format needs a real target; the
+                // richer/newer renderer is the implied default.
+                None if open => trace::TraceOutput::FirefoxProfiler,
                 None => trace::TraceOutput::Waterfall,
             };
             trace::run(
@@ -572,6 +582,7 @@ fn main() -> Result<()> {
                 output,
                 from.as_deref(),
                 to.as_deref(),
+                open,
             )?;
         }
         Command::Sql { query } => {
