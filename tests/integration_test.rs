@@ -3411,6 +3411,43 @@ fn trace_format_and_perfetto_flag_together_is_a_clap_error() {
 }
 
 #[test]
+fn open_with_format_waterfall_is_an_error() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args([
+            "--session",
+            TRACE_SESSION,
+            "trace",
+            "--format",
+            "waterfall",
+            "--open",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--open is not supported with --format waterfall"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn open_with_json_is_an_error() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "--json", "trace", "--open"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--open is not supported with --json"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn trace_unknown_session_reports_not_found() {
     let env = setup_env_tree(TRACE_SESSION);
     let output = cq_cmd(&env)
