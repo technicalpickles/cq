@@ -295,15 +295,18 @@ fn build_thread(lane: &str, tid: i64, pid: i64, process_name: &str, markers: Val
     })
 }
 
-pub fn emit(
+/// Builds the profile JSON as a string, without printing it — used by every
+/// caller (`--open`, the interactive-terminal tmp-file default, and the
+/// plain stdout default) so there is exactly one place that decides how the
+/// JSON reaches the user.
+pub fn to_json(
     spans: &[Span],
     gaps: &[Gap],
     session_id: &str,
     groups: &HashMap<String, String>,
-) -> Result<()> {
+) -> Result<String> {
     let profile = build_profile(spans, gaps, session_id, groups);
-    println!("{}", serde_json::to_string(&profile)?);
-    Ok(())
+    Ok(serde_json::to_string(&profile)?)
 }
 
 /// Build the processed-profile JSON object for one session, without
@@ -535,6 +538,19 @@ mod tests {
             .as_u64()
             .unwrap() as usize;
         assert_eq!(profile["shared"]["stringArray"][name_index], "Bash (error)");
+    }
+
+    #[test]
+    fn to_json_matches_build_profile() {
+        let spans = vec![span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100)];
+        let groups = fixture_groups();
+        let session_id = "a1b2c3d4-0000-4000-8000-000000000001";
+
+        let json = to_json(&spans, &[], session_id, &groups).unwrap();
+        let parsed: Value = serde_json::from_str(&json).unwrap();
+        let expected = build_profile(&spans, &[], session_id, &groups);
+
+        assert_eq!(parsed, expected);
     }
 
     #[test]
