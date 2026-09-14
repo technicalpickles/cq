@@ -54,7 +54,7 @@ pub fn to_json(
 
 /// Build the Chrome Trace Event array for one session, without printing it.
 /// Pulled out of [`to_json`] so tests can assert on the structured events
-/// directly instead of capturing stdout.
+/// directly, mirroring `firefox_profiler::build_profile`.
 ///
 /// `groups` maps each lane to the depth-1 ancestor that is its pid group
 /// (see [`crate::trace::lane_groups`]); a lane absent from the map (should
