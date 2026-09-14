@@ -571,7 +571,8 @@ fn main() -> Result<()> {
                 Some(TraceFormat::FirefoxProfiler) => trace::TraceOutput::FirefoxProfiler,
                 None if perfetto => trace::TraceOutput::Perfetto,
                 // --open with no explicit --format needs a real target; the
-                // richer/newer renderer is the implied default.
+                // richer/newer renderer is the implied default. See
+                // `docs/specs/2026-09-14-cq-trace-open-design.md`.
                 None if open => trace::TraceOutput::FirefoxProfiler,
                 None => trace::TraceOutput::Waterfall,
             };
