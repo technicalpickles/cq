@@ -182,11 +182,14 @@ Use `--from`/`--to` to zoom into a slice of the session, as an offset from sessi
 cq trace --session <id> --from +12m --to +17m
 ```
 
-Add `--perfetto` to emit Chrome Trace Event JSON on stdout instead of the waterfall, for opening in [Perfetto](https://ui.perfetto.dev/), Firefox Profiler, or Speedscope:
+Add `--format <FORMAT>` to emit a trace file on stdout instead of the waterfall `[valid: waterfall, perfetto, firefox-profiler]`:
 
 ```bash
-cq trace --session <id> --perfetto > trace.json
+cq trace --session <id> --format firefox-profiler > profile.json
+cq trace --session <id> --format perfetto > trace.json
 ```
+
+`--format firefox-profiler` emits Firefox Profiler's native processed-profile JSON directly — open it at [profiler.firefox.com](https://profiler.firefox.com/) for real per-category colors in the Marker Chart (Firefox Profiler's own Chrome Trace importer grays every marker out). `--format perfetto` emits Chrome Trace Event JSON, for opening in [Perfetto](https://ui.perfetto.dev/) or Speedscope; it also still loads in Firefox Profiler, just without native colors. The old `--perfetto` boolean flag is a deprecated alias for `--format perfetto` and still works, but new scripts should use `--format`.
 
 Tool spans and "blocked on you" gaps carry a compact `args.detail` string too (the tool's input, or the message that ended the gap, truncated at 200 chars) — Firefox Profiler renders it straight into the Marker Chart, Marker Table, and tooltip with no click needed; Perfetto shows the full `args` object regardless.
 
