@@ -7,16 +7,20 @@ Date: 2026-09-14
 
 `cq trace --format firefox-profiler` and `cq trace --format perfetto` both
 just `println!` their JSON to stdout (`src/trace/firefox_profiler.rs`,
-`src/trace/perfetto.rs`). Loading either into its viewer today means
-redirecting stdout to a file, then manually opening the viewer and
-drag-and-dropping the file in. `--open` should do that last step for the
-user.
+`src/trace/perfetto.rs`) unconditionally — including when run interactively
+with no redirect, which floods the terminal with a giant JSON blob. Loading
+either into its viewer today means redirecting stdout to a file, then
+manually opening the viewer and drag-and-dropping the file in. `--open`
+should do that last step for the user; separately, the raw-JSON-to-a-live-
+terminal case should stop happening at all.
 
 ## Goals
 
 - `cq trace --session <id> --open` opens the trace directly in a browser,
   with the profile already loaded — no manual save-then-drag-and-drop.
 - Works for both `--format firefox-profiler` and `--format perfetto`.
+- Without `--open`: these two formats never dump raw JSON onto an
+  interactive terminal. Piped/redirected output is unchanged.
 
 ## Non-goals
 
@@ -164,6 +168,34 @@ that script suggests the port is enforced by a browser-side CSP — it reads
 as tidiness on the script author's part, not a requirement. Ephemeral avoids
 port collisions and needs no `--port` flag.
 
+## Default behavior: don't dump JSON onto an interactive terminal
+
+Independent of `--open`, but found while designing it: today `--format
+firefox-profiler`/`--format perfetto` always `println!`, even when stdout is
+a live terminal with no redirect. cq already has a precedent for
+terminal-aware output (`docs/cli-ux-conventions.md`'s `let wide = cli.wide
+|| !std::io::stdout().is_terminal();`), so this follows the same shape:
+
+- `!io::stdout().is_terminal()` (piped or redirected): unchanged — print the
+  JSON to stdout exactly like today. Scripts and `> file.json` redirects
+  keep working.
+- `io::stdout().is_terminal()` (interactive, no redirect, and `--open` not
+  given): write the JSON to a deterministic path under
+  `std::env::temp_dir()` — `cq-trace-<session_id prefix>-<format>.json` —
+  instead of printing it, and tell the user where it landed on stderr, e.g.:
+
+  ```
+  Wrote firefox-profiler trace to /tmp/cq-trace-a1b2c3d4-firefox-profiler.json
+  Open it at https://profiler.firefox.com, or re-run with --open.
+  ```
+
+  Deterministic per session+format, overwritten on each run — no new
+  dependency (`std::env::temp_dir()` respects `$TMPDIR`), and re-running the
+  same trace refreshes the same file instead of littering the tmp dir with a
+  new copy every time.
+- `--open` skips this decision entirely — it never touches stdout, terminal
+  or not; see above.
+
 ## New dependencies
 
 - `tiny_http` — minimal HTTP server. Serving one static JSON blob on one
@@ -211,18 +243,33 @@ not something cq can mitigate beyond noticing if it breaks.
   explicitly rather than silently skipped. Verified manually: run `cq trace
   --session <id> --open --format firefox-profiler` and `--format perfetto`
   against a real session, confirm each opens with the trace already loaded.
+- Integration test (`tests/integration_test.rs`, via `assert_cmd`) for the
+  terminal-detection default: piping `cq trace --format perfetto`'s stdout
+  still yields the JSON on stdout unchanged (this is already how the
+  existing tests capture output, so it's the regression to guard). A direct
+  test of the "interactive terminal writes a file" branch needs a real PTY,
+  which `assert_cmd` doesn't give you — cover that branch with a unit test
+  that injects the `is_terminal()` decision (a trait or a plain bool
+  parameter) rather than reading the real stdout, and verify the temp-file
+  path/contents manually once.
 
 ## Implementation order
 
-1. Add `tiny_http` and `open` to `Cargo.toml`.
-2. `src/trace/open_browser.rs`: `serve_and_open`, `percent_encode`, header
+1. Terminal-detection default: route `firefox_profiler`/`perfetto` output
+   through an `is_terminal()` check in `commands/trace.rs`, writing to
+   `std::env::temp_dir()` instead of `println!` when interactive. Unit +
+   integration tests per above. This lands independently of `--open` and is
+   worth shipping even before it.
+2. Add `tiny_http` and `open` to `Cargo.toml`.
+3. `src/trace/open_browser.rs`: `serve_and_open`, `percent_encode`, header
    helpers, unit tests per above.
-3. Non-printing JSON-string variants of `firefox_profiler::emit` and
-   `perfetto::emit`.
-4. `--open` flag on `cq trace` (`main.rs`), validation in
+4. Non-printing JSON-string variants of `firefox_profiler::emit` and
+   `perfetto::emit` (shared by both the tmp-file path and `--open`).
+5. `--open` flag on `cq trace` (`main.rs`), validation in
    `commands/trace.rs`, wiring to `open_browser::serve_and_open` for both
    formats.
-5. Manual verification against a real session, both formats.
-6. Update `docs/cli-ux-conventions.md`'s docs-sync table and the README flag
+6. Manual verification against a real session, both formats, both the
+   tmp-file default and `--open`.
+7. Update `docs/cli-ux-conventions.md`'s docs-sync table and the README flag
    reference for `--open`, per `CLAUDE.md`'s "Keeping docs in sync"
    checklist.
