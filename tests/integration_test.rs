@@ -3303,6 +3303,114 @@ fn perfetto_gaps_are_categorized() {
 }
 
 #[test]
+fn firefox_profiler_output_has_categories_and_marker_schema() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args([
+            "--session",
+            TRACE_SESSION,
+            "trace",
+            "--format",
+            "firefox-profiler",
+        ])
+        .output()
+        .unwrap();
+    let profile: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("--format firefox-profiler must emit valid JSON");
+    assert!(profile["meta"]["categories"].is_array());
+    assert!(
+        profile["meta"]["categories"].as_array().unwrap().len() <= 10,
+        "must stay within Firefox Profiler's 10-color GraphColor palette"
+    );
+    assert!(profile["meta"]["markerSchema"].is_array());
+    assert!(profile["threads"].is_array());
+    assert!(
+        !profile["threads"].as_array().unwrap().is_empty(),
+        "expected at least one thread"
+    );
+}
+
+#[test]
+fn firefox_profiler_tool_markers_carry_the_toolcall_type() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args([
+            "--session",
+            TRACE_SESSION,
+            "trace",
+            "--format",
+            "firefox-profiler",
+        ])
+        .output()
+        .unwrap();
+    let profile: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let threads = profile["threads"].as_array().unwrap();
+    let has_toolcall_marker = threads.iter().any(|t| {
+        t["markers"]["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["type"] == "ToolCall")
+    });
+    assert!(
+        has_toolcall_marker,
+        "expected at least one ToolCall marker across threads"
+    );
+}
+
+#[test]
+fn trace_perfetto_flag_is_a_deprecated_alias_for_format_perfetto() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let via_flag = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--perfetto"])
+        .output()
+        .unwrap();
+    let via_format = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--format", "perfetto"])
+        .output()
+        .unwrap();
+    assert!(via_flag.status.success());
+    assert!(via_format.status.success());
+
+    // Compare parsed events rather than raw bytes: perfetto's `process_name`/
+    // `thread_name` metadata events come from iterating a HashMap, whose
+    // iteration order is randomized per-process, so two separate invocations
+    // can legitimately emit those events in a different relative order even
+    // though the actual span/gap data is identical.
+    let via_flag_events: Vec<serde_json::Value> =
+        serde_json::from_slice(&via_flag.stdout).expect("--perfetto output must be valid JSON");
+    let via_format_events: Vec<serde_json::Value> = serde_json::from_slice(&via_format.stdout)
+        .expect("--format perfetto output must be valid JSON");
+    let via_flag_set: std::collections::BTreeSet<String> =
+        via_flag_events.iter().map(|e| e.to_string()).collect();
+    let via_format_set: std::collections::BTreeSet<String> =
+        via_format_events.iter().map(|e| e.to_string()).collect();
+    assert_eq!(via_flag_set, via_format_set);
+}
+
+#[test]
+fn trace_format_and_perfetto_flag_together_is_a_clap_error() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args([
+            "--session",
+            TRACE_SESSION,
+            "trace",
+            "--format",
+            "perfetto",
+            "--perfetto",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be used with"),
+        "expected clap's own conflicts_with message, got: {stderr}"
+    );
+}
+
+#[test]
 fn trace_unknown_session_reports_not_found() {
     let env = setup_env_tree(TRACE_SESSION);
     let output = cq_cmd(&env)
