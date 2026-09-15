@@ -72,7 +72,7 @@ cq indexes Claude Code and Codex JSONL session transcripts into a local [DuckDB]
 If you have [DotSlash](https://dotslash-cli.com/docs/installation/) installed, download the pointer file instead of a platform archive:
 
 ```bash
-curl -L https://github.com/technicalpickles/cq/releases/latest/download/cq -o cq
+curl -fL https://github.com/technicalpickles/cq/releases/latest/download/cq -o cq
 chmod +x cq
 ./cq --help
 ```
