@@ -1,0 +1,2 @@
+{"type": "user", "uuid": "u1", "parentUuid": null, "timestamp": "2026-09-10T12:00:00.000Z", "message": {"role": "user", "content": "go"}, "sessionId": "b2c3d4e5-1111-4000-8000-000000000002", "cwd": "/Users/test/myproject", "version": "2.0.0"}
+{"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": "2026-09-10T12:00:01.000Z", "message": {"role": "assistant", "model": "claude-opus-5", "content": "done"}, "sessionId": "b2c3d4e5-1111-4000-8000-000000000002", "cwd": "/Users/test/myproject", "version": "2.0.0"}
