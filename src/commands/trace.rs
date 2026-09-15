@@ -21,6 +21,7 @@ pub enum TraceOutput {
     FirefoxProfiler,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
