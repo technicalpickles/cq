@@ -53,6 +53,7 @@ trace/
   mod.rs          Span + gap model for one session: the SQL both trace renderers read from
   waterfall.rs    Terminal waterfall renderer (formatting only, no SQL)
   perfetto.rs     Chrome Trace Event JSON emitter (formatting only, no SQL)
+  open_browser.rs `cq trace --open`: serves the trace JSON over a local httpd and launches the OS browser at Firefox Profiler or Perfetto
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
 views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the six views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup

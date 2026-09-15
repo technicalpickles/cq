@@ -231,6 +231,19 @@ enum Command {
         #[arg(long, hide = true)]
         perfetto: bool,
 
+        /// Open the trace directly in a browser (firefox-profiler or perfetto)
+        /// instead of printing/saving its JSON. Implies --format
+        /// firefox-profiler when --format is omitted.
+        #[arg(long)]
+        open: bool,
+
+        /// Port for --open's local server [default: 9001]. Only meaningful
+        /// with --open; 9001 matches Perfetto's own trace_processor_shell
+        /// convention, which ui.perfetto.dev's Content-Security-Policy
+        /// requires unless the port is overridden here.
+        #[arg(long)]
+        port: Option<u16>,
+
         /// Window start: offset from session start (e.g. +12m, +90s) or an absolute ISO timestamp
         #[arg(long)]
         from: Option<String>,
@@ -553,6 +566,8 @@ fn main() -> Result<()> {
         Command::Trace {
             trace_format,
             perfetto,
+            open,
+            port,
             from,
             to,
         } => {
@@ -563,6 +578,10 @@ fn main() -> Result<()> {
                 Some(TraceFormat::Perfetto) => trace::TraceOutput::Perfetto,
                 Some(TraceFormat::FirefoxProfiler) => trace::TraceOutput::FirefoxProfiler,
                 None if perfetto => trace::TraceOutput::Perfetto,
+                // --open with no explicit --format needs a real target; the
+                // richer/newer renderer is the implied default. See
+                // `docs/specs/2026-09-14-cq-trace-open-design.md`.
+                None if open => trace::TraceOutput::FirefoxProfiler,
                 None => trace::TraceOutput::Waterfall,
             };
             trace::run(
@@ -572,6 +591,8 @@ fn main() -> Result<()> {
                 output,
                 from.as_deref(),
                 to.as_deref(),
+                open,
+                port,
             )?;
         }
         Command::Sql { query } => {

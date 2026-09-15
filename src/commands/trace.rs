@@ -1,3 +1,6 @@
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
+
 use anyhow::Result;
 use duckdb::Connection;
 
@@ -18,6 +21,7 @@ pub enum TraceOutput {
     FirefoxProfiler,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     conn: &Connection,
     scope: &QueryScope,
@@ -25,7 +29,33 @@ pub fn run(
     output: TraceOutput,
     from: Option<&str>,
     to: Option<&str>,
+    open: bool,
+    port: Option<u16>,
 ) -> Result<()> {
+    // Both checks up front, before touching the database: --open only makes
+    // sense for the two JSON-producing renderers, and --json already has its
+    // own escape-hatch meaning (raw span rows) that --open can't fulfill.
+    if open && matches!(output, TraceOutput::Waterfall) {
+        eprintln!("Error: --open is not supported with --format waterfall");
+        eprintln!("Valid formats for --open: firefox-profiler, perfetto");
+        std::process::exit(1);
+    }
+    if open && matches!(format, OutputFormat::Json) {
+        eprintln!("Error: --open is not supported with --json");
+        eprintln!("Valid formats for --open: firefox-profiler, perfetto");
+        std::process::exit(1);
+    }
+    if port.is_some() && !open {
+        eprintln!("Error: --port is not supported without --open");
+        eprintln!("Hint: --port only configures --open's local server");
+        std::process::exit(1);
+    }
+    // 9001 matches Perfetto's own trace_processor_shell convention, which
+    // ui.perfetto.dev's CSP requires by default -- see open_browser.rs's
+    // module doc. Defaulting both formats to it, not just perfetto's, keeps
+    // one port to remember; --port overrides it for either.
+    let port = port.unwrap_or(9001);
+
     let session_id = match scope.session.as_deref() {
         Some(id) => id,
         None => {
@@ -93,12 +123,106 @@ pub fn run(
             // Only the process-grouped renderers need lane groups;
             // waterfall has no notion of pid, so this query is skipped for it.
             let groups = trace::lane_groups(conn, session_id)?;
-            trace::perfetto::emit(&spans, &gaps, session_id, &groups)
+            let json = trace::perfetto::to_json(&spans, &gaps, session_id, &groups)?;
+            if open {
+                trace::open_browser::serve_and_open(
+                    json,
+                    "https://ui.perfetto.dev",
+                    port,
+                    perfetto_browser_url,
+                )
+            } else {
+                write_or_print(
+                    &json,
+                    session_id,
+                    "perfetto",
+                    std::io::stdout().is_terminal(),
+                    &std::env::temp_dir(),
+                )
+            }
         }
         TraceOutput::FirefoxProfiler => {
             let groups = trace::lane_groups(conn, session_id)?;
-            trace::firefox_profiler::emit(&spans, &gaps, session_id, &groups)
+            let json = trace::firefox_profiler::to_json(&spans, &gaps, session_id, &groups)?;
+            if open {
+                trace::open_browser::serve_and_open(
+                    json,
+                    "https://profiler.firefox.com",
+                    port,
+                    firefox_profiler_browser_url,
+                )
+            } else {
+                write_or_print(
+                    &json,
+                    session_id,
+                    "firefox-profiler",
+                    std::io::stdout().is_terminal(),
+                    &std::env::temp_dir(),
+                )
+            }
         }
+    }
+}
+
+/// Builds `https://profiler.firefox.com/from-url/<encoded local url>` — see
+/// `docs-developer/loading-in-profiles.md` in the `firefox-devtools/profiler`
+/// repo and `docs/specs/2026-09-14-cq-trace-open-design.md`.
+fn firefox_profiler_browser_url(local_url: &str) -> String {
+    format!(
+        "https://profiler.firefox.com/from-url/{}",
+        trace::open_browser::percent_encode(local_url)
+    )
+}
+
+/// Builds `https://ui.perfetto.dev/#!/?url=<encoded local url>&referrer=cq`
+/// — matches the URL shape `google/perfetto`'s own `tools/open_trace_in_ui`
+/// script builds (params after `#!/`, a fragment, not a real query string).
+fn perfetto_browser_url(local_url: &str) -> String {
+    format!(
+        "https://ui.perfetto.dev/#!/?url={}&referrer=cq",
+        trace::open_browser::percent_encode(local_url)
+    )
+}
+
+/// Without `--open`: keep piped/redirected stdout exactly as it's always
+/// been (so `> file.json` and script consumers see no change), but stop
+/// dumping the raw JSON onto an interactive terminal — write it to a
+/// deterministic tmp path instead. `interactive` and `tmp_dir` are passed in
+/// rather than read here so tests can drive both branches without a real
+/// terminal or relying on `$TMPDIR`.
+fn write_or_print(
+    json: &str,
+    session_id: &str,
+    format_name: &str,
+    interactive: bool,
+    tmp_dir: &Path,
+) -> Result<()> {
+    if interactive {
+        let path = tmp_trace_path(tmp_dir, session_id, format_name);
+        std::fs::write(&path, json)?;
+        eprintln!("Wrote {format_name} trace to {}", path.display());
+        eprintln!(
+            "Open it at {}, or re-run with --open.",
+            viewer_url(format_name)
+        );
+    } else {
+        println!("{json}");
+    }
+    Ok(())
+}
+
+/// Deterministic per session+format, so re-running the same trace refreshes
+/// the same file instead of littering the tmp dir with a new copy every run.
+fn tmp_trace_path(tmp_dir: &Path, session_id: &str, format_name: &str) -> PathBuf {
+    let short_id = &session_id[..8.min(session_id.len())];
+    tmp_dir.join(format!("cq-trace-{short_id}-{format_name}.json"))
+}
+
+fn viewer_url(format_name: &str) -> &'static str {
+    match format_name {
+        "firefox-profiler" => "https://profiler.firefox.com",
+        "perfetto" => "https://ui.perfetto.dev",
+        other => unreachable!("write_or_print is only ever called with \"firefox-profiler\" or \"perfetto\", got {other:?}"),
     }
 }
 
@@ -241,5 +365,50 @@ mod tests {
     fn empty_offset_after_plus_is_an_error() {
         let err = try_parse_bound("+", 0).unwrap_err();
         assert!(err.contains('+'), "expected error to quote '+', got: {err}");
+    }
+
+    #[test]
+    fn tmp_trace_path_is_deterministic_per_session_and_format() {
+        let dir = std::path::Path::new("/tmp/example");
+        let a = tmp_trace_path(
+            dir,
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            "firefox-profiler",
+        );
+        let b = tmp_trace_path(
+            dir,
+            "a1b2c3d4-0000-4000-8000-000000000001",
+            "firefox-profiler",
+        );
+        assert_eq!(a, b, "same session+format must produce the same path");
+        assert_eq!(
+            a,
+            dir.join("cq-trace-a1b2c3d4-firefox-profiler.json"),
+            "got: {a:?}"
+        );
+    }
+
+    #[test]
+    fn tmp_trace_path_differs_by_format() {
+        let dir = std::path::Path::new("/tmp/example");
+        let session_id = "a1b2c3d4-0000-4000-8000-000000000001";
+        assert_ne!(
+            tmp_trace_path(dir, session_id, "firefox-profiler"),
+            tmp_trace_path(dir, session_id, "perfetto"),
+        );
+    }
+
+    #[test]
+    fn write_or_print_interactive_writes_the_json_to_the_tmp_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_id = "a1b2c3d4-0000-4000-8000-000000000001";
+        let json = r#"{"hello":"world"}"#;
+
+        write_or_print(json, session_id, "firefox-profiler", true, dir.path()).unwrap();
+
+        let written =
+            std::fs::read_to_string(tmp_trace_path(dir.path(), session_id, "firefox-profiler"))
+                .unwrap();
+        assert_eq!(written, json);
     }
 }
