@@ -53,6 +53,7 @@ fn serve_forever(server: &tiny_http::Server, json_body: &str, cors_origin: &str)
         let response = tiny_http::Response::from_string(json_body.to_string())
             .with_header(content_type_json())
             .with_header(cors_header(cors_origin))
+            .with_header(private_network_header())
             .with_header(no_cache_header());
         let _ = request.respond(response);
     }
@@ -66,6 +67,17 @@ fn content_type_json() -> tiny_http::Header {
 fn cors_header(origin: &str) -> tiny_http::Header {
     tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], origin.as_bytes())
         .expect("cors_origin is always one of our own hardcoded https:// literals")
+}
+
+/// Chrome's Private Network Access check blocks a public HTTPS page (the
+/// hosted viewer) from fetching a private-network address like
+/// `127.0.0.1` unless the response opts in with this header — without it,
+/// the browser's preflight for the request silently never resolves the
+/// fetch. See `Access-Control-Request-Private-Network` in the CORS
+/// preflight.
+fn private_network_header() -> tiny_http::Header {
+    tiny_http::Header::from_bytes(&b"Access-Control-Allow-Private-Network"[..], &b"true"[..])
+        .expect("static header is always valid")
 }
 
 fn no_cache_header() -> tiny_http::Header {
@@ -126,6 +138,10 @@ mod tests {
             );
             assert!(
                 response.contains("Access-Control-Allow-Origin: https://example.com"),
+                "got: {response}"
+            );
+            assert!(
+                response.contains("Access-Control-Allow-Private-Network: true"),
                 "got: {response}"
             );
             assert!(

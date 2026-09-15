@@ -200,6 +200,8 @@ cq trace --session <id> --format perfetto --open
 
 `--open` serves the trace from a local httpd and launches your OS browser straight to Firefox Profiler or Perfetto, instead of printing or saving JSON — the httpd only binds `127.0.0.1`, and the hosted viewer's own network traffic is just its static JS/CSS, so the trace data itself never leaves your machine unless you explicitly click "Share" inside the viewer. It's not valid with `--format waterfall` or `--json`, since neither produces a file a browser can load. The server runs in the foreground and blocks the terminal until you hit Ctrl-C; that's intentional, not a hang. Without `--open`, running `--format firefox-profiler`/`--format perfetto` on an interactive terminal writes to a deterministic tmp file and prints its path instead of dumping raw JSON at you; piped or redirected output is unaffected.
 
+`--open --format firefox-profiler` opens your OS default browser, which needs to be Firefox or Chrome: Safari has its own limitation that blocks importing local profiles into Firefox Profiler entirely (a Safari restriction, not a cq bug), and refuses with an on-page error instead of loading the trace.
+
 Tool spans and "blocked on you" gaps carry a compact `args.detail` string too (the tool's input, or the message that ended the gap, truncated at 200 chars) — Firefox Profiler renders it straight into the Marker Chart, Marker Table, and tooltip with no click needed; Perfetto shows the full `args` object regardless.
 
 The global `--json` flag returns span rows instead of either renderer: one object per paired tool call, with `lane`, `duration_ms`, and `is_error`.

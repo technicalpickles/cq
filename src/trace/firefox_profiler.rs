@@ -94,7 +94,15 @@ fn build_meta() -> Value {
         "stackwalk": 0,
         "toolkit": "",
         "version": 36,
-        "preprocessedProfileVersion": 72,
+        // Pinned to what the hosted profiler.firefox.com build actually
+        // understands (confirmed live 2026-09-14: it rejects 72 with
+        // ProcessedProfileError, "most recent version understood ... 71").
+        // Safe to declare 71 rather than the local repo clone's newer 72:
+        // version 72's upgrader only adds PII-category annotations to
+        // Firefox-internal marker schemas ("Network", "Text",
+        // "PreferenceRead") that cq's own "ToolCall"/"Gap" markers never
+        // use, so our emitted shape already satisfies version 71 as-is.
+        "preprocessedProfileVersion": 71,
         "appBuildID": "",
         "sourceURL": "",
         "physicalCPUs": 0,
