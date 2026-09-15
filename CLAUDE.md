@@ -44,10 +44,12 @@ commands/
   search.rs       BM25-ranked full-text search over the persisted message search index
   projects.rs     `cq projects`: per-project session/message/tool/skill counts
   context.rs      ContextSqlBuilder: grep-style context windows (-C/--after/--before)
+  bundle.rs       `cq bundle`: --session required check, default output path, session metadata query, calls bundle::write_bundle, prints summary/warnings
   mod.rs          Shared arg validators (count-by, fields, context-window conflicts)
   sql.rs          Raw SQL passthrough (intentionally unparameterized)
   schema.rs       View schema docs + example queries (pure text, no DB needed)
   trace.rs        `cq trace`: flag validation, then --json rows or one of the trace renderers
+bundle.rs         Core `cq bundle` logic: file -> zip-path mapping, meta.json sidecar lookup, persistedOutputPath scan, zip writing + manifest (docs/specs/2026-09-15-session-bundle-design.md)
 output.rs         Shared rendering: table (comfy-table) or JSON, accepts params
 trace/
   mod.rs          Span + gap model for one session: the SQL both trace renderers read from

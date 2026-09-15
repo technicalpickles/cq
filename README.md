@@ -208,6 +208,25 @@ Tool spans and "blocked on you" gaps carry a compact `args.detail` string too (t
 
 The global `--json` flag returns span rows instead of either renderer: one object per paired tool call, with `lane`, `duration_ms`, and `is_error`.
 
+## Bundle
+
+`cq bundle --session <id>` packages one session's raw transcript files -- the
+main JSONL, any subagent JSONL (including nested workflow agents) and their
+`.meta.json` sidecars, and best-effort copies of any `persistedOutputPath`
+sidecars the records point to -- into a single zip with a `manifest.json`.
+Useful for archiving a session before it rotates out of
+`~/.claude/projects/`, attaching one to a bug report, or handing raw JSONL to
+another tool without re-deriving cq's own file discovery by hand.
+
+```
+$ cq bundle --session a1b2c3d4
+Wrote ./session-a1b2c3d4-0000-4000-8000-000000000001.zip (5 files, 0 sidecars, 3214 bytes)
+```
+
+```
+cq bundle --session <id> -o ~/Desktop/session.zip   # explicit output path
+```
+
 ## Use cases
 
 For deeper examples of what you can dig up, see [docs/use-cases.md](docs/use-cases.md). Skill activation gaps, silent failures that look fine from the outside, context budget analysis across tool calls.
