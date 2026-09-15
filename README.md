@@ -67,6 +67,18 @@ cq indexes Claude Code and Codex JSONL session transcripts into a local [DuckDB]
 
 ## Install
 
+### DotSlash
+
+If you have [DotSlash](https://dotslash-cli.com/docs/installation/) installed, this is the simplest path — one file, no platform-picking:
+
+```bash
+curl -L https://github.com/technicalpickles/cq/releases/latest/download/cq -o cq
+chmod +x cq
+./cq --help
+```
+
+The downloaded `cq` is a small pointer file, not the binary itself: running it resolves your platform, fetches and caches the matching binary from the release (verifying it against a checksum baked into the pointer file), and execs it.
+
 ### Prebuilt binary
 
 Grab the archive for your platform from the [latest release](https://github.com/technicalpickles/cq/releases/latest), extract it, and put `cq` on your `PATH`. Builds are published for macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64).
