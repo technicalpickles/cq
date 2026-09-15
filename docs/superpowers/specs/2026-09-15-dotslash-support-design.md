@@ -19,6 +19,13 @@ Add DotSlash as an **additional** install path. The existing tarballs are
 unaffected — this is pure addition to the release pipeline, not a
 replacement.
 
+This also gets us checksum verification for free. `dotslash-publish-release`
+computes a size and hash (blake3 by default) for each platform artifact and
+bakes them straight into the generated `cq` pointer file. The `dotslash` CLI
+verifies the downloaded artifact against that digest before ever executing
+it — integrity checking happens automatically on every install/run, with no
+separate `checksums.txt` to publish or for users to check by hand.
+
 ## Why a new artifact, not the existing tarball
 
 DotSlash's per-platform `path` field (the location of the binary inside an
