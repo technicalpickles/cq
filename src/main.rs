@@ -1,10 +1,13 @@
 use std::io::IsTerminal;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use cq::claude_provider::ClaudeProvider;
 use cq::codex_provider::CodexProvider;
-use cq::commands::{hooks, messages, projects, schema, search, sessions, sql, tools, trace};
+use cq::commands::{
+    bundle, hooks, messages, projects, schema, search, sessions, sql, tools, trace,
+};
 use cq::db;
 use cq::output::OutputFormat;
 use cq::scope::QueryScope;
@@ -251,6 +254,14 @@ enum Command {
         /// Window end: offset from session start (e.g. +17m, +90s) or an absolute ISO timestamp
         #[arg(long)]
         to: Option<String>,
+    },
+    /// Package one session's raw transcript files (JSONL + subagents +
+    /// best-effort persisted-output sidecars) into a zip, for sharing,
+    /// archiving, or feeding another tool
+    Bundle {
+        /// Output zip path (default: ./session-<id>.zip in the current directory)
+        #[arg(short = 'o', long)]
+        output: Option<PathBuf>,
     },
     /// Run a raw SQL query
     Sql {
@@ -594,6 +605,20 @@ fn main() -> Result<()> {
                 open,
                 port,
             )?;
+        }
+        Command::Bundle { output } => {
+            let session_id = match scope.session.as_deref() {
+                Some(id) => id.to_string(),
+                None => {
+                    eprintln!("Error: cq bundle requires --session");
+                    eprintln!("Usage: cq bundle --session <id> [-o <path>]");
+                    eprintln!("Hint: Run 'cq sessions' to find session IDs");
+                    std::process::exit(1);
+                }
+            };
+            let output_path =
+                output.unwrap_or_else(|| PathBuf::from(format!("session-{session_id}.zip")));
+            bundle::run(&conn, &provider, &scope, &session_id, &output_path)?;
         }
         Command::Sql { query } => {
             if let Err(e) = sql::run(&conn, &query, &format, wide) {
