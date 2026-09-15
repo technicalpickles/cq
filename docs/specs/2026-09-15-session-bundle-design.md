@@ -115,11 +115,10 @@ workflow) survives unzip.
 {
   "session_id": "abc123de-...",
   "project": "pickleton",
-  "cwd": "/Users/josh.nichols/pickleton",
-  "harness": "claude",
   "source": "main",
-  "created_at": "2026-09-10T14:02:11Z",
-  "last_message_at": "2026-09-10T15:40:03Z",
+  "harness": "claude",
+  "started_at": "2026-09-10T14:02:11Z",
+  "ended_at": "2026-09-10T15:40:03Z",
   "files": ["main.jsonl", "subagents/agent-xxx.jsonl"],
   "sidecars_included": ["sidecars/abc.output"],
   "sidecars_missing": ["def-hash"],
@@ -127,9 +126,12 @@ workflow) survives unzip.
 }
 ```
 
-Session-level fields (`project`, `cwd`, `harness`, `source`,
-`created_at`/`last_message_at`) come straight from the `sessions` view — no
-new parsing needed to produce them.
+Field names deliberately match the `sessions` view's own columns
+(`project`, `source`, `harness`, `started_at`, `ended_at`) rather than
+inventing parallel names like `cwd`/`created_at` — those values come
+straight from a `SELECT ... FROM sessions WHERE session_id = ?` query, no
+new parsing needed. (`sessions` has no separate `cwd` column — `project`
+already *is* the cwd-derived value, per `PROJECT_EXPR` in `views.rs`.)
 
 ## Sidecar handling
 
