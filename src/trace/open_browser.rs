@@ -15,16 +15,14 @@
 //! 2026-09-14: an ephemeral port gets rejected before the request even
 //! leaves the page, with no network entry and no CORS error -- just a CSP
 //! violation in the console). `profiler.firefox.com` has no such
-//! restriction. So the port can't be ephemeral for both formats the way
-//! the original design assumed; Perfetto needs the same fixed port
-//! `tools/open_trace_in_ui` uses.
+//! restriction, but both formats default to 9001 anyway (`--port`
+//! overrides it) so there's one port to remember instead of two.
 
 use anyhow::Result;
 
-/// Starts a local httpd, serves `json_body` to any request with the given
-/// CORS origin, opens the browser at `make_browser_url(local_url)`, and
-/// blocks serving until Ctrl-C. `port` of `0` means OS-assigned ephemeral;
-/// pass a fixed port when the hosted viewer's CSP requires one (Perfetto).
+/// Starts a local httpd on `port`, serves `json_body` to any request with
+/// the given CORS origin, opens the browser at `make_browser_url(local_url)`,
+/// and blocks serving until Ctrl-C.
 pub fn serve_and_open(
     json_body: String,
     cors_origin: &str,
@@ -32,16 +30,10 @@ pub fn serve_and_open(
     make_browser_url: impl FnOnce(&str) -> String,
 ) -> Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| {
-        if port == 0 {
-            anyhow::anyhow!("starting local trace server: {e}")
-        } else {
-            anyhow::anyhow!(
-                "starting local trace server on 127.0.0.1:{port}: {e}\n\
-                 This port is fixed because the hosted viewer's Content-Security-Policy \
-                 only allows local connections to it; free it up (check what's listening \
-                 on it) and try again."
-            )
-        }
+        anyhow::anyhow!(
+            "starting local trace server on 127.0.0.1:{port}: {e}\n\
+             Hint: pass --port to use a different one"
+        )
     })?;
     let port = server
         .server_addr()

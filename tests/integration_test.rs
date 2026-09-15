@@ -3448,6 +3448,21 @@ fn trace_open_with_json_is_an_error() {
 }
 
 #[test]
+fn trace_port_without_open_is_an_error() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--port", "9001"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--port is not supported without --open"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn trace_unknown_session_reports_not_found() {
     let env = setup_env_tree(TRACE_SESSION);
     let output = cq_cmd(&env)

@@ -29,6 +29,7 @@ pub fn run(
     from: Option<&str>,
     to: Option<&str>,
     open: bool,
+    port: Option<u16>,
 ) -> Result<()> {
     // Both checks up front, before touching the database: --open only makes
     // sense for the two JSON-producing renderers, and --json already has its
@@ -43,6 +44,16 @@ pub fn run(
         eprintln!("Valid formats for --open: firefox-profiler, perfetto");
         std::process::exit(1);
     }
+    if port.is_some() && !open {
+        eprintln!("Error: --port is not supported without --open");
+        eprintln!("Hint: --port only configures --open's local server");
+        std::process::exit(1);
+    }
+    // 9001 matches Perfetto's own trace_processor_shell convention, which
+    // ui.perfetto.dev's CSP requires by default -- see open_browser.rs's
+    // module doc. Defaulting both formats to it, not just perfetto's, keeps
+    // one port to remember; --port overrides it for either.
+    let port = port.unwrap_or(9001);
 
     let session_id = match scope.session.as_deref() {
         Some(id) => id,
@@ -113,14 +124,10 @@ pub fn run(
             let groups = trace::lane_groups(conn, session_id)?;
             let json = trace::perfetto::to_json(&spans, &gaps, session_id, &groups)?;
             if open {
-                // Fixed port: ui.perfetto.dev's CSP only allows local
-                // connections to 127.0.0.1:9001 (see open_browser.rs's
-                // module doc) -- matches the port tools/open_trace_in_ui
-                // hardcodes for the same reason.
                 trace::open_browser::serve_and_open(
                     json,
                     "https://ui.perfetto.dev",
-                    9001,
+                    port,
                     perfetto_browser_url,
                 )
             } else {
@@ -140,7 +147,7 @@ pub fn run(
                 trace::open_browser::serve_and_open(
                     json,
                     "https://profiler.firefox.com",
-                    0,
+                    port,
                     firefox_profiler_browser_url,
                 )
             } else {

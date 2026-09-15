@@ -237,6 +237,13 @@ enum Command {
         #[arg(long)]
         open: bool,
 
+        /// Port for --open's local server [default: 9001]. Only meaningful
+        /// with --open; 9001 matches Perfetto's own trace_processor_shell
+        /// convention, which ui.perfetto.dev's Content-Security-Policy
+        /// requires unless the port is overridden here.
+        #[arg(long)]
+        port: Option<u16>,
+
         /// Window start: offset from session start (e.g. +12m, +90s) or an absolute ISO timestamp
         #[arg(long)]
         from: Option<String>,
@@ -560,6 +567,7 @@ fn main() -> Result<()> {
             trace_format,
             perfetto,
             open,
+            port,
             from,
             to,
         } => {
@@ -584,6 +592,7 @@ fn main() -> Result<()> {
                 from.as_deref(),
                 to.as_deref(),
                 open,
+                port,
             )?;
         }
         Command::Sql { query } => {
