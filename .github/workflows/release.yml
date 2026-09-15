@@ -79,3 +79,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" "$ASSET" "$DOTSLASH_ASSET" --clobber --repo "$GITHUB_REPOSITORY"
+
+  dotslash:
+    name: publish dotslash file
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: facebook/dotslash-publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          config: .github/workflows/dotslash-config.json
+          tag: ${{ github.event.release.tag_name }}
