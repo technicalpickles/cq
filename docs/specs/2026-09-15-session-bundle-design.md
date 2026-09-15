@@ -18,6 +18,9 @@ results that point *outside* the transcript entirely via
 `cq bundle --session <id>` packages one session into a zip using cq's
 existing file discovery, so none of that has to be re-derived by hand.
 
+Scoped to Claude sessions for v1 — see Non-goals for why Codex and opencode
+aren't covered here.
+
 ## Use cases
 
 Not designed around one narrow use case — three come up:
@@ -175,3 +178,15 @@ there's no "data" in the piped-output sense — the zip *is* the output. So:
   alongside the raw files. If this comes up later, it's an additive flag,
   not a change to the default.
 - Redaction/secret-scrubbing of bundle contents.
+- **Codex sessions.** `CodexProvider` also reads one JSONL file per session
+  (`~/.codex/sessions/`), with no subagent/sidecar concepts today, so a
+  Codex bundle would just be `main.jsonl` + manifest — a proper subset of
+  the Claude path above. Mechanically cheap to add later; left out of v1
+  because nothing has asked for it yet.
+- **opencode sessions.** Not a coverage gap so much as a different
+  mechanism: opencode has no per-session files at all, one SQLite DB
+  (`~/.local/share/opencode/opencode.db`) holding all sessions as rows.
+  Bundling one would mean dumping the relevant rows to JSON, not copying
+  files — this design's whole approach doesn't transfer. Also blocked on
+  `OpenCodeProvider` existing at all (currently planned, not implemented,
+  per `CONTEXT.md`).
