@@ -9,19 +9,40 @@
 //! fetches fine from the `https://`-hosted viewer, despite neither viewer's
 //! docs stating that outright. See
 //! `docs/specs/2026-09-14-cq-trace-open-design.md`.
+//!
+//! `ui.perfetto.dev`'s own Content-Security-Policy `connect-src` only
+//! allowlists `http://127.0.0.1:9001` for local fetches (confirmed live
+//! 2026-09-14: an ephemeral port gets rejected before the request even
+//! leaves the page, with no network entry and no CORS error -- just a CSP
+//! violation in the console). `profiler.firefox.com` has no such
+//! restriction. So the port can't be ephemeral for both formats the way
+//! the original design assumed; Perfetto needs the same fixed port
+//! `tools/open_trace_in_ui` uses.
 
 use anyhow::Result;
 
-/// Starts a local httpd on an OS-assigned port, serves `json_body` to any
-/// request with the given CORS origin, opens the browser at
-/// `make_browser_url(local_url)`, and blocks serving until Ctrl-C.
+/// Starts a local httpd, serves `json_body` to any request with the given
+/// CORS origin, opens the browser at `make_browser_url(local_url)`, and
+/// blocks serving until Ctrl-C. `port` of `0` means OS-assigned ephemeral;
+/// pass a fixed port when the hosted viewer's CSP requires one (Perfetto).
 pub fn serve_and_open(
     json_body: String,
     cors_origin: &str,
+    port: u16,
     make_browser_url: impl FnOnce(&str) -> String,
 ) -> Result<()> {
-    let server = tiny_http::Server::http("127.0.0.1:0")
-        .map_err(|e| anyhow::anyhow!("starting local trace server: {e}"))?;
+    let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| {
+        if port == 0 {
+            anyhow::anyhow!("starting local trace server: {e}")
+        } else {
+            anyhow::anyhow!(
+                "starting local trace server on 127.0.0.1:{port}: {e}\n\
+                 This port is fixed because the hosted viewer's Content-Security-Policy \
+                 only allows local connections to it; free it up (check what's listening \
+                 on it) and try again."
+            )
+        }
+    })?;
     let port = server
         .server_addr()
         .to_ip()

@@ -113,9 +113,14 @@ pub fn run(
             let groups = trace::lane_groups(conn, session_id)?;
             let json = trace::perfetto::to_json(&spans, &gaps, session_id, &groups)?;
             if open {
+                // Fixed port: ui.perfetto.dev's CSP only allows local
+                // connections to 127.0.0.1:9001 (see open_browser.rs's
+                // module doc) -- matches the port tools/open_trace_in_ui
+                // hardcodes for the same reason.
                 trace::open_browser::serve_and_open(
                     json,
                     "https://ui.perfetto.dev",
+                    9001,
                     perfetto_browser_url,
                 )
             } else {
@@ -135,6 +140,7 @@ pub fn run(
                 trace::open_browser::serve_and_open(
                     json,
                     "https://profiler.firefox.com",
+                    0,
                     firefox_profiler_browser_url,
                 )
             } else {
