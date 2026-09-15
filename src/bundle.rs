@@ -7,10 +7,46 @@
 //! See `docs/specs/2026-09-15-session-bundle-design.md`.
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+
+/// Session-level fields pulled from the `sessions` view for the manifest.
+/// Field names deliberately match that view's own columns rather than
+/// inventing parallel names.
+#[derive(Debug, Default, Clone)]
+pub struct SessionMeta {
+    pub project: Option<String>,
+    pub source: Option<String>,
+    pub harness: Option<String>,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Manifest {
+    session_id: String,
+    project: Option<String>,
+    source: Option<String>,
+    harness: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    files: Vec<String>,
+    sidecars_included: Vec<String>,
+    sidecars_missing: Vec<String>,
+    cq_version: String,
+}
+
+/// What `write_bundle` actually did, for the CLI layer to report.
+#[derive(Debug, Default)]
+pub struct BundleSummary {
+    pub files_written: usize,
+    pub sidecars_included: Vec<String>,
+    pub sidecars_missing: Vec<String>,
+    pub bytes_written: u64,
+}
 
 /// The zip-internal path for one discovered session file: `main.jsonl` for
 /// the top-level `<session_id>.jsonl`, or `subagents/...` (preserving
@@ -36,6 +72,107 @@ pub fn meta_sidecar_for(file: &Path) -> Option<PathBuf> {
     let stem = file.file_stem()?.to_str()?;
     let meta = file.with_file_name(format!("{stem}.meta.json"));
     meta.exists().then_some(meta)
+}
+
+/// Build the zip at `output`: `files` (already discovered -- main +
+/// subagents, `journal.jsonl` already excluded by the caller's discovery
+/// step), each file's `.meta.json` sidecar if present, best-effort
+/// `persistedOutputPath` sidecars, and `manifest.json`.
+pub fn write_bundle(
+    session_id: &str,
+    meta: SessionMeta,
+    files: &[PathBuf],
+    output: &Path,
+) -> Result<BundleSummary> {
+    let zip_file =
+        File::create(output).with_context(|| format!("Failed to create {}", output.display()))?;
+    let mut zip = zip::ZipWriter::new(zip_file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let mut manifest_files = Vec::new();
+    let mut sidecar_paths = BTreeSet::new();
+
+    for file in files {
+        let zip_path = zip_relative_path(file);
+        write_file_entry(&mut zip, &zip_path, file, options)?;
+        manifest_files.push(zip_path.clone());
+
+        if let Some(meta_path) = meta_sidecar_for(file) {
+            let zip_meta_path = zip_path.replace(".jsonl", ".meta.json");
+            write_file_entry(&mut zip, &zip_meta_path, &meta_path, options)?;
+            manifest_files.push(zip_meta_path);
+        }
+
+        sidecar_paths.extend(scan_persisted_output_paths(file)?);
+    }
+
+    let mut sidecars_included = Vec::new();
+    let mut sidecars_missing = Vec::new();
+    for path in &sidecar_paths {
+        let sidecar = Path::new(path);
+        if !sidecar.is_file() {
+            sidecars_missing.push(path.clone());
+            continue;
+        }
+        // Basenames are assumed unique across one session's sidecars -- true
+        // for every persisted-output path seen so far (docs/session-storage.md).
+        // Cheap to revisit (e.g. hash-prefix on collision) if that changes.
+        let basename = sidecar
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "sidecar".to_string());
+        let zip_path = format!("sidecars/{basename}");
+        write_file_entry(&mut zip, &zip_path, sidecar, options)?;
+        sidecars_included.push(zip_path);
+    }
+
+    let manifest = Manifest {
+        session_id: session_id.to_string(),
+        project: meta.project,
+        source: meta.source,
+        harness: meta.harness,
+        started_at: meta.started_at,
+        ended_at: meta.ended_at,
+        files: manifest_files.clone(),
+        sidecars_included: sidecars_included.clone(),
+        sidecars_missing: sidecars_missing.clone(),
+        cq_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let manifest_json =
+        serde_json::to_vec_pretty(&manifest).context("Failed to serialize manifest.json")?;
+    zip.start_file("manifest.json", options)
+        .context("Failed to start manifest.json in zip")?;
+    zip.write_all(&manifest_json)
+        .context("Failed to write manifest.json")?;
+
+    zip.finish().context("Failed to finalize zip")?;
+    let bytes_written = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0);
+
+    Ok(BundleSummary {
+        files_written: manifest_files.len(),
+        sidecars_included,
+        sidecars_missing,
+        bytes_written,
+    })
+}
+
+fn write_file_entry(
+    zip: &mut zip::ZipWriter<File>,
+    zip_path: &str,
+    source: &Path,
+    options: zip::write::SimpleFileOptions,
+) -> Result<()> {
+    let mut contents = Vec::new();
+    File::open(source)
+        .with_context(|| format!("Failed to open {}", source.display()))?
+        .read_to_end(&mut contents)
+        .with_context(|| format!("Failed to read {}", source.display()))?;
+    zip.start_file(zip_path, options)
+        .with_context(|| format!("Failed to start {zip_path} in zip"))?;
+    zip.write_all(&contents)
+        .with_context(|| format!("Failed to write {zip_path} to zip"))?;
+    Ok(())
 }
 
 /// Scan one JSONL file for `toolUseResult.persistedOutputPath` pointers.
@@ -138,6 +275,68 @@ mod tests {
             scan_persisted_output_paths(&jsonl).unwrap(),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn write_bundle_zips_files_meta_and_manifest() {
+        let src_dir = TempDir::new().unwrap();
+        let session_id = "test-session-id";
+        let main_file = src_dir.path().join(format!("{session_id}.jsonl"));
+        std::fs::write(&main_file, "{\"type\":\"user\"}\n").unwrap();
+
+        let sub_dir = src_dir.path().join(session_id).join("subagents");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        let sub_file = sub_dir.join("agent-sub1.jsonl");
+        std::fs::write(&sub_file, "{\"type\":\"assistant\"}\n").unwrap();
+        std::fs::write(
+            sub_dir.join("agent-sub1.meta.json"),
+            "{\"agentType\":\"general-purpose\"}",
+        )
+        .unwrap();
+
+        let out_dir = TempDir::new().unwrap();
+        let out_path = out_dir.path().join("bundle.zip");
+
+        let meta = SessionMeta {
+            project: Some("myproject".to_string()),
+            source: Some("main".to_string()),
+            harness: Some("claude".to_string()),
+            started_at: Some("2026-09-10T12:00:00Z".to_string()),
+            ended_at: Some("2026-09-10T12:05:00Z".to_string()),
+        };
+
+        let summary = write_bundle(session_id, meta, &[main_file, sub_file], &out_path).unwrap();
+
+        assert_eq!(summary.files_written, 3); // main + subagent + its meta.json
+        assert!(summary.sidecars_included.is_empty());
+        assert!(summary.sidecars_missing.is_empty());
+
+        let zip_file = std::fs::File::open(&out_path).unwrap();
+        let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert!(names.contains(&"main.jsonl".to_string()), "{names:?}");
+        assert!(
+            names.contains(&"subagents/agent-sub1.jsonl".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"subagents/agent-sub1.meta.json".to_string()),
+            "{names:?}"
+        );
+        assert!(names.contains(&"manifest.json".to_string()), "{names:?}");
+
+        let manifest_idx = names.iter().position(|n| n == "manifest.json").unwrap();
+        let mut manifest_str = String::new();
+        archive
+            .by_index(manifest_idx)
+            .unwrap()
+            .read_to_string(&mut manifest_str)
+            .unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+        assert_eq!(manifest["session_id"], session_id);
+        assert_eq!(manifest["project"], "myproject");
     }
 
     #[test]
