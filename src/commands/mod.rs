@@ -1,3 +1,4 @@
+pub mod bundle;
 pub mod context;
 pub mod hooks;
 pub mod messages;

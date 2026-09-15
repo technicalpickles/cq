@@ -33,6 +33,7 @@ tiny_http = "0.12"
 # --open: launches the OS default browser. Cross-platform so no hand-rolled
 # per-OS `open`/`xdg-open`/`start` shell-out is needed.
 open = "5"
+zip = "2"
 
 [dev-dependencies]
 tempfile = "3"
