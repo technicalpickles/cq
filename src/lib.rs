@@ -1,3 +1,4 @@
+pub mod bundle;
 pub mod cache;
 pub mod claude_provider;
 pub mod codex_provider;
