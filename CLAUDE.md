@@ -37,6 +37,7 @@ This is a single-context repository. See `docs/agents/domain.md`.
 main.rs           CLI (clap), arg parsing, dispatches to commands
 lib.rs            Library entry point, re-exports modules for integration tests
 commands/
+  bundle.rs       `cq bundle`: --session required check, default output path, session metadata query, calls bundle::write_bundle, prints summary/warnings
   sessions.rs     List/filter sessions
   tools.rs        Tool call queries + summary mode (no filters = grouped counts)
   hooks.rs        Hook event queries + summary mode (mirrors tools.rs)
@@ -44,7 +45,6 @@ commands/
   search.rs       BM25-ranked full-text search over the persisted message search index
   projects.rs     `cq projects`: per-project session/message/tool/skill counts
   context.rs      ContextSqlBuilder: grep-style context windows (-C/--after/--before)
-  bundle.rs       `cq bundle`: --session required check, default output path, session metadata query, calls bundle::write_bundle, prints summary/warnings
   mod.rs          Shared arg validators (count-by, fields, context-window conflicts)
   sql.rs          Raw SQL passthrough (intentionally unparameterized)
   schema.rs       View schema docs + example queries (pure text, no DB needed)
