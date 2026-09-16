@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/technicalpickles/cq/compare/v0.9.0...v0.9.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* add required path field to dotslash-config.json ([#60](https://github.com/technicalpickles/cq/issues/60)) ([16b1954](https://github.com/technicalpickles/cq/commit/16b19540df1ca218fceaf2640e5eb61e1a29b7d5))
+
 ## [0.9.0](https://github.com/technicalpickles/cq/compare/v0.8.0...v0.9.0) (2026-09-16)
 
 
