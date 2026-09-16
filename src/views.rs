@@ -38,8 +38,10 @@ const SOURCE_EXPR: &str =
 const PROMPT_ORIGIN_EXPR: &str = "json_extract_string(json, '$.origin.kind')";
 
 /// SQL expression for how the prompt was submitted: `typed`/`queued` are
-/// both real human input; `system`/`sdk` are not. Absent on older client
-/// versions -- NULL, not an error.
+/// interactive; `system`/`sdk` are programmatic. Doesn't always agree with
+/// `origin.kind` -- real records exist with `origin.kind = 'human'` and
+/// `promptSource = 'sdk'`, so don't treat this as the sole human/not-human
+/// signal. Absent on older client versions -- NULL, not an error.
 const PROMPT_SOURCE_EXPR: &str = "json_extract_string(json, '$.promptSource')";
 
 /// SQL expression flagging ancillary content bolted onto a turn (e.g. a
