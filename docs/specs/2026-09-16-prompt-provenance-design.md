@@ -42,8 +42,7 @@ Add three columns to `messages`. Claude rows populate all three from the
 record's own JSON; Codex/other providers emit `NULL` for `prompt_origin`
 and `prompt_source` (no equivalent field — see Non-goals) but `false` for
 `is_meta`, matching `is_meta`'s always-non-null convention on Claude rows
-(see Column design's `is_meta` row) rather than introducing a three-valued
-boolean:
+rather than introducing a three-valued boolean:
 
 | Column | Type | Source | Values |
 |---|---|---|---|

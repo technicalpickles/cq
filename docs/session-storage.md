@@ -132,9 +132,9 @@ This is also the mechanism behind the surrogate gotcha above: truncating a large
 
 ### `origin`/`isMeta`/`promptSource` have three presence states, not two
 
-`origin` (an OBJECT carrying `kind`, and sometimes also `from`/`senderTaskId`/`body`/`handback`/`name`) and `isMeta` each show up in three states on real records: present with a value, absent entirely, and present but JSON `null`. A bare `json_extract_string` only distinguishes two of those (it returns SQL `NULL` for both "absent" and "JSON `null`"), which is fine for a VARCHAR field, but `isMeta` needs to come back as a non-null BOOLEAN in every case, so extracting it needs a `COALESCE` guard rather than a bare extract — see `IS_META_EXPR`/`IS_SIDECHAIN_EXPR` in `views.rs` for the pattern.
+`origin` (an OBJECT carrying `kind`, and sometimes also `from`/`senderTaskId`/`body`/`handback`/`name`), `isMeta`, and `promptSource` each show up in three states on real records: present with a value, absent entirely, and present but JSON `null`. A bare `json_extract_string` only distinguishes two of those (it returns SQL `NULL` for both "absent" and "JSON `null`"), which is fine for a VARCHAR field, but `isMeta` needs to come back as a non-null BOOLEAN in every case, so extracting it needs a `COALESCE` guard rather than a bare extract — see `IS_META_EXPR`/`IS_SIDECHAIN_EXPR` in `views.rs` for the pattern.
 
-`promptSource` is not always co-present with `origin.kind`: older client versions have `origin.kind` on a record with no `promptSource` field at all. Don't assume one implies the other is present.
+`promptSource` is not always co-present with `origin.kind`: older client versions have `origin.kind` on a record with no `promptSource` field at all. Don't assume one implies the other is present. On one real corpus, of the `origin.kind = 'human'` records with a naive `prompt_source IS NULL`, 19 had no `promptSource` key at all (absent) and another 207 had it present as literal JSON `null` — together the ~226 that query returns, split across both presence states.
 
 ### mtime and size are the change signal
 

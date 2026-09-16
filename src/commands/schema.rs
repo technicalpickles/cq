@@ -44,8 +44,8 @@ const MESSAGES_SCHEMA: &str = r#"messages
   is_sidechain        BOOLEAN   true if this row is from a subagent
   agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
   workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
-  prompt_origin       VARCHAR   Who/what submitted this turn: 'human', 'task-notification', 'coordinator', 'peer', 'auto-continuation', or NULL if absent (older clients, Codex)
-  prompt_source       VARCHAR   How it was submitted: 'typed', 'queued', 'system', 'sdk', or NULL if absent
+  prompt_origin       VARCHAR   Who/what submitted this turn (e.g. 'human'); NULL means unknown/unavailable, not confirmed non-human (older clients, Codex, etc.)
+  prompt_source       VARCHAR   How it was submitted: 'typed', 'queued', 'system', 'sdk', or NULL if absent (older clients, Codex)
   is_meta             BOOLEAN   true for ancillary content bolted onto a turn (e.g. a skill-file dump), false otherwise (never NULL)"#;
 
 const TOOL_CALLS_SCHEMA: &str = r#"tool_calls
@@ -219,8 +219,8 @@ messages
   is_sidechain        BOOLEAN   true if this row is from a subagent
   agent_type          VARCHAR   Subagent type from meta.json (e.g. 'Explore'); NULL for main loop
   workflow_id         VARCHAR   Workflow run id (wf_...) if spawned by a workflow, else NULL
-  prompt_origin       VARCHAR   Who/what submitted this turn: 'human', 'task-notification', 'coordinator', 'peer', 'auto-continuation', or NULL if absent (older clients, Codex)
-  prompt_source       VARCHAR   How it was submitted: 'typed', 'queued', 'system', 'sdk', or NULL if absent
+  prompt_origin       VARCHAR   Who/what submitted this turn (e.g. 'human'); NULL means unknown/unavailable, not confirmed non-human (older clients, Codex, etc.)
+  prompt_source       VARCHAR   How it was submitted: 'typed', 'queued', 'system', 'sdk', or NULL if absent (older clients, Codex)
   is_meta             BOOLEAN   true for ancillary content bolted onto a turn (e.g. a skill-file dump), false otherwise (never NULL)
 
 tool_calls
