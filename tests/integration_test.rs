@@ -3523,6 +3523,10 @@ fn bundle_requires_session() {
         stderr.contains("cq bundle requires --session"),
         "got: {stderr}"
     );
+    assert!(
+        stderr.contains("Usage: cq --session <id> bundle [-o <path>]"),
+        "got: {stderr}"
+    );
     assert!(!output.status.success());
 }
 
@@ -3605,6 +3609,52 @@ fn bundle_writes_expected_zip_contents() {
     assert!(manifest["project"].as_str().unwrap().contains("myproject"));
     assert_eq!(manifest["sidecars_included"].as_array().unwrap().len(), 0);
     assert_eq!(manifest["sidecars_missing"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn bundle_excludes_other_sessions_in_the_same_project() {
+    let env = setup_bundle_env(BUNDLE_SESSION);
+    let project_dir = env.projects.path().join("-Users-test-myproject");
+    let other_session = "d4e5f6a7-3333-4000-8000-000000000004";
+    std::fs::write(
+        project_dir.join(format!("{other_session}.jsonl")),
+        "{\"type\":\"user\",\"uuid\":\"u-other\",\"parentUuid\":null,\"timestamp\":\"2026-09-10T12:10:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"other\"},\"sessionId\":\"d4e5f6a7-3333-4000-8000-000000000004\",\"cwd\":\"/Users/test/myproject\",\"version\":\"2.0.0\"}\n",
+    )
+    .unwrap();
+
+    let out_dir = TempDir::new().unwrap();
+    let out_path = out_dir.path().join("bundle.zip");
+    let output = cq_cmd(&env)
+        .args(["--session", BUNDLE_SESSION, "bundle", "-o"])
+        .arg(&out_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let zip_file = std::fs::File::open(&out_path).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.as_str() == "main.jsonl")
+            .count(),
+        1,
+        "{names:?}"
+    );
+
+    let main_idx = names.iter().position(|name| name == "main.jsonl").unwrap();
+    let mut main_jsonl = String::new();
+    std::io::Read::read_to_string(&mut archive.by_index(main_idx).unwrap(), &mut main_jsonl)
+        .unwrap();
+    assert!(main_jsonl.contains(BUNDLE_SESSION), "{main_jsonl}");
+    assert!(!main_jsonl.contains(other_session), "{main_jsonl}");
 }
 
 #[test]
@@ -3697,4 +3747,79 @@ fn bundle_includes_available_sidecar_and_warns_on_missing() {
     let missing = manifest["sidecars_missing"].as_array().unwrap();
     assert_eq!(missing.len(), 1);
     assert!(missing[0].as_str().unwrap().contains("missing-output.txt"));
+}
+
+#[test]
+fn bundle_keeps_duplicate_sidecar_basenames_distinct() {
+    let env = setup_env(&[]);
+    let project_dir = env.projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let sidecar_dir = TempDir::new().unwrap();
+    let left_dir = sidecar_dir.path().join("left");
+    let right_dir = sidecar_dir.path().join("right");
+    std::fs::create_dir_all(&left_dir).unwrap();
+    std::fs::create_dir_all(&right_dir).unwrap();
+    let left_sidecar = left_dir.join("shared.txt");
+    let right_sidecar = right_dir.join("shared.txt");
+    std::fs::write(&left_sidecar, "left").unwrap();
+    std::fs::write(&right_sidecar, "right").unwrap();
+
+    let session_id = "e5f6a7b8-4444-4000-8000-000000000005";
+    let left_record = format!(
+        "{{\"type\":\"user\",\"uuid\":\"u1\",\"parentUuid\":null,\"timestamp\":\"2026-09-10T12:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"truncated\"}}]}},\"sessionId\":\"{session_id}\",\"cwd\":\"/Users/test/myproject\",\"version\":\"2.0.0\",\"toolUseResult\":{{\"persistedOutputPath\":\"{}\",\"persistedOutputSize\":50000}}}}",
+        left_sidecar.display()
+    );
+    let right_record = format!(
+        "{{\"type\":\"user\",\"uuid\":\"u2\",\"parentUuid\":\"u1\",\"timestamp\":\"2026-09-10T12:00:01.000Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_2\",\"content\":\"truncated\"}}]}},\"sessionId\":\"{session_id}\",\"cwd\":\"/Users/test/myproject\",\"version\":\"2.0.0\",\"toolUseResult\":{{\"persistedOutputPath\":\"{}\",\"persistedOutputSize\":50000}}}}",
+        right_sidecar.display()
+    );
+    std::fs::write(
+        project_dir.join(format!("{session_id}.jsonl")),
+        format!("{left_record}\n{right_record}\n"),
+    )
+    .unwrap();
+
+    let out_dir = TempDir::new().unwrap();
+    let out_path = out_dir.path().join("bundle.zip");
+    let output = cq_cmd(&env)
+        .args(["--session", session_id, "bundle", "-o"])
+        .arg(&out_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let zip_file = std::fs::File::open(&out_path).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+    let included_sidecars = names
+        .iter()
+        .filter(|name| name.starts_with("sidecars/shared-") && name.ends_with(".txt"))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(included_sidecars.len(), 2, "{names:?}");
+    assert_ne!(
+        included_sidecars[0], included_sidecars[1],
+        "{included_sidecars:?}"
+    );
+
+    let manifest_idx = names.iter().position(|n| n == "manifest.json").unwrap();
+    let mut manifest_str = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_index(manifest_idx).unwrap(),
+        &mut manifest_str,
+    )
+    .unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+    let included = manifest["sidecars_included"].as_array().unwrap();
+    assert_eq!(included.len(), 2);
+    assert!(included.iter().all(|path| path
+        .as_str()
+        .is_some_and(|path| path.starts_with("sidecars/shared-") && path.ends_with(".txt"))));
 }

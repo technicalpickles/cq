@@ -132,7 +132,9 @@ off conventional commits. The flow:
    and updates `CHANGELOG.md`. Merge it when you want to ship.
 3. Merging that PR cuts the git tag + GitHub release. The `release: published` event
    then fires `release.yml`, which builds `cq` for macOS (arm64 + x86_64) and Linux
-   (x86_64 + arm64) and attaches the archives to the release.
+   (x86_64 + arm64), attaches the tarballs to the release, and (in a follow-up `dotslash`
+   job) publishes a single-file DotSlash pointer (`cq`) generated from
+   `.github/workflows/dotslash-config.json` via `facebook/dotslash-publish-release`.
 
 You don't bump versions or push tags by hand. Each target builds on its own native
 runner because the bundled DuckDB compiles C++ from source, which makes cross-compiling

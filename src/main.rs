@@ -611,7 +611,7 @@ fn main() -> Result<()> {
                 Some(id) => id.to_string(),
                 None => {
                     eprintln!("Error: cq bundle requires --session");
-                    eprintln!("Usage: cq bundle --session <id> [-o <path>]");
+                    eprintln!("Usage: cq --session <id> bundle [-o <path>]");
                     eprintln!("Hint: Run 'cq sessions' to find session IDs");
                     std::process::exit(1);
                 }

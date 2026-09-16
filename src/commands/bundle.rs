@@ -19,7 +19,11 @@ pub fn run(
     session_id: &str,
     output: &Path,
 ) -> Result<()> {
-    let files = provider.discover_files(scope)?;
+    let files = provider
+        .discover_files(scope)?
+        .into_iter()
+        .filter(|file| file_belongs_to_session(file, session_id))
+        .collect::<Vec<_>>();
     if files.is_empty() {
         super::print_session_not_found(session_id);
         return Ok(());
@@ -43,6 +47,24 @@ pub fn run(
         summary.bytes_written
     );
     Ok(())
+}
+
+fn file_belongs_to_session(file: &Path, session_id: &str) -> bool {
+    if file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == format!("{session_id}.jsonl"))
+    {
+        return true;
+    }
+
+    let components = file
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    components
+        .windows(2)
+        .any(|window| window[0] == session_id && window[1] == "subagents")
 }
 
 fn fetch_session_meta(conn: &Connection, session_id: &str) -> Result<bundle::SessionMeta> {

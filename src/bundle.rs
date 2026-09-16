@@ -8,8 +8,9 @@
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -109,20 +110,23 @@ pub fn write_bundle(
 
     let mut sidecars_included = Vec::new();
     let mut sidecars_missing = Vec::new();
+    let basename_counts = sidecar_paths
+        .iter()
+        .fold(BTreeMap::new(), |mut counts, path| {
+            let basename = Path::new(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| "sidecar".to_string());
+            *counts.entry(basename).or_insert(0usize) += 1;
+            counts
+        });
     for path in &sidecar_paths {
         let sidecar = Path::new(path);
         if !sidecar.is_file() {
             sidecars_missing.push(path.clone());
             continue;
         }
-        // Basenames are assumed unique across one session's sidecars -- true
-        // for every persisted-output path seen so far (docs/session-storage.md).
-        // Cheap to revisit (e.g. hash-prefix on collision) if that changes.
-        let basename = sidecar
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "sidecar".to_string());
-        let zip_path = format!("sidecars/{basename}");
+        let zip_path = sidecar_zip_path(sidecar, &basename_counts);
         write_file_entry(&mut zip, &zip_path, sidecar, options)?;
         sidecars_included.push(zip_path);
     }
@@ -201,6 +205,28 @@ pub fn scan_persisted_output_paths(file: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(found.into_iter().collect())
+}
+
+fn sidecar_zip_path(sidecar: &Path, basename_counts: &BTreeMap<String, usize>) -> String {
+    let basename = sidecar
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "sidecar".to_string());
+
+    if basename_counts.get(&basename).copied().unwrap_or(0) <= 1 {
+        return format!("sidecars/{basename}");
+    }
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sidecar.to_string_lossy().hash(&mut hasher);
+    let hash = format!("{:016x}", hasher.finish());
+
+    match basename.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
+            format!("sidecars/{stem}-{hash}.{ext}")
+        }
+        _ => format!("sidecars/{basename}-{hash}"),
+    }
 }
 
 #[cfg(test)]
@@ -353,5 +379,24 @@ mod tests {
             scan_persisted_output_paths(&jsonl).unwrap(),
             vec!["/tmp/out.txt".to_string()]
         );
+    }
+
+    #[test]
+    fn sidecar_zip_path_keeps_unique_basenames_flat() {
+        let counts = BTreeMap::from([("out.txt".to_string(), 1usize)]);
+        assert_eq!(
+            sidecar_zip_path(Path::new("/tmp/out.txt"), &counts),
+            "sidecars/out.txt"
+        );
+    }
+
+    #[test]
+    fn sidecar_zip_path_disambiguates_duplicate_basenames() {
+        let counts = BTreeMap::from([("out.txt".to_string(), 2usize)]);
+        let left = sidecar_zip_path(Path::new("/tmp/a/out.txt"), &counts);
+        let right = sidecar_zip_path(Path::new("/tmp/b/out.txt"), &counts);
+        assert!(left.starts_with("sidecars/out-") && left.ends_with(".txt"));
+        assert!(right.starts_with("sidecars/out-") && right.ends_with(".txt"));
+        assert_ne!(left, right);
     }
 }

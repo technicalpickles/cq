@@ -67,8 +67,31 @@ jobs:
           tar czf "${staging}.tar.gz" "$staging"
           echo "ASSET=${staging}.tar.gz" >> "$GITHUB_ENV"
 
+      - name: Compress binary for DotSlash
+        shell: bash
+        run: |
+          dotslash_asset="cq-${{ matrix.target }}.zst"
+          zstd -19 "target/${{ matrix.target }}/release/cq" -o "$dotslash_asset"
+          echo "DOTSLASH_ASSET=${dotslash_asset}" >> "$GITHUB_ENV"
+
       - name: Upload to release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$TAG" "$ASSET" "$DOTSLASH_ASSET" --clobber --repo "$GITHUB_REPOSITORY"
+
+  dotslash:
+    name: publish dotslash file
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: facebook/dotslash-publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          config: .github/workflows/dotslash-config.json
+          tag: ${{ github.event.release.tag_name }}
