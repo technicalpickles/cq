@@ -235,5 +235,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result, "Cargo.toml\\nsrc");
+
+        // Codex has no equivalent to Claude's origin.kind/promptSource/isMeta
+        // fields yet; codex_messages_sql() emits the fixed (NULL, NULL,
+        // false) triple for every row rather than omitting the columns.
+        let (origin, source, is_meta): (Option<String>, Option<String>, bool) = conn
+            .query_row(
+                "SELECT prompt_origin, prompt_source, is_meta FROM messages WHERE uuid = 'msg-assistant-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(origin, None);
+        assert_eq!(source, None);
+        assert!(!is_meta);
+
+        let non_meta_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE is_meta = false",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            non_meta_count, 2,
+            "is_meta defaults to false, not NULL, for every Codex message row"
+        );
     }
 }

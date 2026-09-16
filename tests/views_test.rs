@@ -414,6 +414,229 @@ fn messages_tag_sidechain_rows() {
     assert_eq!(agent, None);
 }
 
+// ---- prompt provenance ----
+//
+// Fixture rows (tests/fixtures/prompt_provenance.jsonl):
+//   u1  human / typed              string content
+//   u2  task-notification / system string content
+//   u3  coordinator / sdk          string content
+//   u4  isMeta: true, no origin/promptSource
+//   u5  all three fields absent    (older client)
+//   u6  peer / queued              ARRAY content -> array_msgs CTE
+//   u7  all three explicit JSON null
+
+#[test]
+fn messages_view_prompt_origin_human() {
+    let conn = setup_db("prompt_provenance.jsonl");
+    let origin: String = conn
+        .query_row(
+            "SELECT prompt_origin FROM messages WHERE uuid = 'u1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(origin, "human");
+    let source: String = conn
+        .query_row(
+            "SELECT prompt_source FROM messages WHERE uuid = 'u1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, "typed");
+}
+
+#[test]
+fn messages_view_prompt_origin_non_human_values() {
+    let conn = setup_db("prompt_provenance.jsonl");
+    let mut stmt = conn
+        .prepare("SELECT uuid, prompt_origin, prompt_source FROM messages WHERE uuid IN ('u2', 'u3') ORDER BY uuid")
+        .unwrap();
+    let rows: Vec<(String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "u2".to_string(),
+                "task-notification".to_string(),
+                "system".to_string()
+            ),
+            (
+                "u3".to_string(),
+                "coordinator".to_string(),
+                "sdk".to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn messages_view_is_meta_flag() {
+    let conn = setup_db("prompt_provenance.jsonl");
+    let is_meta: bool = conn
+        .query_row("SELECT is_meta FROM messages WHERE uuid = 'u4'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(is_meta);
+
+    // is_meta is COALESCEd, so it is never NULL for any row in the fixture.
+    let null_meta: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages WHERE is_meta IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(null_meta, 0, "is_meta is COALESCEd, so it is never NULL");
+
+    // Only u4 carries isMeta: true; every other row defaults to false.
+    let true_meta: i64 = conn
+        .query_row("SELECT COUNT(*) FROM messages WHERE is_meta", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(true_meta, 1, "only u4 carries isMeta: true");
+}
+
+#[test]
+fn messages_view_prompt_fields_null_when_absent() {
+    let conn = setup_db("prompt_provenance.jsonl");
+    let (origin, source, is_meta): (Option<String>, Option<String>, bool) = conn
+        .query_row(
+            "SELECT prompt_origin, prompt_source, is_meta FROM messages WHERE uuid = 'u5'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(origin, None);
+    assert_eq!(source, None);
+    assert!(
+        !is_meta,
+        "is_meta defaults to false, not NULL, when isMeta is absent"
+    );
+}
+
+#[test]
+fn messages_view_prompt_fields_from_array_content() {
+    // All other prompt-provenance fixture rows have string `message.content`
+    // and land in `claude_messages_sql`'s `string_msgs` CTE. u6 has
+    // array-shaped content (text + tool_use blocks, as real Claude records
+    // commonly do) and lands in `array_msgs` instead. Since the two CTEs
+    // are combined with a positional UNION ALL, a swapped column order in
+    // `array_msgs` specifically would go undetected without this.
+    let conn = setup_db("prompt_provenance.jsonl");
+    let (origin, source, is_meta): (String, String, bool) = conn
+        .query_row(
+            "SELECT prompt_origin, prompt_source, is_meta FROM messages WHERE uuid = 'u6'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(origin, "peer");
+    assert_eq!(source, "queued");
+    assert!(!is_meta);
+}
+
+#[test]
+fn messages_view_prompt_fields_null_on_explicit_json_null() {
+    // u7 carries `origin`/`promptSource`/`isMeta` as literal JSON `null`
+    // (not merely absent, as u5 is). This is exactly the state
+    // IS_META_EXPR's COALESCE guard, and the other two fields' bare
+    // json_extract_string, which naturally returns NULL for JSON null,
+    // are meant to handle.
+    let conn = setup_db("prompt_provenance.jsonl");
+    let (origin, source, is_meta): (Option<String>, Option<String>, bool) = conn
+        .query_row(
+            "SELECT prompt_origin, prompt_source, is_meta FROM messages WHERE uuid = 'u7'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(origin, None);
+    assert_eq!(source, None);
+    assert!(!is_meta);
+}
+
+#[test]
+fn empty_messages_view_has_correct_schema() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE file_registry (
+            file_path TEXT PRIMARY KEY, mtime_ns BIGINT, file_size BIGINT,
+            cwd TEXT, agent_type TEXT, source TEXT,
+            agent_description TEXT, parent_tool_use_id TEXT, spawn_depth BIGINT,
+            indexed_at TIMESTAMP DEFAULT current_timestamp
+        )",
+    )
+    .unwrap();
+    cq::views::register_views(&conn, &[]).unwrap();
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "messages should be empty with zero providers");
+
+    // All 18 columns -- including the three new prompt-provenance ones --
+    // must exist and be selectable without error. This is the real
+    // protection: the empty-view body (src/views.rs `empty_view_sql`) is
+    // only reached when zero providers are active, so a column-count
+    // mismatch between it and the real Claude/Codex bodies would otherwise
+    // raise no compile error, and would surface only as a runtime Binder
+    // Error the first time someone queries an all-providers-inactive corpus.
+    //
+    // `is_meta = false` here is checking *selectability*, not a value --
+    // the view is intentionally zero rows (`WHERE 1=0`), so this predicate
+    // never evaluates against any actual row, NULL or otherwise. It does
+    // NOT pin the column's type as BOOLEAN: `(NULL::VARCHAR) = false`
+    // returns NULL (not an error) in DuckDB, so a swapped VARCHAR/BOOLEAN
+    // column here would pass silently. What DOES verify the types is the
+    // `information_schema.columns` check below.
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages WHERE
+             session_id IS NULL AND project IS NULL AND source IS NULL AND harness IS NULL
+             AND uuid IS NULL AND parent_uuid IS NULL AND type IS NULL AND timestamp IS NULL
+             AND text IS NULL AND tool_count IS NULL AND model IS NULL AND agent_id IS NULL
+             AND is_sidechain IS NULL AND agent_type IS NULL AND workflow_id IS NULL
+             AND prompt_origin IS NULL AND prompt_source IS NULL AND is_meta = false",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 0, "messages should be empty");
+
+    // Confirm the three new columns are actually typed as expected. This is
+    // the part a zero-row `WHERE` predicate can't check: DuckDB's column
+    // type is fixed by the view definition regardless of row count, so
+    // `information_schema.columns` gives us a real assertion here.
+    let mut stmt = conn
+        .prepare(
+            "SELECT column_name, data_type FROM information_schema.columns
+             WHERE table_name = 'messages'
+             AND column_name IN ('prompt_origin', 'prompt_source', 'is_meta')
+             ORDER BY column_name",
+        )
+        .unwrap();
+    let types: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            ("is_meta".to_string(), "BOOLEAN".to_string()),
+            ("prompt_origin".to_string(), "VARCHAR".to_string()),
+            ("prompt_source".to_string(), "VARCHAR".to_string()),
+        ]
+    );
+}
+
 #[test]
 fn tool_calls_tag_sidechain_rows() {
     let conn = setup_db("mixed_sidechain_session.jsonl");
