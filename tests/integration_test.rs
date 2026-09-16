@@ -57,6 +57,39 @@ fn setup_env_tree(session_id: &str) -> TestEnv {
     env
 }
 
+/// Recursively copy every file under `src` into `dest`, preserving nested
+/// directories -- `setup_env_tree` only copies the flat main file + a single
+/// `subagents/` level, which isn't enough for bundle fixtures that need
+/// `journal.jsonl` and nested `subagents/workflows/...` to actually exist on
+/// disk (the whole point of those tests is proving what bundle excludes).
+fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) {
+    std::fs::create_dir_all(dest).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_recursive(&src_path, &dest_path);
+        } else {
+            std::fs::copy(&src_path, &dest_path).unwrap();
+        }
+    }
+}
+
+fn setup_bundle_env(session_id: &str) -> TestEnv {
+    let env = setup_env(&[]);
+    let project_dir = env.projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    std::fs::copy(
+        fixture_path(&format!("{session_id}.jsonl")),
+        project_dir.join(format!("{session_id}.jsonl")),
+    )
+    .unwrap();
+    copy_dir_recursive(&fixture_path(session_id), &project_dir.join(session_id));
+    env
+}
+
 fn cq_cmd(env: &TestEnv) -> Command {
     let mut cmd = Command::cargo_bin("cq").unwrap();
     cmd.env("CQ_PROJECTS_DIR", env.projects.path());
@@ -3411,6 +3444,58 @@ fn trace_format_and_perfetto_flag_together_is_a_clap_error() {
 }
 
 #[test]
+fn trace_open_with_format_waterfall_is_an_error() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args([
+            "--session",
+            TRACE_SESSION,
+            "trace",
+            "--format",
+            "waterfall",
+            "--open",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--open is not supported with --format waterfall"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn trace_open_with_json_is_an_error() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "--json", "trace", "--open"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--open is not supported with --json"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn trace_port_without_open_is_an_error() {
+    let env = setup_env_tree(TRACE_SESSION);
+    let output = cq_cmd(&env)
+        .args(["--session", TRACE_SESSION, "trace", "--port", "9001"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--port is not supported without --open"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn trace_unknown_session_reports_not_found() {
     let env = setup_env_tree(TRACE_SESSION);
     let output = cq_cmd(&env)
@@ -3423,4 +3508,193 @@ fn trace_unknown_session_reports_not_found() {
         "expected a not-found message: {stderr}"
     );
     assert!(output.status.success(), "not-found is not a hard error");
+}
+
+// ---- cq bundle ----
+
+const BUNDLE_SESSION: &str = "b2c3d4e5-1111-4000-8000-000000000002";
+
+#[test]
+fn bundle_requires_session() {
+    let env = setup_bundle_env(BUNDLE_SESSION);
+    let output = cq_cmd(&env).args(["bundle"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cq bundle requires --session"),
+        "got: {stderr}"
+    );
+    assert!(!output.status.success());
+}
+
+#[test]
+fn bundle_unknown_session_reports_not_found() {
+    let env = setup_bundle_env(BUNDLE_SESSION);
+    let out_dir = TempDir::new().unwrap();
+    let out_path = out_dir.path().join("bundle.zip");
+    let output = cq_cmd(&env)
+        .args([
+            "--session",
+            "00000000-0000-4000-8000-000000000000",
+            "bundle",
+            "-o",
+        ])
+        .arg(&out_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not found"), "got: {stderr}");
+    assert!(!out_path.exists());
+}
+
+#[test]
+fn bundle_writes_expected_zip_contents() {
+    let env = setup_bundle_env(BUNDLE_SESSION);
+    let out_dir = TempDir::new().unwrap();
+    let out_path = out_dir.path().join("bundle.zip");
+
+    let output = cq_cmd(&env)
+        .args(["--session", BUNDLE_SESSION, "bundle", "-o"])
+        .arg(&out_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let zip_file = std::fs::File::open(&out_path).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+
+    assert!(names.contains(&"main.jsonl".to_string()), "{names:?}");
+    assert!(
+        names.contains(&"subagents/agent-plain.jsonl".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"subagents/agent-plain.meta.json".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"subagents/workflows/wf_bundle/agent-wf.jsonl".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"subagents/workflows/wf_bundle/agent-wf.meta.json".to_string()),
+        "{names:?}"
+    );
+    assert!(names.contains(&"manifest.json".to_string()), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n.contains("journal")),
+        "journal.jsonl must never appear in a bundle: {names:?}"
+    );
+
+    let manifest_idx = names.iter().position(|n| n == "manifest.json").unwrap();
+    let mut manifest_str = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_index(manifest_idx).unwrap(),
+        &mut manifest_str,
+    )
+    .unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+    assert_eq!(manifest["session_id"], BUNDLE_SESSION);
+    assert_eq!(manifest["harness"], "claude");
+    assert!(manifest["project"].as_str().unwrap().contains("myproject"));
+    assert_eq!(manifest["sidecars_included"].as_array().unwrap().len(), 0);
+    assert_eq!(manifest["sidecars_missing"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn bundle_default_output_path_is_session_zip_in_cwd() {
+    let env = setup_bundle_env(BUNDLE_SESSION);
+    let cwd_dir = TempDir::new().unwrap();
+
+    let output = cq_cmd(&env)
+        .args(["--session", BUNDLE_SESSION, "bundle"])
+        .current_dir(cwd_dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let expected = cwd_dir.path().join(format!("session-{BUNDLE_SESSION}.zip"));
+    assert!(expected.exists(), "expected {expected:?} to exist");
+}
+
+#[test]
+fn bundle_includes_available_sidecar_and_warns_on_missing() {
+    let env = setup_env(&[]);
+    let project_dir = env.projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let sidecar_dir = TempDir::new().unwrap();
+    let present_sidecar = sidecar_dir.path().join("present-output.txt");
+    std::fs::write(&present_sidecar, "the real tool output").unwrap();
+    let missing_sidecar = sidecar_dir.path().join("missing-output.txt"); // never created
+
+    let session_id = "c3d4e5f6-2222-4000-8000-000000000003";
+    let record_present = format!(
+        "{{\"type\":\"user\",\"uuid\":\"u1\",\"parentUuid\":null,\"timestamp\":\"2026-09-10T12:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"truncated\"}}]}},\"sessionId\":\"{session_id}\",\"cwd\":\"/Users/test/myproject\",\"version\":\"2.0.0\",\"toolUseResult\":{{\"persistedOutputPath\":\"{}\",\"persistedOutputSize\":50000}}}}",
+        present_sidecar.display()
+    );
+    let record_missing = format!(
+        "{{\"type\":\"user\",\"uuid\":\"u2\",\"parentUuid\":\"u1\",\"timestamp\":\"2026-09-10T12:00:01.000Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_2\",\"content\":\"truncated\"}}]}},\"sessionId\":\"{session_id}\",\"cwd\":\"/Users/test/myproject\",\"version\":\"2.0.0\",\"toolUseResult\":{{\"persistedOutputPath\":\"{}\",\"persistedOutputSize\":50000}}}}",
+        missing_sidecar.display()
+    );
+    std::fs::write(
+        project_dir.join(format!("{session_id}.jsonl")),
+        format!("{record_present}\n{record_missing}\n"),
+    )
+    .unwrap();
+
+    let out_dir = TempDir::new().unwrap();
+    let out_path = out_dir.path().join("bundle.zip");
+    let output = cq_cmd(&env)
+        .args(["--session", session_id, "bundle", "-o"])
+        .arg(&out_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("missing-output.txt"),
+        "expected a warning naming the missing sidecar: {stderr}"
+    );
+
+    let zip_file = std::fs::File::open(&out_path).unwrap();
+    let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "sidecars/present-output.txt"),
+        "{names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n.contains("missing-output")),
+        "{names:?}"
+    );
+
+    let manifest_idx = names.iter().position(|n| n == "manifest.json").unwrap();
+    let mut manifest_str = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_index(manifest_idx).unwrap(),
+        &mut manifest_str,
+    )
+    .unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+    assert_eq!(manifest["sidecars_included"].as_array().unwrap().len(), 1);
+    let missing = manifest["sidecars_missing"].as_array().unwrap();
+    assert_eq!(missing.len(), 1);
+    assert!(missing[0].as_str().unwrap().contains("missing-output.txt"));
 }

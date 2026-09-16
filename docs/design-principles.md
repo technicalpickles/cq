@@ -51,3 +51,5 @@ Automatic behavior (smart sync, mtime checks, lock fallbacks) should do the righ
 ## Stderr for process, stdout for data
 
 Progress messages, sync status, cache warnings, and hints go to stderr. Query results go to stdout. This lets piped output stay clean and lets humans see what's happening without corrupting data flow.
+
+`cq trace --format firefox-profiler`/`--format perfetto` follow the same split: on an interactive terminal without `--open`, the trace JSON (data) goes to a deterministic tmp file instead of stdout, and the path is printed on stderr like any other process message. Piped or redirected output isn't a terminal, so it's unaffected — the JSON prints to stdout exactly as before.

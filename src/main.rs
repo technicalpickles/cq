@@ -1,10 +1,13 @@
 use std::io::IsTerminal;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use cq::claude_provider::ClaudeProvider;
 use cq::codex_provider::CodexProvider;
-use cq::commands::{hooks, messages, projects, schema, search, sessions, sql, tools, trace};
+use cq::commands::{
+    bundle, hooks, messages, projects, schema, search, sessions, sql, tools, trace,
+};
 use cq::db;
 use cq::output::OutputFormat;
 use cq::scope::QueryScope;
@@ -231,6 +234,19 @@ enum Command {
         #[arg(long, hide = true)]
         perfetto: bool,
 
+        /// Open the trace directly in a browser (firefox-profiler or perfetto)
+        /// instead of printing/saving its JSON. Implies --format
+        /// firefox-profiler when --format is omitted.
+        #[arg(long)]
+        open: bool,
+
+        /// Port for --open's local server [default: 9001]. Only meaningful
+        /// with --open; 9001 matches Perfetto's own trace_processor_shell
+        /// convention, which ui.perfetto.dev's Content-Security-Policy
+        /// requires unless the port is overridden here.
+        #[arg(long)]
+        port: Option<u16>,
+
         /// Window start: offset from session start (e.g. +12m, +90s) or an absolute ISO timestamp
         #[arg(long)]
         from: Option<String>,
@@ -238,6 +254,14 @@ enum Command {
         /// Window end: offset from session start (e.g. +17m, +90s) or an absolute ISO timestamp
         #[arg(long)]
         to: Option<String>,
+    },
+    /// Package one session's raw transcript files (JSONL + subagents +
+    /// best-effort persisted-output sidecars) into a zip, for sharing,
+    /// archiving, or feeding another tool
+    Bundle {
+        /// Output zip path (default: ./session-<id>.zip in the current directory)
+        #[arg(short = 'o', long)]
+        output: Option<PathBuf>,
     },
     /// Run a raw SQL query
     Sql {
@@ -553,6 +577,8 @@ fn main() -> Result<()> {
         Command::Trace {
             trace_format,
             perfetto,
+            open,
+            port,
             from,
             to,
         } => {
@@ -563,6 +589,10 @@ fn main() -> Result<()> {
                 Some(TraceFormat::Perfetto) => trace::TraceOutput::Perfetto,
                 Some(TraceFormat::FirefoxProfiler) => trace::TraceOutput::FirefoxProfiler,
                 None if perfetto => trace::TraceOutput::Perfetto,
+                // --open with no explicit --format needs a real target; the
+                // richer/newer renderer is the implied default. See
+                // `docs/specs/2026-09-14-cq-trace-open-design.md`.
+                None if open => trace::TraceOutput::FirefoxProfiler,
                 None => trace::TraceOutput::Waterfall,
             };
             trace::run(
@@ -572,7 +602,23 @@ fn main() -> Result<()> {
                 output,
                 from.as_deref(),
                 to.as_deref(),
+                open,
+                port,
             )?;
+        }
+        Command::Bundle { output } => {
+            let session_id = match scope.session.as_deref() {
+                Some(id) => id.to_string(),
+                None => {
+                    eprintln!("Error: cq bundle requires --session");
+                    eprintln!("Usage: cq bundle --session <id> [-o <path>]");
+                    eprintln!("Hint: Run 'cq sessions' to find session IDs");
+                    std::process::exit(1);
+                }
+            };
+            let output_path =
+                output.unwrap_or_else(|| PathBuf::from(format!("session-{session_id}.zip")));
+            bundle::run(&conn, &provider, &scope, &session_id, &output_path)?;
         }
         Command::Sql { query } => {
             if let Err(e) = sql::run(&conn, &query, &format, wide) {
