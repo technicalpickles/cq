@@ -78,9 +78,9 @@ already has the full JSON per record.
 - `tests/views_test.rs`: extend Claude fixtures with rows carrying each
   `origin.kind` value, one `isMeta: true` row, and one row missing these
   fields entirely (older client versions — confirmed these fields aren't
-  universally present; ~217 human-origin messages in the real corpus have
-  no `promptSource` at all). Assert the view surfaces `NULL` rather than
-  erroring on missing fields.
+  universally present; a real corpus has records with `origin.kind` set
+  and no `promptSource` at all). Assert the view surfaces `NULL` rather
+  than erroring on missing fields.
 - Assert Codex fixture rows produce `NULL` for `prompt_origin`/`prompt_source`
   and `false` (never `NULL`) for `is_meta`.
 - `docs/session-storage.md` needs its own note on these fields per the
