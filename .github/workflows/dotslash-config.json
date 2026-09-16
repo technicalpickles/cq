@@ -4,19 +4,23 @@
       "platforms": {
         "macos-aarch64": {
           "name": "cq-aarch64-apple-darwin.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         },
         "macos-x86_64": {
           "name": "cq-x86_64-apple-darwin.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         },
         "linux-x86_64": {
           "name": "cq-x86_64-unknown-linux-gnu.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         },
         "linux-aarch64": {
           "name": "cq-aarch64-unknown-linux-gnu.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         }
       }
     }

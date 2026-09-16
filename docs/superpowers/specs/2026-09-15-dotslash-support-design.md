@@ -95,19 +95,23 @@ release before it starts.
       "platforms": {
         "macos-aarch64": {
           "name": "cq-aarch64-apple-darwin.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         },
         "macos-x86_64": {
           "name": "cq-x86_64-apple-darwin.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         },
         "linux-x86_64": {
           "name": "cq-x86_64-unknown-linux-gnu.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         },
         "linux-aarch64": {
           "name": "cq-aarch64-unknown-linux-gnu.zst",
-          "format": "zst"
+          "format": "zst",
+          "path": "cq"
         }
       }
     }
@@ -115,10 +119,12 @@ release before it starts.
 }
 ```
 
-No `path` field: `format: "zst"` means the asset is a bare compressed
-binary, not an archive, so there's nothing inside it to locate. Hash
-algorithm defaults to `blake3` (DotSlash's native hash) — no reason to
-override to `sha256`.
+`path` is required by `dotslash-publish-release` on every platform entry,
+even for a bare (non-archive) `format: "zst"` binary where there's nothing
+inside it to locate — omitting it isn't valid and crashes the action with an
+unhandled `TypeError` instead of a clean error. Set it to the output name
+(`cq`) on all four platforms. Hash algorithm defaults to `blake3`
+(DotSlash's native hash) — no reason to override to `sha256`.
 
 This produces one DotSlash file, named `cq`, uploaded to the same release.
 
