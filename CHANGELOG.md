@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/technicalpickles/cq/compare/v0.8.0...v0.9.0) (2026-09-16)
+
+
+### Features
+
+* **cq:** add cq bundle command ([#55](https://github.com/technicalpickles/cq/issues/55)) ([12df28f](https://github.com/technicalpickles/cq/commit/12df28f641599e405302de354db44c98cabf5955))
+
 ## [0.8.0](https://github.com/technicalpickles/cq/compare/v0.7.0...v0.8.0) (2026-09-15)
 
 
