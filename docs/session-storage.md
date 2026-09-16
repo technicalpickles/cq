@@ -130,6 +130,12 @@ A record can carry `toolUseResult.persistedOutputPath` and `persistedOutputSize`
 
 This is also the mechanism behind the surrogate gotcha above: truncating a large output to a fixed byte length is what leaves half a surrogate pair in the record that stays behind.
 
+### `origin`/`isMeta`/`promptSource` have three presence states, not two
+
+`origin` (an OBJECT carrying `kind`, and sometimes also `from`/`senderTaskId`/`body`/`handback`/`name`) and `isMeta` each show up in three states on real records: present with a value, absent entirely, and present but JSON `null`. A bare `json_extract_string` only distinguishes two of those (it returns SQL `NULL` for both "absent" and "JSON `null`"), which is fine for a VARCHAR field, but `isMeta` needs to come back as a non-null BOOLEAN in every case, so extracting it needs a `COALESCE` guard rather than a bare extract — see `IS_META_EXPR`/`IS_SIDECHAIN_EXPR` in `views.rs` for the pattern.
+
+`promptSource` is not always co-present with `origin.kind`: older client versions have `origin.kind` on a record with no `promptSource` field at all. Don't assume one implies the other is present.
+
 ### mtime and size are the change signal
 
 `file_registry` stores `mtime_ns` and `file_size`, and the indexer re-parses a file only when one of them moves. Sessions are appended to as they run, so this works, but it means any in-place rewrite that preserves both is invisible to sync. `--reindex` is the escape hatch.
