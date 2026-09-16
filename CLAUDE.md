@@ -140,6 +140,11 @@ You don't bump versions or push tags by hand. Each target builds on its own nati
 runner because the bundled DuckDB compiles C++ from source, which makes cross-compiling
 more trouble than it's worth. There is no crates.io publish step today.
 
+If assets are missing from an already-published release (a runner label broke, a job
+got stuck), re-run `release.yml` manually via `workflow_dispatch` against that tag
+(`gh workflow run release.yml -f tag=v0.9.0`) rather than cutting a new version — the
+upload steps `--clobber`/overwrite existing assets, so it's safe to re-run.
+
 The bump version lives in `.release-please-manifest.json` (kept in sync with
 `Cargo.toml`). `release.yml` only fires when the release is created with a token that
 triggers downstream workflows — the `RELEASE_PLEASE_TOKEN` secret (a PAT or GitHub App
