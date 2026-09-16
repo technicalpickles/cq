@@ -31,6 +31,22 @@ const AGENT_TYPE_EXPR: &str =
 const SOURCE_EXPR: &str =
     "(SELECT fr.source FROM file_registry fr WHERE fr.file_path = source_file)";
 
+/// SQL expression for prompt provenance: who/what actually submitted this
+/// turn. `"human"` means a real keystroke; other values
+/// (`task-notification`, `coordinator`, `peer`, `auto-continuation`) are
+/// harness-injected. Absent on older client versions -- NULL, not an error.
+const PROMPT_ORIGIN_EXPR: &str = "json_extract_string(json, '$.origin.kind')";
+
+/// SQL expression for how the prompt was submitted: `typed`/`queued` are
+/// both real human input; `system`/`sdk` are not. Absent on older client
+/// versions -- NULL, not an error.
+const PROMPT_SOURCE_EXPR: &str = "json_extract_string(json, '$.promptSource')";
+
+/// SQL expression flagging ancillary content bolted onto a turn (e.g. a
+/// skill-file dump) rather than the turn's own submission. Defaults false
+/// when absent, matching IS_SIDECHAIN_EXPR's always-non-null convention.
+const IS_META_EXPR: &str = "COALESCE(CAST(json_extract(json, '$.isMeta') AS BOOLEAN), false)";
+
 /// Register all queryable views against the given JSONL transcript files.
 ///
 /// Creates six views:
@@ -105,7 +121,10 @@ pub fn claude_messages_sql() -> String {
                 {AGENT_ID_EXPR} AS agent_id,
                 {IS_SIDECHAIN_EXPR} AS is_sidechain,
                 {AGENT_TYPE_EXPR} AS agent_type,
-                {WORKFLOW_ID_EXPR} AS workflow_id
+                {WORKFLOW_ID_EXPR} AS workflow_id,
+                {PROMPT_ORIGIN_EXPR} AS prompt_origin,
+                {PROMPT_SOURCE_EXPR} AS prompt_source,
+                {IS_META_EXPR} AS is_meta
             FROM raw_records
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'VARCHAR'
@@ -134,7 +153,10 @@ pub fn claude_messages_sql() -> String {
                 {AGENT_ID_EXPR} AS agent_id,
                 {IS_SIDECHAIN_EXPR} AS is_sidechain,
                 {AGENT_TYPE_EXPR} AS agent_type,
-                {WORKFLOW_ID_EXPR} AS workflow_id
+                {WORKFLOW_ID_EXPR} AS workflow_id,
+                {PROMPT_ORIGIN_EXPR} AS prompt_origin,
+                {PROMPT_SOURCE_EXPR} AS prompt_source,
+                {IS_META_EXPR} AS is_meta
             FROM raw_records
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
