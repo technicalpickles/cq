@@ -460,7 +460,10 @@ pub fn codex_messages_sql() -> String {
         NULL::VARCHAR AS agent_id,
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
-        NULL::VARCHAR AS workflow_id
+        NULL::VARCHAR AS workflow_id,
+        NULL::VARCHAR AS prompt_origin,
+        NULL::VARCHAR AS prompt_source,
+        false AS is_meta
     FROM codex_records record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.payload.type') = 'message'
@@ -647,7 +650,10 @@ fn empty_view_sql(view: View) -> &'static str {
             NULL::VARCHAR AS agent_id,
             false AS is_sidechain,
             NULL::VARCHAR AS agent_type,
-            NULL::VARCHAR AS workflow_id
+            NULL::VARCHAR AS workflow_id,
+            NULL::VARCHAR AS prompt_origin,
+            NULL::VARCHAR AS prompt_source,
+            false AS is_meta
         WHERE 1=0"
         }
         View::ToolCalls => {
