@@ -15,6 +15,7 @@
 //! `docs/specs/2026-09-10-session-trace-view-design.md`.
 
 pub mod firefox_profiler;
+pub mod open_browser;
 pub mod perfetto;
 pub mod waterfall;
 

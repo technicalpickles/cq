@@ -1,6 +1,6 @@
 # Session bundle export (`cq bundle`)
 
-Status: approved (design)
+Status: implemented
 Date: 2026-09-15
 
 ## Problem

@@ -37,6 +37,7 @@ This is a single-context repository. See `docs/agents/domain.md`.
 main.rs           CLI (clap), arg parsing, dispatches to commands
 lib.rs            Library entry point, re-exports modules for integration tests
 commands/
+  bundle.rs       `cq bundle`: --session required check, default output path, session metadata query, calls bundle::write_bundle, prints summary/warnings
   sessions.rs     List/filter sessions
   tools.rs        Tool call queries + summary mode (no filters = grouped counts)
   hooks.rs        Hook event queries + summary mode (mirrors tools.rs)
@@ -48,11 +49,13 @@ commands/
   sql.rs          Raw SQL passthrough (intentionally unparameterized)
   schema.rs       View schema docs + example queries (pure text, no DB needed)
   trace.rs        `cq trace`: flag validation, then --json rows or one of the trace renderers
+bundle.rs         Core `cq bundle` logic: file -> zip-path mapping, meta.json sidecar lookup, persistedOutputPath scan, zip writing + manifest (docs/specs/2026-09-15-session-bundle-design.md)
 output.rs         Shared rendering: table (comfy-table) or JSON, accepts params
 trace/
   mod.rs          Span + gap model for one session: the SQL both trace renderers read from
   waterfall.rs    Terminal waterfall renderer (formatting only, no SQL)
   perfetto.rs     Chrome Trace Event JSON emitter (formatting only, no SQL)
+  open_browser.rs `cq trace --open`: serves the trace JSON over a local httpd and launches the OS browser at Firefox Profiler or Perfetto
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
 views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the six views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
@@ -129,11 +132,18 @@ off conventional commits. The flow:
    and updates `CHANGELOG.md`. Merge it when you want to ship.
 3. Merging that PR cuts the git tag + GitHub release. The `release: published` event
    then fires `release.yml`, which builds `cq` for macOS (arm64 + x86_64) and Linux
-   (x86_64 + arm64) and attaches the archives to the release.
+   (x86_64 + arm64), attaches the tarballs to the release, and (in a follow-up `dotslash`
+   job) publishes a single-file DotSlash pointer (`cq`) generated from
+   `.github/workflows/dotslash-config.json` via `facebook/dotslash-publish-release`.
 
 You don't bump versions or push tags by hand. Each target builds on its own native
 runner because the bundled DuckDB compiles C++ from source, which makes cross-compiling
 more trouble than it's worth. There is no crates.io publish step today.
+
+If assets are missing from an already-published release (a runner label broke, a job
+got stuck), re-run `release.yml` manually via `workflow_dispatch` against that tag
+(`gh workflow run release.yml -f tag=v0.9.0`) rather than cutting a new version — the
+upload steps `--clobber`/overwrite existing assets, so it's safe to re-run.
 
 The bump version lives in `.release-please-manifest.json` (kept in sync with
 `Cargo.toml`). `release.yml` only fires when the release is created with a token that

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.1](https://github.com/technicalpickles/cq/compare/v0.9.0...v0.9.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* add required path field to dotslash-config.json ([#60](https://github.com/technicalpickles/cq/issues/60)) ([16b1954](https://github.com/technicalpickles/cq/commit/16b19540df1ca218fceaf2640e5eb61e1a29b7d5))
+
+## [0.9.0](https://github.com/technicalpickles/cq/compare/v0.8.0...v0.9.0) (2026-09-16)
+
+
+### Features
+
+* **cq:** add cq bundle command ([#55](https://github.com/technicalpickles/cq/issues/55)) ([12df28f](https://github.com/technicalpickles/cq/commit/12df28f641599e405302de354db44c98cabf5955))
+
+## [0.8.0](https://github.com/technicalpickles/cq/compare/v0.7.0...v0.8.0) (2026-09-15)
+
+
+### Features
+
+* **cq:** add a native Firefox Profiler emitter alongside Perfetto ([#51](https://github.com/technicalpickles/cq/issues/51)) ([3201b55](https://github.com/technicalpickles/cq/commit/3201b556aaa6ccd06937a0a1a8ba45b0eccbccf8))
+* **cq:** add cq trace --open ([#52](https://github.com/technicalpickles/cq/issues/52)) ([bc674e9](https://github.com/technicalpickles/cq/commit/bc674e9bf367e85f8a6e34c9e7b67720fd347d1a))
+
 ## [0.7.0](https://github.com/technicalpickles/cq/compare/v0.6.0...v0.7.0) (2026-09-11)
 
 

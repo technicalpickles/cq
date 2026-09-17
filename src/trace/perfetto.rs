@@ -40,20 +40,21 @@ fn epoch_us(ts: &str) -> i64 {
     epoch_ms(ts) * 1000
 }
 
-pub fn emit(
+/// Builds the Chrome Trace Event JSON as a string, without printing it --
+/// see `firefox_profiler::to_json`'s doc comment for why.
+pub fn to_json(
     spans: &[Span],
     gaps: &[Gap],
     session_id: &str,
     groups: &HashMap<String, String>,
-) -> Result<()> {
+) -> Result<String> {
     let events = build_events(spans, gaps, session_id, groups);
-    println!("{}", serde_json::to_string(&events)?);
-    Ok(())
+    Ok(serde_json::to_string(&events)?)
 }
 
 /// Build the Chrome Trace Event array for one session, without printing it.
-/// Pulled out of [`emit`] so tests can assert on the structured events
-/// directly instead of capturing stdout.
+/// Pulled out of [`to_json`] so tests can assert on the structured events
+/// directly, mirroring `firefox_profiler::build_profile`.
 ///
 /// `groups` maps each lane to the depth-1 ancestor that is its pid group
 /// (see [`crate::trace::lane_groups`]); a lane absent from the map (should
@@ -473,5 +474,18 @@ mod tests {
             .expect("detail must be a string");
         assert!(detail.ends_with('…'));
         assert_eq!(detail.chars().count(), MAX_DETAIL_LEN + 1);
+    }
+
+    #[test]
+    fn to_json_matches_build_events() {
+        let spans = vec![span("main", "toolu_1", "2026-09-10T12:00:00.000Z", 100)];
+        let groups = fixture_groups();
+        let session_id = "a1b2c3d4-0000-4000-8000-000000000001";
+
+        let json = to_json(&spans, &[], session_id, &groups).unwrap();
+        let parsed: Vec<Value> = serde_json::from_str(&json).unwrap();
+        let expected = build_events(&spans, &[], session_id, &groups);
+
+        assert_eq!(parsed, expected);
     }
 }

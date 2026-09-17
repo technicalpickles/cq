@@ -10,10 +10,21 @@ name: Release
 #
 # Note: this only runs if the release was created with a token that triggers
 # downstream workflows (RELEASE_PLEASE_TOKEN), not the default GITHUB_TOKEN.
+#
+# workflow_dispatch lets you re-run this against an already-published release
+# (e.g. to backfill assets after a runner fix) without cutting a new version.
+# `gh release upload --clobber` and dotslash-publish-release both overwrite
+# existing assets, so re-running is safe.
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and upload assets for (e.g. v0.9.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -27,19 +38,19 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-15-intel
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
     env:
-      TAG: ${{ github.event.release.tag_name }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - name: Install Rust toolchain
         # Pinned to match CI (.github/workflows/ci.yml) so release binaries
@@ -67,8 +78,31 @@ jobs:
           tar czf "${staging}.tar.gz" "$staging"
           echo "ASSET=${staging}.tar.gz" >> "$GITHUB_ENV"
 
+      - name: Compress binary for DotSlash
+        shell: bash
+        run: |
+          dotslash_asset="cq-${{ matrix.target }}.zst"
+          zstd -19 "target/${{ matrix.target }}/release/cq" -o "$dotslash_asset"
+          echo "DOTSLASH_ASSET=${dotslash_asset}" >> "$GITHUB_ENV"
+
       - name: Upload to release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$TAG" "$ASSET" "$DOTSLASH_ASSET" --clobber --repo "$GITHUB_REPOSITORY"
+
+  dotslash:
+    name: publish dotslash file
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: facebook/dotslash-publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          config: .github/workflows/dotslash-config.json
+          tag: ${{ github.event.release.tag_name || inputs.tag }}
