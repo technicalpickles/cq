@@ -46,7 +46,7 @@ user_invocable: true
 
 **sessions**: session_id, project, source, harness, started_at, ended_at, message_count, tool_call_count, user_message_count, subagent_count, first_user_message (counts are main-loop only)
 
-**messages**: session_id, project, source, harness, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id
+**messages**: session_id, project, source, harness, uuid, parent_uuid, type, timestamp, text, tool_count, model, agent_id, is_sidechain, agent_type, workflow_id, prompt_origin, prompt_source, is_meta
 
 **tool_calls**: session_id, project, source, harness, message_uuid, tool_use_id, name, input (JSON), timestamp, agent_id, is_sidechain, agent_type, workflow_id. `advisor()` invocations appear here too, with `name = 'advisor'` (they use a `server_tool_use` block under the hood, not the standard `tool_use`).
 
