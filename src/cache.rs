@@ -28,8 +28,8 @@ pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
 }
 
 fn connect(cache_dir: &Path, db_path: &Path) -> Result<Connection> {
-    // DuckDB defaults new files to the v0.10.2 storage format for backwards
-    // compatibility, which disables the ZSTD/DICT_FSST string codecs and
+    // DuckDB defaults new files to the v0.10.2 storage format (files report
+    // storage_version tag `v1.0.0+`) for backwards compatibility, which disables the ZSTD/DICT_FSST string codecs and
     // leaves raw_records.json uncompressed. The setting only affects files
     // created by this connection; existing files keep their format.
     let config = Config::default()

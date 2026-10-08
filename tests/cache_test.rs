@@ -374,17 +374,22 @@ fn large_json_records_are_compressed() {
     )
     .unwrap();
 
-    let uncompressed: i64 = conn
+    let (uncompressed, compressed): (i64, i64) = conn
         .query_row(
-            "SELECT count(*) FROM pragma_storage_info('raw_records')
-             WHERE column_name = 'json' AND segment_type <> 'VALIDITY'
-               AND compression = 'Uncompressed'",
+            "SELECT count(*) FILTER (WHERE compression = 'Uncompressed'),
+                    count(*) FILTER (WHERE compression <> 'Uncompressed')
+             FROM pragma_storage_info('raw_records')
+             WHERE column_name = 'json' AND segment_type <> 'VALIDITY'",
             [],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
     assert_eq!(
         uncompressed, 0,
         "raw_records.json should not be stored Uncompressed"
+    );
+    assert!(
+        compressed > 0,
+        "expected at least one compressed json segment; none were inspected"
     );
 }
