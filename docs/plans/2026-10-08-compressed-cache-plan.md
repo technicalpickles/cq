@@ -1,5 +1,7 @@
 # Compressed Cache Implementation Plan
 
+> **Superseded in one place:** this plan assumed nothing else could have the cache file open during a rebuild. Code review proved that wrong: once `open` drops its connection, nothing holds the file. The shipped `cache::open` serializes recreation through `index.lock` and re-checks once the lock is held, so the Task 2 snippet below is the pre-fix shape. `src/cache.rs` and docs/adr/0002-recreate-cache-file-on-rebuild.md are the current story.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `index.duckdb` use DuckDB's current storage format so `raw_records.json` is compressed, and recreate the file on rebuild so it stops carrying dead free blocks.

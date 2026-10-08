@@ -9,7 +9,9 @@ pub const SCHEMA_VERSION: i32 = 7;
 /// Storage format is fixed when a file is created, so a cache with any other
 /// tag is recreated on open. If a DuckDB upgrade changes the tag, the
 /// `fresh_cache_uses_current_storage_version` test fails; update this and
-/// existing caches get recreated once in the newer format.
+/// existing caches get recreated once in the newer format. Leaving it stale
+/// is worse than a failing test: every new file would mismatch, so the cache
+/// would be recreated on every open.
 pub const STORAGE_VERSION_TAG: &str = "v1.5.0+";
 
 /// Open or create the cache database. Recreates the file from scratch when
@@ -107,9 +109,10 @@ fn remove_database(db_path: &Path) -> Result<()> {
 
 fn connect(cache_dir: &Path, db_path: &Path) -> Result<Connection> {
     // DuckDB defaults new files to the v0.10.2 storage format (files report
-    // storage_version tag `v1.0.0+`) for backwards compatibility, which disables the ZSTD/DICT_FSST string codecs and
-    // leaves raw_records.json uncompressed. The setting only affects files
-    // created by this connection; existing files keep their format.
+    // storage_version tag `v1.0.0+`) for backwards compatibility, which
+    // disables the ZSTD/DICT_FSST string codecs and leaves raw_records.json
+    // uncompressed. The setting only affects files created by this
+    // connection; existing files keep their format.
     let config = Config::default()
         .with("storage_compatibility_version", "latest")
         .context("Failed to configure cache database")?;
