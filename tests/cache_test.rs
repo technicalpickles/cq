@@ -344,3 +344,47 @@ fn skip_sync_returns_immediately() {
     assert!(result.skipped);
     assert_eq!(result.stats.added, 0);
 }
+
+#[test]
+fn fresh_cache_uses_current_storage_version() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+
+    assert_eq!(
+        cq::cache::storage_version(&conn).unwrap().as_deref(),
+        Some(cq::cache::STORAGE_VERSION_TAG),
+        "a new cache file should use DuckDB's latest storage format; if a DuckDB \
+         upgrade changed the tag, update STORAGE_VERSION_TAG (existing caches \
+         will be recreated once on first open)"
+    );
+}
+
+#[test]
+fn large_json_records_are_compressed() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+
+    // ~11 KB per record, the size range that stayed Uncompressed under the
+    // v0.10.2 storage format.
+    conn.execute_batch(
+        "INSERT INTO raw_records (source_file, json)
+         SELECT 'big.jsonl', json_object('i', i, 'pad', repeat('lorem ipsum dolor ', 600))
+         FROM range(2000) r(i);
+         CHECKPOINT;",
+    )
+    .unwrap();
+
+    let uncompressed: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_storage_info('raw_records')
+             WHERE column_name = 'json' AND segment_type <> 'VALIDITY'
+               AND compression = 'Uncompressed'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        uncompressed, 0,
+        "raw_records.json should not be stored Uncompressed"
+    );
+}

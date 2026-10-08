@@ -1,9 +1,16 @@
 use anyhow::{Context, Result};
-use duckdb::Connection;
 use duckdb::OptionalExt;
+use duckdb::{Config, Connection};
 use std::path::Path;
 
 pub const SCHEMA_VERSION: i32 = 7;
+
+/// The `storage_version` tag DuckDB stamps on a file this build creates.
+/// Storage format is fixed when a file is created, so a cache with any other
+/// tag is recreated on open. If a DuckDB upgrade changes the tag, the
+/// `fresh_cache_uses_current_storage_version` test fails; update this and
+/// existing caches get recreated once in the newer format.
+pub const STORAGE_VERSION_TAG: &str = "v1.5.0+";
 
 /// Open or create the cache database. Creates tables if missing,
 /// rebuilds if schema version mismatches or force_rebuild is true.
@@ -11,7 +18,25 @@ pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     std::fs::create_dir_all(cache_dir).context("Failed to create cache directory")?;
 
     let db_path = cache_dir.join("index.duckdb");
-    let conn = Connection::open(&db_path).context("Failed to open cache database")?;
+    let conn = connect(cache_dir, &db_path)?;
+
+    if force_rebuild || needs_rebuild(&conn)? {
+        rebuild(&conn)?;
+    }
+
+    Ok(conn)
+}
+
+fn connect(cache_dir: &Path, db_path: &Path) -> Result<Connection> {
+    // DuckDB defaults new files to the v0.10.2 storage format for backwards
+    // compatibility, which disables the ZSTD/DICT_FSST string codecs and
+    // leaves raw_records.json uncompressed. The setting only affects files
+    // created by this connection; existing files keep their format.
+    let config = Config::default()
+        .with("storage_compatibility_version", "latest")
+        .context("Failed to configure cache database")?;
+    let conn =
+        Connection::open_with_flags(db_path, config).context("Failed to open cache database")?;
 
     // Keep optional DuckDB extensions alongside cq's cache instead of writing
     // into the user's global ~/.duckdb directory. The FTS extension is fetched
@@ -27,11 +52,20 @@ pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     ))
     .context("Failed to configure DuckDB extension directory")?;
 
-    if force_rebuild || needs_rebuild(&conn)? {
-        rebuild(&conn)?;
-    }
-
     Ok(conn)
+}
+
+/// The storage format tag of the open cache file, e.g. `v1.5.0+`.
+pub fn storage_version(conn: &Connection) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT tags['storage_version'] FROM duckdb_databases()
+         WHERE database_name = current_database()",
+        [],
+        |r| r.get(0),
+    )
+    .optional()
+    .context("Failed to read cache storage version")
+    .map(Option::flatten)
 }
 
 /// Determine the cache directory path.
