@@ -18,22 +18,76 @@ pub const STORAGE_VERSION_TAG: &str = "v1.5.0+";
 /// to the current storage format and returns its free blocks to the OS.
 /// Safe because the cache only mirrors transcript files that are still on
 /// disk; see docs/adr/0002-recreate-cache-file-on-rebuild.md.
+///
+/// Recreating needs a window with no DuckDB connection open, so it is
+/// serialized with other cq processes through `index.lock`. The lock is
+/// released before returning, because the indexer takes it again.
 pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     std::fs::create_dir_all(cache_dir).context("Failed to create cache directory")?;
 
     let db_path = cache_dir.join("index.duckdb");
-    let mut conn = connect(cache_dir, &db_path)?;
+    let existed = db_path.exists();
+    let conn = connect(cache_dir, &db_path)?;
 
-    if force_rebuild || needs_rebuild(&conn)? {
-        // DuckDB holds an exclusive lock on the file while `conn` is open,
-        // so no other cq process has it open at this point.
-        drop(conn);
-        remove_database(&db_path)?;
-        conn = connect(cache_dir, &db_path)?;
+    // A brand-new file is already at the current storage format.
+    if !existed {
         create_schema(&conn)?;
+        return Ok(conn);
+    }
+    if !force_rebuild && !needs_rebuild(&conn)? {
+        return Ok(conn);
     }
 
+    // Once `conn` is dropped nothing holds the file, so another cq process
+    // could open or recreate it. Take index.lock, and re-check under it in
+    // case another process already recreated the file.
+    drop(conn);
+    let _lock = lock_index(cache_dir)?;
+    if !force_rebuild {
+        let conn = connect(cache_dir, &db_path)?;
+        if !needs_rebuild(&conn)? {
+            return Ok(conn);
+        }
+        drop(conn);
+    }
+    remove_database(&db_path)?;
+    let conn = connect(cache_dir, &db_path)?;
+    create_schema(&conn)?;
     Ok(conn)
+}
+
+/// Open (creating if needed) `index.lock` in the cache directory.
+pub fn open_lock_file(cache_dir: &Path) -> Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(cache_dir.join("index.lock"))
+        .context("Failed to open lock file")
+}
+
+/// Poll for an exclusive lock on `file` for up to 5s. True if acquired.
+pub fn wait_for_lock(file: &std::fs::File) -> bool {
+    use fs2::FileExt;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if file.try_lock_exclusive().is_ok() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// Take the exclusive index lock, waiting up to 5s. Released on drop.
+pub fn lock_index(cache_dir: &Path) -> Result<std::fs::File> {
+    let file = open_lock_file(cache_dir)?;
+    if !wait_for_lock(&file) {
+        anyhow::bail!("index locked by another process after 5s, try again shortly");
+    }
+    Ok(file)
 }
 
 /// Delete the cache file and its write-ahead log, if present.

@@ -71,28 +71,11 @@ pub fn sync_sources(
         }
     }
 
-    let lock_path = cache_dir.join("index.lock");
-    let lock_file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(&lock_path)
-        .context("Failed to open lock file")?;
+    let lock_file = cache::open_lock_file(cache_dir)?;
 
     let lock_acquired = match mode {
         SyncMode::Auto => lock_file.try_lock_exclusive().is_ok(),
-        SyncMode::Force => {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            loop {
-                if lock_file.try_lock_exclusive().is_ok() {
-                    break true;
-                }
-                if std::time::Instant::now() >= deadline {
-                    break false;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        }
+        SyncMode::Force => cache::wait_for_lock(&lock_file),
         SyncMode::Skip => unreachable!(),
     };
 

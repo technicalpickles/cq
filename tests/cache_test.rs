@@ -459,3 +459,35 @@ fn force_rebuild_recreates_file() {
         "--reindex should start from a fresh file"
     );
 }
+
+fn hold_index_lock(dir: &std::path::Path) -> std::fs::File {
+    use fs2::FileExt;
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(dir.join("index.lock"))
+        .unwrap();
+    f.lock_exclusive().unwrap();
+    f
+}
+
+#[test]
+fn recreating_legacy_file_waits_on_index_lock() {
+    let dir = cache_dir();
+    write_cache_file(dir.path(), "v0.10.2");
+    let _held = hold_index_lock(dir.path());
+
+    let err = cq::cache::open(dir.path(), false).unwrap_err();
+    assert!(err.to_string().contains("locked"), "got: {err}");
+}
+
+#[test]
+fn current_file_open_ignores_index_lock() {
+    let dir = cache_dir();
+    write_cache_file(dir.path(), "latest");
+    let _held = hold_index_lock(dir.path());
+
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    assert!(marker_exists(&conn));
+}
