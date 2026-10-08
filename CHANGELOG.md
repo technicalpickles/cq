@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/technicalpickles/cq/compare/v0.9.1...v0.10.0) (2026-10-08)
+
+
+### Features
+
+* add prompt provenance columns to messages view ([#62](https://github.com/technicalpickles/cq/issues/62)) ([fc9ab0b](https://github.com/technicalpickles/cq/commit/fc9ab0bae530c3cccfeea88a2ee1ae8380a4697a))
+
+
+### Performance Improvements
+
+* **cache:** compress the cache by recreating it at DuckDB's latest storage format ([#65](https://github.com/technicalpickles/cq/issues/65)) ([686d5b6](https://github.com/technicalpickles/cq/commit/686d5b64f58be44adfbacc6474a7d927c1a7e9fd))
+
 ## [0.9.1](https://github.com/technicalpickles/cq/compare/v0.9.0...v0.9.1) (2026-09-16)
 
 
