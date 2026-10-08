@@ -12,19 +12,43 @@ pub const SCHEMA_VERSION: i32 = 7;
 /// existing caches get recreated once in the newer format.
 pub const STORAGE_VERSION_TAG: &str = "v1.5.0+";
 
-/// Open or create the cache database. Creates tables if missing,
-/// rebuilds if schema version mismatches or force_rebuild is true.
+/// Open or create the cache database. Recreates the file from scratch when
+/// the schema version or storage format is out of date, or force_rebuild is
+/// true. Recreating (not dropping tables in place) is what moves an old file
+/// to the current storage format and returns its free blocks to the OS.
+/// Safe because the cache only mirrors transcript files that are still on
+/// disk; see docs/adr/0002-recreate-cache-file-on-rebuild.md.
 pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     std::fs::create_dir_all(cache_dir).context("Failed to create cache directory")?;
 
     let db_path = cache_dir.join("index.duckdb");
-    let conn = connect(cache_dir, &db_path)?;
+    let mut conn = connect(cache_dir, &db_path)?;
 
     if force_rebuild || needs_rebuild(&conn)? {
-        rebuild(&conn)?;
+        // DuckDB holds an exclusive lock on the file while `conn` is open,
+        // so no other cq process has it open at this point.
+        drop(conn);
+        remove_database(&db_path)?;
+        conn = connect(cache_dir, &db_path)?;
+        create_schema(&conn)?;
     }
 
     Ok(conn)
+}
+
+/// Delete the cache file and its write-ahead log, if present.
+fn remove_database(db_path: &Path) -> Result<()> {
+    let wal_path = db_path.with_extension("duckdb.wal");
+    for path in [db_path, wal_path.as_path()] {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(e).with_context(|| format!("Failed to remove {}", path.display()))
+            }
+        }
+    }
+    Ok(())
 }
 
 fn connect(cache_dir: &Path, db_path: &Path) -> Result<Connection> {
@@ -79,6 +103,10 @@ pub fn cache_dir() -> Result<std::path::PathBuf> {
 }
 
 fn needs_rebuild(conn: &Connection) -> Result<bool> {
+    if storage_version(conn)?.as_deref() != Some(STORAGE_VERSION_TAG) {
+        return Ok(true);
+    }
+
     // Check if cache_meta table exists
     let table_exists: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_name = 'cache_meta'",
@@ -101,20 +129,7 @@ fn needs_rebuild(conn: &Connection) -> Result<bool> {
     }
 }
 
-fn rebuild(conn: &Connection) -> Result<()> {
-    // Drop existing tables if they exist
-    conn.execute_batch(
-        "DROP SCHEMA IF EXISTS fts_main_cq_fts_messages CASCADE;
-         DROP SCHEMA IF EXISTS fts_main_cq_fts_messages_0 CASCADE;
-         DROP SCHEMA IF EXISTS fts_main_cq_fts_messages_1 CASCADE;
-         DROP TABLE IF EXISTS cq_fts_messages;
-         DROP TABLE IF EXISTS cq_fts_messages_0;
-         DROP TABLE IF EXISTS cq_fts_messages_1;
-         DROP TABLE IF EXISTS raw_records;
-         DROP TABLE IF EXISTS file_registry;
-         DROP TABLE IF EXISTS cache_meta;",
-    )?;
-
+fn create_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         // fts_sync_at answers \"has the data changed since we indexed?\" and
         // fts_built_at answers \"how old is the index?\". The staleness window
