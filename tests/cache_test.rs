@@ -344,3 +344,150 @@ fn skip_sync_returns_immediately() {
     assert!(result.skipped);
     assert_eq!(result.stats.added, 0);
 }
+
+#[test]
+fn fresh_cache_uses_current_storage_version() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+
+    assert_eq!(
+        cq::cache::storage_version(&conn).unwrap().as_deref(),
+        Some(cq::cache::STORAGE_VERSION_TAG),
+        "a new cache file should use DuckDB's latest storage format; if a DuckDB \
+         upgrade changed the tag, update STORAGE_VERSION_TAG (existing caches \
+         will be recreated once on first open)"
+    );
+}
+
+#[test]
+fn large_json_records_are_compressed() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+
+    // ~11 KB per record, the size range that stayed Uncompressed under the
+    // v0.10.2 storage format.
+    conn.execute_batch(
+        "INSERT INTO raw_records (source_file, json)
+         SELECT 'big.jsonl', json_object('i', i, 'pad', repeat('lorem ipsum dolor ', 600))
+         FROM range(2000) r(i);
+         CHECKPOINT;",
+    )
+    .unwrap();
+
+    let (uncompressed, compressed): (i64, i64) = conn
+        .query_row(
+            "SELECT count(*) FILTER (WHERE compression = 'Uncompressed'),
+                    count(*) FILTER (WHERE compression <> 'Uncompressed')
+             FROM pragma_storage_info('raw_records')
+             WHERE column_name = 'json' AND segment_type <> 'VALIDITY'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        uncompressed, 0,
+        "raw_records.json should not be stored Uncompressed"
+    );
+    assert!(
+        compressed > 0,
+        "expected at least one compressed json segment; none were inspected"
+    );
+}
+
+/// Write a cache file in the given storage format whose cache_meta otherwise
+/// passes the schema-version check, plus a marker table that only survives
+/// if the file is NOT recreated.
+fn write_cache_file(dir: &std::path::Path, storage: &str) {
+    let config = duckdb::Config::default()
+        .with("storage_compatibility_version", storage)
+        .unwrap();
+    let conn = duckdb::Connection::open_with_flags(dir.join("index.duckdb"), config).unwrap();
+    conn.execute_batch(&format!(
+        "CREATE TABLE cache_meta (version INTEGER NOT NULL);
+         INSERT INTO cache_meta VALUES ({});
+         CREATE TABLE marker (x INTEGER);",
+        cq::cache::SCHEMA_VERSION
+    ))
+    .unwrap();
+}
+
+fn marker_exists(conn: &duckdb::Connection) -> bool {
+    conn.query_row(
+        "SELECT count(*) > 0 FROM information_schema.tables WHERE table_name = 'marker'",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn legacy_storage_file_is_recreated() {
+    let dir = cache_dir();
+    write_cache_file(dir.path(), "v0.10.2");
+
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    assert!(
+        !marker_exists(&conn),
+        "legacy-format file should be recreated"
+    );
+    assert_eq!(
+        cq::cache::storage_version(&conn).unwrap().as_deref(),
+        Some(cq::cache::STORAGE_VERSION_TAG)
+    );
+}
+
+#[test]
+fn current_storage_file_is_kept() {
+    let dir = cache_dir();
+    write_cache_file(dir.path(), "latest");
+
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    assert!(
+        marker_exists(&conn),
+        "a current-format file at the current schema version must not be recreated"
+    );
+}
+
+#[test]
+fn force_rebuild_recreates_file() {
+    let dir = cache_dir();
+    write_cache_file(dir.path(), "latest");
+
+    let conn = cq::cache::open(dir.path(), true).unwrap();
+    assert!(
+        !marker_exists(&conn),
+        "--reindex should start from a fresh file"
+    );
+}
+
+fn hold_index_lock(dir: &std::path::Path) -> std::fs::File {
+    use fs2::FileExt;
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(dir.join("index.lock"))
+        .unwrap();
+    f.lock_exclusive().unwrap();
+    f
+}
+
+#[test]
+fn recreating_legacy_file_waits_on_index_lock() {
+    let dir = cache_dir();
+    write_cache_file(dir.path(), "v0.10.2");
+    let _held = hold_index_lock(dir.path());
+
+    let err = cq::cache::open(dir.path(), false).unwrap_err();
+    assert!(err.to_string().contains("locked"), "got: {err}");
+}
+
+#[test]
+fn current_file_open_ignores_index_lock() {
+    let dir = cache_dir();
+    write_cache_file(dir.path(), "latest");
+    let _held = hold_index_lock(dir.path());
+
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    assert!(marker_exists(&conn));
+}

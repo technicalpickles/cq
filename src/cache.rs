@@ -1,17 +1,115 @@
 use anyhow::{Context, Result};
-use duckdb::Connection;
 use duckdb::OptionalExt;
+use duckdb::{Config, Connection};
 use std::path::Path;
 
 pub const SCHEMA_VERSION: i32 = 7;
 
-/// Open or create the cache database. Creates tables if missing,
-/// rebuilds if schema version mismatches or force_rebuild is true.
+/// The `storage_version` tag DuckDB stamps on files this build creates; a
+/// cache with any other tag is recreated on open. Update it when a DuckDB bump
+/// fails `fresh_cache_uses_current_storage_version`: left stale, every new
+/// file mismatches and the cache is recreated on every open.
+pub const STORAGE_VERSION_TAG: &str = "v1.5.0+";
+
+/// Open or create the cache database. Recreates the file from scratch when
+/// the schema version or storage format is out of date, or force_rebuild is
+/// true. Recreating (not dropping tables in place) is what moves an old file
+/// to the current storage format and returns its free blocks to the OS.
+/// Safe because the cache only mirrors transcript files that are still on
+/// disk; see docs/adr/0002-recreate-cache-file-on-rebuild.md.
+///
+/// Recreating needs a window with no DuckDB connection open, so it is
+/// serialized with other cq processes through `index.lock`. The lock is
+/// released before returning, because the indexer takes it again.
 pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     std::fs::create_dir_all(cache_dir).context("Failed to create cache directory")?;
 
     let db_path = cache_dir.join("index.duckdb");
-    let conn = Connection::open(&db_path).context("Failed to open cache database")?;
+    let existed = db_path.exists();
+    let conn = connect(cache_dir, &db_path)?;
+
+    // A brand-new file is already at the current storage format.
+    if !existed {
+        create_schema(&conn)?;
+        return Ok(conn);
+    }
+    if !force_rebuild && !needs_rebuild(&conn)? {
+        return Ok(conn);
+    }
+
+    // Once `conn` is dropped nothing holds the file, so another cq process
+    // could open or recreate it. Take index.lock, and re-check under it in
+    // case another process already recreated the file.
+    drop(conn);
+    let _lock = lock_index(cache_dir)?;
+    if !force_rebuild {
+        let conn = connect(cache_dir, &db_path)?;
+        if !needs_rebuild(&conn)? {
+            return Ok(conn);
+        }
+        drop(conn);
+    }
+    remove_database(&db_path)?;
+    let conn = connect(cache_dir, &db_path)?;
+    create_schema(&conn)?;
+    Ok(conn)
+}
+
+pub fn open_lock_file(cache_dir: &Path) -> Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(cache_dir.join("index.lock"))
+        .context("Failed to open lock file")
+}
+
+/// Poll for an exclusive lock on `file` for up to 5s. True if acquired.
+pub fn wait_for_lock(file: &std::fs::File) -> bool {
+    use fs2::FileExt;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if file.try_lock_exclusive().is_ok() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// Take the exclusive index lock, waiting up to 5s. Released on drop.
+pub fn lock_index(cache_dir: &Path) -> Result<std::fs::File> {
+    let file = open_lock_file(cache_dir)?;
+    if !wait_for_lock(&file) {
+        anyhow::bail!("index locked by another process after 5s, try again shortly");
+    }
+    Ok(file)
+}
+
+fn remove_database(db_path: &Path) -> Result<()> {
+    let wal_path = db_path.with_extension("duckdb.wal");
+    for path in [db_path, wal_path.as_path()] {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(e).with_context(|| format!("Failed to remove {}", path.display()))
+            }
+        }
+    }
+    Ok(())
+}
+
+fn connect(cache_dir: &Path, db_path: &Path) -> Result<Connection> {
+    // DuckDB's default v0.10.2 format (tag `v1.0.0+`) disables ZSTD/DICT_FSST,
+    // leaving raw_records.json uncompressed. Only affects newly created files.
+    let config = Config::default()
+        .with("storage_compatibility_version", "latest")
+        .context("Failed to configure cache database")?;
+    let conn =
+        Connection::open_with_flags(db_path, config).context("Failed to open cache database")?;
 
     // Keep optional DuckDB extensions alongside cq's cache instead of writing
     // into the user's global ~/.duckdb directory. The FTS extension is fetched
@@ -27,11 +125,20 @@ pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     ))
     .context("Failed to configure DuckDB extension directory")?;
 
-    if force_rebuild || needs_rebuild(&conn)? {
-        rebuild(&conn)?;
-    }
-
     Ok(conn)
+}
+
+/// The storage format tag of the open cache file, e.g. `v1.5.0+`.
+pub fn storage_version(conn: &Connection) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT tags['storage_version'] FROM duckdb_databases()
+         WHERE database_name = current_database()",
+        [],
+        |r| r.get(0),
+    )
+    .optional()
+    .context("Failed to read cache storage version")
+    .map(Option::flatten)
 }
 
 /// Determine the cache directory path.
@@ -45,6 +152,10 @@ pub fn cache_dir() -> Result<std::path::PathBuf> {
 }
 
 fn needs_rebuild(conn: &Connection) -> Result<bool> {
+    if storage_version(conn)?.as_deref() != Some(STORAGE_VERSION_TAG) {
+        return Ok(true);
+    }
+
     // Check if cache_meta table exists
     let table_exists: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_name = 'cache_meta'",
@@ -67,20 +178,7 @@ fn needs_rebuild(conn: &Connection) -> Result<bool> {
     }
 }
 
-fn rebuild(conn: &Connection) -> Result<()> {
-    // Drop existing tables if they exist
-    conn.execute_batch(
-        "DROP SCHEMA IF EXISTS fts_main_cq_fts_messages CASCADE;
-         DROP SCHEMA IF EXISTS fts_main_cq_fts_messages_0 CASCADE;
-         DROP SCHEMA IF EXISTS fts_main_cq_fts_messages_1 CASCADE;
-         DROP TABLE IF EXISTS cq_fts_messages;
-         DROP TABLE IF EXISTS cq_fts_messages_0;
-         DROP TABLE IF EXISTS cq_fts_messages_1;
-         DROP TABLE IF EXISTS raw_records;
-         DROP TABLE IF EXISTS file_registry;
-         DROP TABLE IF EXISTS cache_meta;",
-    )?;
-
+fn create_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         // fts_sync_at answers \"has the data changed since we indexed?\" and
         // fts_built_at answers \"how old is the index?\". The staleness window
