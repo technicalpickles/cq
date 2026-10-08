@@ -5,13 +5,10 @@ use std::path::Path;
 
 pub const SCHEMA_VERSION: i32 = 7;
 
-/// The `storage_version` tag DuckDB stamps on a file this build creates.
-/// Storage format is fixed when a file is created, so a cache with any other
-/// tag is recreated on open. If a DuckDB upgrade changes the tag, the
-/// `fresh_cache_uses_current_storage_version` test fails; update this and
-/// existing caches get recreated once in the newer format. Leaving it stale
-/// is worse than a failing test: every new file would mismatch, so the cache
-/// would be recreated on every open.
+/// The `storage_version` tag DuckDB stamps on files this build creates; a
+/// cache with any other tag is recreated on open. Update it when a DuckDB bump
+/// fails `fresh_cache_uses_current_storage_version`: left stale, every new
+/// file mismatches and the cache is recreated on every open.
 pub const STORAGE_VERSION_TAG: &str = "v1.5.0+";
 
 /// Open or create the cache database. Recreates the file from scratch when
@@ -58,7 +55,6 @@ pub fn open(cache_dir: &Path, force_rebuild: bool) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Open (creating if needed) `index.lock` in the cache directory.
 pub fn open_lock_file(cache_dir: &Path) -> Result<std::fs::File> {
     std::fs::OpenOptions::new()
         .create(true)
@@ -92,7 +88,6 @@ pub fn lock_index(cache_dir: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 
-/// Delete the cache file and its write-ahead log, if present.
 fn remove_database(db_path: &Path) -> Result<()> {
     let wal_path = db_path.with_extension("duckdb.wal");
     for path in [db_path, wal_path.as_path()] {
@@ -108,11 +103,8 @@ fn remove_database(db_path: &Path) -> Result<()> {
 }
 
 fn connect(cache_dir: &Path, db_path: &Path) -> Result<Connection> {
-    // DuckDB defaults new files to the v0.10.2 storage format (files report
-    // storage_version tag `v1.0.0+`) for backwards compatibility, which
-    // disables the ZSTD/DICT_FSST string codecs and leaves raw_records.json
-    // uncompressed. The setting only affects files created by this
-    // connection; existing files keep their format.
+    // DuckDB's default v0.10.2 format (tag `v1.0.0+`) disables ZSTD/DICT_FSST,
+    // leaving raw_records.json uncompressed. Only affects newly created files.
     let config = Config::default()
         .with("storage_compatibility_version", "latest")
         .context("Failed to configure cache database")?;
