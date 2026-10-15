@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/technicalpickles/cq/compare/v0.10.0...v0.10.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* document glibc 2.35 minimum for Linux release binaries ([#67](https://github.com/technicalpickles/cq/issues/67)) ([d5f9323](https://github.com/technicalpickles/cq/commit/d5f932323c868e62aeae236ec71d0f4f584f72d3))
+
 ## [0.10.0](https://github.com/technicalpickles/cq/compare/v0.9.1...v0.10.0) (2026-10-08)
 
 
