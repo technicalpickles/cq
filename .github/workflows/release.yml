@@ -41,10 +41,15 @@ jobs:
             os: macos-15
           - target: x86_64-apple-darwin
             os: macos-15-intel
+          # Linux builds stay on 22.04 (glibc 2.35) on purpose: a gnu binary
+          # needs at least the glibc it was built against, so building on a
+          # newer image (ubuntu-latest is 24.04, glibc 2.39) produces binaries
+          # that won't run on older distros like Ubuntu 22.04. Don't bump these
+          # to -latest.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-22.04-arm
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
