@@ -81,7 +81,7 @@ The downloaded `cq` is a small pointer file, not the binary itself: running it r
 
 ### Prebuilt binary
 
-Grab the archive for your platform from the [latest release](https://github.com/technicalpickles/cq/releases/latest), extract it, and put `cq` on your `PATH`. Builds are published for macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64).
+Grab the archive for your platform from the [latest release](https://github.com/technicalpickles/cq/releases/latest), extract it, and put `cq` on your `PATH`. Builds are published for macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64). The Linux builds link against glibc and need glibc 2.35 or newer (Ubuntu 22.04 and later, Debian 12 and later).
 
 ### From source
 
