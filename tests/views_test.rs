@@ -118,6 +118,47 @@ fn messages_view_tool_count() {
 }
 
 #[test]
+fn messages_view_array_text_is_first_text_block() {
+    let conn = setup_db("multi_text_block_session.jsonl");
+    let text = |uuid: &str| -> Option<String> {
+        conn.query_row("SELECT text FROM messages WHERE uuid = ?", [uuid], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    // Several text blocks: the first wins, every time (no thread-dependent pick).
+    assert_eq!(text("a1").as_deref(), Some("first block"));
+    assert_eq!(text("u2").as_deref(), Some("user first"));
+    // No text block at all: NULL, not an error.
+    assert_eq!(text("a2"), None);
+    // Tool blocks before the first text block: still the first *text* block.
+    assert_eq!(text("a3").as_deref(), Some("after tools"));
+    // Empty content array: NULL, not an error.
+    assert_eq!(text("a4"), None);
+}
+
+#[test]
+fn messages_view_array_tool_count_ignores_text_blocks() {
+    let conn = setup_db("multi_text_block_session.jsonl");
+    let tool_count = |uuid: &str| -> i64 {
+        conn.query_row(
+            "SELECT tool_count FROM messages WHERE uuid = ?",
+            [uuid],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(tool_count("a1"), 1);
+    assert_eq!(tool_count("a2"), 1);
+    // tool_use and server_tool_use both count.
+    assert_eq!(tool_count("a3"), 2);
+    // Empty content array on an assistant turn is 0, never NULL.
+    assert_eq!(tool_count("a4"), 0);
+    // User turns never count tools, even with array content.
+    assert_eq!(tool_count("u2"), 0);
+}
+
+#[test]
 fn messages_view_model() {
     let conn = setup_db("simple_session.jsonl");
     let model: String = conn
