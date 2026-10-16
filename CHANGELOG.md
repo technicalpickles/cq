@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.2](https://github.com/technicalpickles/cq/compare/v0.10.1...v0.10.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* cap DuckDB threads and memory per cq process ([#70](https://github.com/technicalpickles/cq/issues/70)) ([6b60cdc](https://github.com/technicalpickles/cq/commit/6b60cdcb6ac6c716985331162fda718277502397))
+* stop messages view from running UNNEST subqueries on every query ([#69](https://github.com/technicalpickles/cq/issues/69)) ([052cd9d](https://github.com/technicalpickles/cq/commit/052cd9dffcb402e7a45302154119baa07558a8b8))
+
 ## [0.10.1](https://github.com/technicalpickles/cq/compare/v0.10.0...v0.10.1) (2026-10-15)
 
 
