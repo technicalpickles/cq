@@ -44,6 +44,10 @@ Staleness is also a deliberate default, not only a fallback. `cq search` lets it
 
 The one place cq refuses to serve stale is when there is nothing to serve. `--no-reindex` with no search index at all errors instead of silently paying for a build, because "stale" is not an option that exists yet.
 
+## Bounded by default
+
+cq is a tool that many processes run at once, often in the background of someone else's work. So each process caps its own DuckDB threads (half the cores) and memory (4GB) rather than taking the whole machine, and a per-process cap is as far as it goes: it can't see the other cq processes. The caps are a safety net, not the performance plan; a view that needs gigabytes for a `count(*)` is a bug to fix, not a limit to raise. Both are overridable (`CQ_DUCKDB_THREADS`, `CQ_DUCKDB_MEMORY_LIMIT`, `auto` to opt out), and when a query still hits the memory cap, cq says what the cap is and how to change it.
+
 ## Explicit always wins
 
 Automatic behavior (smart sync, mtime checks, lock fallbacks) should do the right thing by default. But when the user says `--reindex` or `--no-reindex`, that overrides all smartness. The escape hatch is never hidden, never conditional.

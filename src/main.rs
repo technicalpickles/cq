@@ -279,7 +279,20 @@ enum Command {
     },
 }
 
-fn main() -> Result<()> {
+fn main() {
+    // Same output as returning the error from main (`Error: {e:?}`), plus a hint
+    // when the failure is DuckDB hitting the memory cap cq set.
+    if let Err(e) = run() {
+        let message = format!("{e:?}");
+        eprintln!("Error: {message}");
+        if let Some(hint) = cq::cache::out_of_memory_hint(&message) {
+            eprintln!("{}", cq::style::hint(&hint));
+        }
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // Wide mode: explicit flag or auto-detect when stdout is not a terminal (piped)
@@ -630,6 +643,9 @@ fn main() -> Result<()> {
                 eprintln!("Error: {e}");
                 if let Some(hint) = sql::timestamp_error_hint(&e.to_string()) {
                     eprintln!("{}", cq::style::hint(hint));
+                }
+                if let Some(hint) = cq::cache::out_of_memory_hint(&e.to_string()) {
+                    eprintln!("{}", cq::style::hint(&hint));
                 }
                 std::process::exit(1);
             }

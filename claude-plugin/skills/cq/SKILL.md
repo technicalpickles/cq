@@ -133,6 +133,10 @@ What to do about it:
 - `CQ_FTS_MAX_AGE` changes the window (`0s` refreshes every search, `1h` is
   lazier). `--no-reindex` skips the refresh entirely and errors if no index has
   been built yet.
+- cq caps DuckDB per process (`CQ_DUCKDB_THREADS`, default half the cores;
+  `CQ_DUCKDB_MEMORY_LIMIT`, default `4GB`; `auto` removes either cap). If a query
+  fails with `Out of Memory Error`, cq prints the effective limits after the error:
+  narrow the query first, or raise `CQ_DUCKDB_MEMORY_LIMIT` (for example `8GB`).
 
 ## Working With cq
 

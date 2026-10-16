@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use duckdb::OptionalExt;
 use duckdb::{Config, Connection};
 use std::path::Path;
@@ -125,7 +125,123 @@ fn connect(cache_dir: &Path, db_path: &Path) -> Result<Connection> {
     ))
     .context("Failed to configure DuckDB extension directory")?;
 
+    apply_resource_limits(&conn, cache_dir)?;
+
     Ok(conn)
+}
+
+// DuckDB defaults to every core and 80% of RAM, and concurrent sessions stack.
+const DEFAULT_MEMORY_LIMIT: &str = "4GB";
+const AUTO: &str = "auto";
+
+/// DuckDB resource limits. `None` leaves DuckDB's own default in place.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ResourceLimits {
+    pub threads: Option<usize>,
+    pub memory_limit: Option<String>,
+}
+
+impl ResourceLimits {
+    pub fn from_env() -> Result<Self> {
+        let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
+        Self::resolve(
+            std::env::var("CQ_DUCKDB_THREADS").ok().as_deref(),
+            std::env::var("CQ_DUCKDB_MEMORY_LIMIT").ok().as_deref(),
+            cores,
+        )
+    }
+
+    fn resolve(threads: Option<&str>, memory_limit: Option<&str>, cores: usize) -> Result<Self> {
+        let threads = match threads.map(str::trim) {
+            None => Some((cores / 2).max(1)),
+            Some(v) if v.eq_ignore_ascii_case(AUTO) => None,
+            Some(v) => Some(v.parse::<usize>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                anyhow!(
+                    "Invalid CQ_DUCKDB_THREADS '{v}'\n\
+                     Valid values: a positive integer, or '{AUTO}' for DuckDB's default"
+                )
+            })?),
+        };
+        let memory_limit = match memory_limit.map(str::trim) {
+            None => Some(DEFAULT_MEMORY_LIMIT.to_string()),
+            Some(v) if v.eq_ignore_ascii_case(AUTO) => None,
+            Some(v) if is_memory_size(v) => Some(v.to_string()),
+            Some(v) => anyhow::bail!(
+                "Invalid CQ_DUCKDB_MEMORY_LIMIT '{v}'\n\
+                 Valid values: a size such as 4GB or 512MB, or '{AUTO}' for DuckDB's default"
+            ),
+        };
+        Ok(Self {
+            threads,
+            memory_limit,
+        })
+    }
+
+    fn describe(&self) -> String {
+        let threads = self.threads.map_or(AUTO.to_string(), |n| n.to_string());
+        let memory = self.memory_limit.as_deref().unwrap_or(AUTO);
+        format!("threads={threads}, memory_limit={memory}")
+    }
+}
+
+/// Whether `v` looks like a DuckDB size: a number plus a unit (`4GB`, `512 MiB`) or a percentage.
+fn is_memory_size(v: &str) -> bool {
+    let split = v
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(v.len());
+    let (number, unit) = v.split_at(split);
+    number.parse::<f64>().is_ok_and(|n| n > 0.0)
+        && ["%", "b", "kb", "mb", "gb", "tb", "kib", "mib", "gib", "tib"]
+            .iter()
+            .any(|u| unit.trim().eq_ignore_ascii_case(u))
+}
+
+/// A hint to print after a DuckDB out-of-memory error, naming the cap cq set
+/// and how to change it. `None` for any other error, or when no cap is set.
+pub fn out_of_memory_hint(error: &str) -> Option<String> {
+    out_of_memory_hint_for(error, &ResourceLimits::from_env().ok()?)
+}
+
+fn out_of_memory_hint_for(error: &str, limits: &ResourceLimits) -> Option<String> {
+    if !error.contains("Out of Memory Error") || limits.memory_limit.is_none() {
+        return None;
+    }
+    Some(format!(
+        "Hint: cq limits DuckDB to {}. Raise it with CQ_DUCKDB_MEMORY_LIMIT (for example 8GB), \
+         or set it to '{AUTO}' to remove the cap. If the disk holding the cache is nearly full, \
+         free some space: DuckDB spills past the limit there.",
+        limits.describe()
+    ))
+}
+
+fn apply_resource_limits(conn: &Connection, cache_dir: &Path) -> Result<()> {
+    let limits = ResourceLimits::from_env()?;
+    let mut settings = Vec::new();
+    if let Some(threads) = limits.threads {
+        settings.push(format!("SET threads = {threads}"));
+    }
+    if let Some(memory_limit) = &limits.memory_limit {
+        let escaped = memory_limit.replace('\'', "''");
+        settings.push(format!("SET memory_limit = '{escaped}'"));
+    }
+
+    // Without this, work past memory_limit fails instead of spilling to disk. One
+    // directory per process so concurrent cq runs never share spill files. DuckDB
+    // creates that directory on first spill (not its parent), so a run that never
+    // spills leaves nothing behind. Creating the parent is best effort: if it
+    // fails, only a query that needs to spill fails, with DuckDB naming the path.
+    let spill_root = cache_dir.join("tmp");
+    let _ = std::fs::create_dir_all(&spill_root);
+    let temp_dir = spill_root.join(std::process::id().to_string());
+    let escaped_temp_dir = temp_dir.to_string_lossy().replace('\'', "''");
+    settings.push(format!("SET temp_directory = '{escaped_temp_dir}'"));
+
+    conn.execute_batch(&settings.join("; ")).with_context(|| {
+        format!(
+            "Failed to apply DuckDB resource limits ({})",
+            limits.describe()
+        )
+    })
 }
 
 /// The storage format tag of the open cache file, e.g. `v1.5.0+`.
@@ -278,4 +394,95 @@ pub fn fts_built_at(conn: &Connection) -> Result<i64> {
         })
         .with_context(|| "Failed to read fts_built_at")?;
     Ok(ts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn limits(threads: Option<&str>, memory: Option<&str>, cores: usize) -> Result<ResourceLimits> {
+        ResourceLimits::resolve(threads, memory, cores)
+    }
+
+    #[test]
+    fn defaults_to_half_the_cores_and_four_gigabytes() {
+        let l = limits(None, None, 12).unwrap();
+        assert_eq!(l.threads, Some(6));
+        assert_eq!(l.memory_limit.as_deref(), Some("4GB"));
+    }
+
+    #[test]
+    fn single_core_machine_still_gets_one_thread() {
+        assert_eq!(limits(None, None, 1).unwrap().threads, Some(1));
+    }
+
+    #[test]
+    fn env_values_override_the_defaults() {
+        let l = limits(Some(" 3 "), Some("512MB"), 12).unwrap();
+        assert_eq!(l.threads, Some(3));
+        assert_eq!(l.memory_limit.as_deref(), Some("512MB"));
+    }
+
+    #[test]
+    fn auto_leaves_duckdb_defaults_in_place() {
+        let l = limits(Some("auto"), Some("AUTO"), 12).unwrap();
+        assert_eq!(
+            l,
+            ResourceLimits {
+                threads: None,
+                memory_limit: None
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_threads_lists_valid_values() {
+        for bad in ["0", "abc", "-1", ""] {
+            let msg = limits(Some(bad), None, 12).unwrap_err().to_string();
+            assert!(
+                msg.contains(&format!("Invalid CQ_DUCKDB_THREADS '{bad}'")),
+                "{msg}"
+            );
+            assert!(msg.contains("Valid values:"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn invalid_memory_limit_lists_valid_values() {
+        for bad in ["", " ", "4 gigs", "GB", "0GB", "-1GB", "4XB"] {
+            let msg = limits(None, Some(bad), 12).unwrap_err().to_string();
+            assert!(
+                msg.contains("Invalid CQ_DUCKDB_MEMORY_LIMIT"),
+                "{bad:?}: {msg}"
+            );
+            assert!(msg.contains("Valid values:"), "{bad:?}: {msg}");
+        }
+    }
+
+    #[test]
+    fn memory_limit_accepts_duckdb_size_forms() {
+        for ok in ["4GB", "512MB", "1.5 GiB", "80%", "1024b", "2tb"] {
+            assert_eq!(
+                limits(None, Some(ok), 12).unwrap().memory_limit.as_deref(),
+                Some(ok)
+            );
+        }
+    }
+
+    #[test]
+    fn out_of_memory_hint_names_the_cap_and_the_knob() {
+        let l = limits(None, None, 12).unwrap();
+        let hint = out_of_memory_hint_for("Out of Memory Error: failed to allocate", &l).unwrap();
+        assert!(hint.contains("threads=6, memory_limit=4GB"), "{hint}");
+        assert!(hint.contains("CQ_DUCKDB_MEMORY_LIMIT"), "{hint}");
+        assert!(hint.contains("disk"), "{hint}");
+    }
+
+    #[test]
+    fn out_of_memory_hint_stays_quiet_otherwise() {
+        let capped = limits(None, None, 12).unwrap();
+        assert!(out_of_memory_hint_for("Binder Error: nope", &capped).is_none());
+        let uncapped = limits(None, Some("auto"), 12).unwrap();
+        assert!(out_of_memory_hint_for("Out of Memory Error: x", &uncapped).is_none());
+    }
 }

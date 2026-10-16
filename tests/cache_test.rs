@@ -491,3 +491,18 @@ fn current_file_open_ignores_index_lock() {
     let conn = cq::cache::open(dir.path(), false).unwrap();
     assert!(marker_exists(&conn));
 }
+
+#[test]
+fn open_points_duckdb_spill_at_a_per_process_dir_in_the_cache() {
+    let cache = cache_dir();
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+
+    let temp_dir: String = conn
+        .query_row("SELECT current_setting('temp_directory')", [], |r| r.get(0))
+        .unwrap();
+    let expected = cache
+        .path()
+        .join("tmp")
+        .join(std::process::id().to_string());
+    assert_eq!(temp_dir, expected.to_str().unwrap());
+}
