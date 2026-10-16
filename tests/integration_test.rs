@@ -107,7 +107,6 @@ fn cq_cmd(env: &TestEnv) -> Command {
     // than inheriting the Codex session that happens to run the test suite.
     cmd.env_remove("CODEX_SESSION_ID");
     cmd.env_remove("CODEX_THREAD_ID");
-    // Resource limits are exercised explicitly; don't inherit the host's.
     cmd.env_remove("CQ_DUCKDB_THREADS");
     cmd.env_remove("CQ_DUCKDB_MEMORY_LIMIT");
     cmd.env("NO_COLOR", "1");
