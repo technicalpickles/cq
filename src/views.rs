@@ -146,11 +146,11 @@ pub fn claude_messages_sql() -> String {
                 json_extract_string(json, '$.type') AS type,
                 json_extract_string(json, '$.timestamp') AS timestamp,
                 json_extract_string(
-                    list_filter(CAST(json_extract(json, '$.message.content') AS JSON[]),
+                    list_filter(TRY_CAST(json_extract(json, '$.message.content') AS JSON[]),
                                 item -> json_extract_string(item, '$.type') = 'text')[1],
                     '$.text') AS text,
                 CASE WHEN json_extract_string(json, '$.type') = 'assistant' THEN
-                    CAST(len(list_filter(CAST(json_extract(json, '$.message.content') AS JSON[]),
+                    CAST(len(list_filter(TRY_CAST(json_extract(json, '$.message.content') AS JSON[]),
                                          item -> json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use'))) AS BIGINT)
                 ELSE CAST(0 AS BIGINT)
                 END AS tool_count,
