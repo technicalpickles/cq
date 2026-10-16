@@ -142,6 +142,17 @@ every search, `1h` is lazier), and `--no-reindex` to skip the refresh entirely.
 | `-B N` | | Show N messages before each match (messages, tools) |
 | `-C N` | | Shorthand for `-A N -B N` (messages, tools) |
 
+## Resource limits
+
+DuckDB defaults to every core and 80% of RAM, and several cq processes at once (one per Claude session, say) can stack up and swamp a laptop. cq caps each process instead:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CQ_DUCKDB_THREADS` | half the cores | Threads per cq process. `auto` leaves DuckDB's default. |
+| `CQ_DUCKDB_MEMORY_LIMIT` | `4GB` | DuckDB's memory limit (`512MB`, `8GB`, ...). `auto` leaves DuckDB's default. |
+
+Work past the memory limit spills to `<cache>/tmp` instead of failing where it can. Resident memory runs somewhat above the limit, since not everything goes through DuckDB's allocator. If a query hits the cap anyway, cq prints the effective limits and these variable names after the error.
+
 ## Claude sources
 
 cq indexes multiple transcript **sources**: the main config dir (`~/.claude/projects`, or `$CQ_PROJECTS_DIR`) plus every cenv env's `projects/` (discovered under `$CENV_BASE`, default `~/.local/share/cenv`). A cenv env is one kind of source; cq never shells out to cenv.
