@@ -107,6 +107,9 @@ fn cq_cmd(env: &TestEnv) -> Command {
     // than inheriting the Codex session that happens to run the test suite.
     cmd.env_remove("CODEX_SESSION_ID");
     cmd.env_remove("CODEX_THREAD_ID");
+    // Resource limits are exercised explicitly; don't inherit the host's.
+    cmd.env_remove("CQ_DUCKDB_THREADS");
+    cmd.env_remove("CQ_DUCKDB_MEMORY_LIMIT");
     cmd.env("NO_COLOR", "1");
     cmd
 }
@@ -3822,4 +3825,82 @@ fn bundle_keeps_duplicate_sidecar_basenames_distinct() {
     assert!(included.iter().all(|path| path
         .as_str()
         .is_some_and(|path| path.starts_with("sidecars/shared-") && path.ends_with(".txt"))));
+}
+
+fn duckdb_setting(env: &TestEnv, vars: &[(&str, &str)], setting: &str) -> String {
+    let mut cmd = cq_cmd(env);
+    for (k, v) in vars {
+        cmd.env(k, v);
+    }
+    let output = cmd
+        .args([
+            "sql",
+            &format!("SELECT current_setting('{setting}')::VARCHAR"),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn duckdb_is_capped_by_default() {
+    let env = setup_env(&[]);
+    // 4GB shows up as 3.7 GiB; auto leaves DuckDB's default (a share of RAM).
+    assert!(duckdb_setting(&env, &[], "memory_limit").contains("3.7 GiB"));
+    assert!(
+        !duckdb_setting(&env, &[("CQ_DUCKDB_MEMORY_LIMIT", "auto")], "memory_limit")
+            .contains("3.7 GiB")
+    );
+    let cores = std::thread::available_parallelism().unwrap().get();
+    let expected = format!("\"{}\"", (cores / 2).max(1));
+    assert!(duckdb_setting(&env, &[], "threads").contains(&expected));
+}
+
+#[test]
+fn duckdb_limits_follow_the_env_overrides() {
+    let env = setup_env(&[]);
+    assert!(duckdb_setting(&env, &[("CQ_DUCKDB_THREADS", "3")], "threads").contains("\"3\""));
+    assert!(
+        duckdb_setting(&env, &[("CQ_DUCKDB_MEMORY_LIMIT", "512MB")], "memory_limit")
+            .contains("488.2 MiB")
+    );
+}
+
+#[test]
+fn invalid_duckdb_limit_env_fails_with_valid_values() {
+    let env = setup_env(&[]);
+    for (var, value) in [
+        ("CQ_DUCKDB_THREADS", "zero"),
+        ("CQ_DUCKDB_MEMORY_LIMIT", "4 gigs"),
+    ] {
+        cq_cmd(&env)
+            .env(var, value)
+            .args(["sql", "SELECT 1"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!("Invalid {var} '{value}'")))
+            .stderr(predicate::str::contains("Valid values:"));
+    }
+}
+
+#[test]
+fn out_of_memory_error_names_the_cap_and_the_knob() {
+    let env = setup_env(&[]);
+    cq_cmd(&env)
+        .env("CQ_DUCKDB_MEMORY_LIMIT", "50MB")
+        .args([
+            "sql",
+            "SELECT length(string_agg(i::VARCHAR, ',')) FROM range(50000000) t(i)",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Out of Memory Error"))
+        .stderr(predicate::str::contains("memory_limit=50MB"))
+        .stderr(predicate::str::contains("CQ_DUCKDB_MEMORY_LIMIT"));
 }

@@ -165,11 +165,11 @@ impl ResourceLimits {
         let memory_limit = match memory_limit.map(str::trim) {
             None => Some(DEFAULT_MEMORY_LIMIT.to_string()),
             Some(v) if v.eq_ignore_ascii_case(AUTO) => None,
-            Some("") => anyhow::bail!(
-                "Invalid CQ_DUCKDB_MEMORY_LIMIT ''\n\
+            Some(v) if is_memory_size(v) => Some(v.to_string()),
+            Some(v) => anyhow::bail!(
+                "Invalid CQ_DUCKDB_MEMORY_LIMIT '{v}'\n\
                  Valid values: a size such as 4GB or 512MB, or '{AUTO}' for DuckDB's default"
             ),
-            Some(v) => Some(v.to_string()),
         };
         Ok(Self {
             threads,
@@ -184,6 +184,18 @@ impl ResourceLimits {
     }
 }
 
+/// Whether `v` looks like a DuckDB size: a number plus a unit (`4GB`, `512 MiB`) or a percentage.
+fn is_memory_size(v: &str) -> bool {
+    let split = v
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(v.len());
+    let (number, unit) = v.split_at(split);
+    number.parse::<f64>().is_ok_and(|n| n > 0.0)
+        && ["%", "b", "kb", "mb", "gb", "tb", "kib", "mib", "gib", "tib"]
+            .iter()
+            .any(|u| unit.trim().eq_ignore_ascii_case(u))
+}
+
 /// A hint to print after a DuckDB out-of-memory error, naming the cap cq set
 /// and how to change it. `None` for any other error, or when no cap is set.
 pub fn out_of_memory_hint(error: &str) -> Option<String> {
@@ -196,7 +208,8 @@ fn out_of_memory_hint_for(error: &str, limits: &ResourceLimits) -> Option<String
     }
     Some(format!(
         "Hint: cq limits DuckDB to {}. Raise it with CQ_DUCKDB_MEMORY_LIMIT (for example 8GB), \
-         or set it to '{AUTO}' to remove the cap.",
+         or set it to '{AUTO}' to remove the cap. If the disk holding the cache is nearly full, \
+         free some space: DuckDB spills past the limit there.",
         limits.describe()
     ))
 }
@@ -212,9 +225,14 @@ fn apply_resource_limits(conn: &Connection, cache_dir: &Path) -> Result<()> {
         settings.push(format!("SET memory_limit = '{escaped}'"));
     }
 
-    // Without this, work past memory_limit fails instead of spilling to disk.
-    let temp_dir = cache_dir.join("tmp");
-    std::fs::create_dir_all(&temp_dir).context("Failed to create DuckDB temp directory")?;
+    // Without this, work past memory_limit fails instead of spilling to disk. One
+    // directory per process so concurrent cq runs never share spill files. DuckDB
+    // creates that directory on first spill (not its parent), so a run that never
+    // spills leaves nothing behind. Creating the parent is best effort: if it
+    // fails, only a query that needs to spill fails, with DuckDB naming the path.
+    let spill_root = cache_dir.join("tmp");
+    let _ = std::fs::create_dir_all(&spill_root);
+    let temp_dir = spill_root.join(std::process::id().to_string());
     let escaped_temp_dir = temp_dir.to_string_lossy().replace('\'', "''");
     settings.push(format!("SET temp_directory = '{escaped_temp_dir}'"));
 
@@ -430,9 +448,25 @@ mod tests {
     }
 
     #[test]
-    fn empty_memory_limit_is_rejected() {
-        let msg = limits(None, Some(" "), 12).unwrap_err().to_string();
-        assert!(msg.contains("Invalid CQ_DUCKDB_MEMORY_LIMIT"), "{msg}");
+    fn invalid_memory_limit_lists_valid_values() {
+        for bad in ["", " ", "4 gigs", "GB", "0GB", "-1GB", "4XB"] {
+            let msg = limits(None, Some(bad), 12).unwrap_err().to_string();
+            assert!(
+                msg.contains("Invalid CQ_DUCKDB_MEMORY_LIMIT"),
+                "{bad:?}: {msg}"
+            );
+            assert!(msg.contains("Valid values:"), "{bad:?}: {msg}");
+        }
+    }
+
+    #[test]
+    fn memory_limit_accepts_duckdb_size_forms() {
+        for ok in ["4GB", "512MB", "1.5 GiB", "80%", "1024b", "2tb"] {
+            assert_eq!(
+                limits(None, Some(ok), 12).unwrap().memory_limit.as_deref(),
+                Some(ok)
+            );
+        }
     }
 
     #[test]
@@ -441,6 +475,7 @@ mod tests {
         let hint = out_of_memory_hint_for("Out of Memory Error: failed to allocate", &l).unwrap();
         assert!(hint.contains("threads=6, memory_limit=4GB"), "{hint}");
         assert!(hint.contains("CQ_DUCKDB_MEMORY_LIMIT"), "{hint}");
+        assert!(hint.contains("disk"), "{hint}");
     }
 
     #[test]

@@ -493,26 +493,16 @@ fn current_file_open_ignores_index_lock() {
 }
 
 #[test]
-fn open_caps_duckdb_threads_and_memory() {
+fn open_points_duckdb_spill_at_a_per_process_dir_in_the_cache() {
     let cache = cache_dir();
     let conn = cq::cache::open(cache.path(), false).unwrap();
-
-    let threads: i64 = conn
-        .query_row("SELECT current_setting('threads')::BIGINT", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    let cores = std::thread::available_parallelism().unwrap().get() as i64;
-    assert!(
-        threads >= 1 && threads <= cores.max(2) / 2 + 1,
-        "threads={threads}"
-    );
 
     let temp_dir: String = conn
         .query_row("SELECT current_setting('temp_directory')", [], |r| r.get(0))
         .unwrap();
-    assert!(
-        temp_dir.starts_with(cache.path().to_str().unwrap()),
-        "temp_directory={temp_dir}"
-    );
+    let expected = cache
+        .path()
+        .join("tmp")
+        .join(std::process::id().to_string());
+    assert_eq!(temp_dir, expected.to_str().unwrap());
 }

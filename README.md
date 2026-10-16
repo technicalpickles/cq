@@ -148,10 +148,10 @@ DuckDB defaults to every core and 80% of RAM, and several cq processes at once (
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CQ_DUCKDB_THREADS` | half the cores | Threads per cq process. `auto` leaves DuckDB's default. |
+| `CQ_DUCKDB_THREADS` | half the cores (at least 1) | Threads per cq process. `auto` leaves DuckDB's default. |
 | `CQ_DUCKDB_MEMORY_LIMIT` | `4GB` | DuckDB's memory limit (`512MB`, `8GB`, ...). `auto` leaves DuckDB's default. |
 
-Work past the memory limit spills to `<cache>/tmp` instead of failing where it can. Resident memory runs somewhat above the limit, since not everything goes through DuckDB's allocator. If a query hits the cap anyway, cq prints the effective limits and these variable names after the error.
+Work past the memory limit spills to `<cache>/tmp/<pid>` instead of failing where it can. Spill files can contain transcript content, are removed when the process exits, and can use a large share of free disk. Resident memory runs somewhat above the limit, since not everything goes through DuckDB's allocator. If a query hits the cap anyway, cq prints the effective limits and these variable names after the error.
 
 ## Claude sources
 
