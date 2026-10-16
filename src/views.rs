@@ -150,8 +150,8 @@ pub fn claude_messages_sql() -> String {
                                 item -> json_extract_string(item, '$.type') = 'text')[1],
                     '$.text') AS text,
                 CASE WHEN json_extract_string(json, '$.type') = 'assistant' THEN
-                    CAST(len(list_filter(TRY_CAST(json_extract(json, '$.message.content') AS JSON[]),
-                                         item -> json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use'))) AS BIGINT)
+                    CAST(COALESCE(len(list_filter(TRY_CAST(json_extract(json, '$.message.content') AS JSON[]),
+                                                  item -> json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use'))), 0) AS BIGINT)
                 ELSE CAST(0 AS BIGINT)
                 END AS tool_count,
                 json_extract_string(json, '$.message.model') AS model,
