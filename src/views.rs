@@ -106,6 +106,10 @@ fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
 }
 
 /// The Claude `messages` view body (SELECT only, no CREATE VIEW wrapper).
+///
+/// `text` and `tool_count` use `list_filter` lambdas, not correlated `UNNEST`
+/// subqueries: DuckDB runs those even when the column is never selected, which
+/// cost gigabytes per query. `text` is deterministically the first text block.
 pub fn claude_messages_sql() -> String {
     format!("WITH string_msgs AS (
             SELECT
@@ -141,14 +145,13 @@ pub fn claude_messages_sql() -> String {
                 json_extract_string(json, '$.parentUuid') AS parent_uuid,
                 json_extract_string(json, '$.type') AS type,
                 json_extract_string(json, '$.timestamp') AS timestamp,
-                (SELECT json_extract_string(item, '$.text')
-                 FROM (SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item)
-                 WHERE json_extract_string(item, '$.type') = 'text'
-                 LIMIT 1) AS text,
+                json_extract_string(
+                    list_filter(CAST(json_extract(json, '$.message.content') AS JSON[]),
+                                item -> json_extract_string(item, '$.type') = 'text')[1],
+                    '$.text') AS text,
                 CASE WHEN json_extract_string(json, '$.type') = 'assistant' THEN
-                    (SELECT COUNT(*)
-                     FROM (SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item)
-                     WHERE json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use'))
+                    CAST(len(list_filter(CAST(json_extract(json, '$.message.content') AS JSON[]),
+                                         item -> json_extract_string(item, '$.type') IN ('tool_use', 'server_tool_use'))) AS BIGINT)
                 ELSE CAST(0 AS BIGINT)
                 END AS tool_count,
                 json_extract_string(json, '$.message.model') AS model,
