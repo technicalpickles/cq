@@ -313,6 +313,10 @@ pub fn claude_hook_events_sql() -> String {
 /// The Claude `sessions` view body. Aggregates over the (possibly multi-provider)
 /// `messages` view, filtered to Claude rows so it never scoops up another harness's
 /// messages once `messages` becomes a UNION.
+///
+/// `first_user_message` is a filtered `arg_min`, not a correlated subquery back
+/// into `messages`: the subquery re-ran the whole JSON-parsing `messages` view
+/// and roughly tripled the CPU cost of every `sessions` query.
 pub fn claude_sessions_sql() -> String {
     "SELECT
             session_id,
@@ -331,18 +335,16 @@ pub fn claude_sessions_sql() -> String {
             CAST(COALESCE(SUM(tool_count) FILTER (WHERE NOT is_sidechain), 0) AS BIGINT) AS tool_call_count,
             COUNT(*) FILTER (WHERE type = 'user' AND NOT is_sidechain) AS user_message_count,
             COUNT(DISTINCT agent_id) AS subagent_count,
-            (SELECT text FROM messages m2
-             WHERE m2.session_id = m1.session_id
-             AND m2.harness = 'claude'
-             AND m2.type = 'user'
-             AND NOT m2.is_sidechain
-             AND m2.text IS NOT NULL
-             AND m2.text != ''
-             AND m2.text NOT LIKE '<%'
-             AND m2.text NOT LIKE 'Base directory for this skill%'
-             AND m2.text NOT LIKE '#%'
-             ORDER BY m2.timestamp LIMIT 1) AS first_user_message
-        FROM messages m1
+            arg_min(text, timestamp) FILTER (
+                WHERE type = 'user'
+                AND NOT is_sidechain
+                AND text IS NOT NULL
+                AND text != ''
+                AND text NOT LIKE '<%'
+                AND text NOT LIKE 'Base directory for this skill%'
+                AND text NOT LIKE '#%'
+            ) AS first_user_message
+        FROM messages
         WHERE harness = 'claude'
         GROUP BY session_id".to_string()
 }
@@ -616,15 +618,12 @@ pub fn codex_sessions_sql() -> String {
         CAST(COALESCE(MAX(tool_counts.tool_call_count), 0) AS BIGINT) AS tool_call_count,
         COUNT(message.uuid) FILTER (WHERE message.type = 'user') AS user_message_count,
         CAST(0 AS BIGINT) AS subagent_count,
-        (SELECT text FROM messages first_message
-         WHERE first_message.session_id = meta.session_id
-           AND first_message.harness = 'codex'
-           AND first_message.type = 'user'
-           AND first_message.text IS NOT NULL
-           AND first_message.text != ''
-           AND first_message.text NOT LIKE '<environment_context>%'
-         ORDER BY first_message.timestamp
-         LIMIT 1) AS first_user_message
+        arg_min(message.text, message.timestamp) FILTER (
+            WHERE message.type = 'user'
+            AND message.text IS NOT NULL
+            AND message.text != ''
+            AND message.text NOT LIKE '<environment_context>%'
+        ) AS first_user_message
     FROM session_meta meta
     LEFT JOIN messages message
       ON message.session_id = meta.session_id

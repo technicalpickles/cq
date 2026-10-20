@@ -1618,3 +1618,19 @@ fn lane_groups_cycle_guard_does_not_hang() {
         Some("agent-sub2")
     );
 }
+
+#[test]
+fn sessions_first_user_message_is_earliest_real_prompt() {
+    // File order differs from timestamp order, and the earlier user turns are
+    // all ones first_user_message skips: empty, sidechain, `<`-prefixed
+    // command wrappers, skill dumps, and `#`-prefixed context injections.
+    let conn = setup_db("first_user_message_session.jsonl");
+    let first: String = conn
+        .query_row(
+            "SELECT first_user_message FROM sessions WHERE session_id = 'sess-fum'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(first, "the real first prompt");
+}
