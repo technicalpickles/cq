@@ -538,9 +538,10 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
 /// `messages` from a table instead of re-parsing JSON. Runs after the
 /// file_registry insert, which the project/source/agent_type expressions read.
 /// Mirrors what each live body sees: the Claude body reads every file, the
-/// Codex body only files indexed under the `codex` source. Changing which
-/// bodies run here, like changing the bodies themselves, needs a
-/// `cache::SCHEMA_VERSION` bump: rows already indexed are never recomputed.
+/// Codex body only files indexed under the `codex` source. Changes to the
+/// bodies rebuild caches automatically (`views::messages_sql_fingerprint`);
+/// changes to which bodies run here do not, so they need a
+/// `cache::SCHEMA_VERSION` bump.
 fn materialize_messages(conn: &Connection, escaped_path: &str, source_name: &str) -> Result<()> {
     let table = crate::views::MESSAGES_TABLE;
     let mut bodies = vec![crate::views::claude_messages_over("_index_staging")];

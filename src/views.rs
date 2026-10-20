@@ -124,10 +124,9 @@ pub fn claude_messages_sql() -> String {
 
 /// [`claude_messages_sql`] over an arbitrary relation with `source_file` and
 /// `json` columns. The indexer runs it over one file's staged records to fill
-/// `messages_rows`, so already-indexed files keep the rows the old SQL produced:
-/// changing it (or [`codex_messages_over`]) needs a `cache::SCHEMA_VERSION` bump
-/// so every cache rebuilds. `materialized_messages_sql_change_requires_schema_bump`
-/// enforces that.
+/// `messages_rows`. Already-indexed rows are never recomputed, so changing it
+/// (or [`codex_messages_over`]) rebuilds every cache: see
+/// [`messages_sql_fingerprint`].
 pub fn claude_messages_over(raw: &str) -> String {
     format!("WITH string_msgs AS (
             SELECT
@@ -451,7 +450,7 @@ pub fn codex_messages_sql() -> String {
 
 /// [`codex_messages_sql`] over an arbitrary relation with `source_file` and
 /// `json` columns. The indexer runs it over one Codex file's staged records;
-/// see [`claude_messages_over`] for why changing it needs a schema bump.
+/// changing it rebuilds every cache, see [`messages_sql_fingerprint`].
 pub fn codex_messages_over(raw: &str) -> String {
     format!("WITH codex_records AS (
         SELECT source_file, json
@@ -784,6 +783,24 @@ pub fn create_messages_table(conn: &Connection) -> Result<()> {
         empty_view_sql(View::Messages)
     ))
     .context("Failed to create materialized messages table")
+}
+
+/// Fingerprint of the SQL that fills [`MESSAGES_TABLE`]. The cache stores it
+/// at creation and rebuilds when it differs from this binary's, because rows
+/// already indexed are never recomputed: without the check, a changed messages
+/// body would leave old files with old rows. FNV-1a, so it is stable across
+/// Rust versions (std's `DefaultHasher` is not).
+pub fn messages_sql_fingerprint() -> String {
+    let sql = [
+        claude_messages_over("_index_staging"),
+        codex_messages_over("_index_staging"),
+        empty_view_sql(View::Messages).to_string(),
+    ]
+    .join("\n");
+    let hash = sql.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    });
+    format!("{hash:016x}")
 }
 
 fn has_messages_table(conn: &Connection) -> Result<bool> {

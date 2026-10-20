@@ -395,7 +395,7 @@ fn large_json_records_are_compressed() {
 }
 
 /// Write a cache file in the given storage format whose cache_meta otherwise
-/// passes the schema-version check, plus a marker table that only survives
+/// passes the schema-version and messages-SQL checks, plus a marker table that only survives
 /// if the file is NOT recreated.
 fn write_cache_file(dir: &std::path::Path, storage: &str) {
     let config = duckdb::Config::default()
@@ -403,10 +403,11 @@ fn write_cache_file(dir: &std::path::Path, storage: &str) {
         .unwrap();
     let conn = duckdb::Connection::open_with_flags(dir.join("index.duckdb"), config).unwrap();
     conn.execute_batch(&format!(
-        "CREATE TABLE cache_meta (version INTEGER NOT NULL);
-         INSERT INTO cache_meta VALUES ({});
+        "CREATE TABLE cache_meta (version INTEGER NOT NULL, messages_sql_fingerprint TEXT);
+         INSERT INTO cache_meta VALUES ({}, '{}');
          CREATE TABLE marker (x INTEGER);",
-        cq::cache::SCHEMA_VERSION
+        cq::cache::SCHEMA_VERSION,
+        cq::views::messages_sql_fingerprint()
     ))
     .unwrap();
 }
@@ -618,25 +619,39 @@ fn deleted_file_drops_its_materialized_messages() {
     assert_eq!(messages_diff_vs_live(&conn), 0);
 }
 
-/// Files already in a cache keep the `messages_rows` they were indexed with,
-/// so a change to the SQL that produces those rows only reaches existing caches
-/// through a rebuild. This pins the SQL to the schema version: if it fails,
-/// bump `cache::SCHEMA_VERSION`, then update both numbers here.
 #[test]
-fn materialized_messages_sql_change_requires_schema_bump() {
-    let sql = [
-        cq::views::claude_messages_over("_index_staging"),
-        cq::views::codex_messages_over("_index_staging"),
-        cq::views::empty_view_sql(cq::provider::View::Messages).to_string(),
-    ]
-    .join("\n");
-    // FNV-1a: stable across Rust versions, unlike std's DefaultHasher.
-    let fingerprint = sql.bytes().fold(0xcbf29ce484222325u64, |h, b| {
-        (h ^ b as u64).wrapping_mul(0x100000001b3)
-    });
-    assert_eq!(
-        (cq::cache::SCHEMA_VERSION, fingerprint),
-        (8, 13539603445860360591),
-        "the materialized messages SQL changed: bump cache::SCHEMA_VERSION so existing caches rebuild, then update this test"
-    );
+fn fresh_cache_records_messages_sql_fingerprint() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    let stored: String = conn
+        .query_row("SELECT messages_sql_fingerprint FROM cache_meta", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(stored, cq::views::messages_sql_fingerprint());
+}
+
+/// Rows already in `messages_rows` were produced by whatever SQL indexed them,
+/// so a binary with different messages SQL must rebuild rather than mix rows.
+#[test]
+fn messages_sql_change_triggers_rebuild() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    conn.execute(
+        "UPDATE cache_meta SET messages_sql_fingerprint = 'from-an-older-build'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size) VALUES ('ghost.jsonl', 0, 0)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM file_registry", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "a messages SQL change should rebuild the cache");
 }
