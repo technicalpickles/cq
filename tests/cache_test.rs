@@ -201,12 +201,12 @@ fn creates_tables_on_first_open() {
     // Verify tables exist
     let count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('cache_meta', 'file_registry', 'raw_records')",
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('cache_meta', 'file_registry', 'raw_records', 'messages_rows')",
             [],
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(count, 3);
+    assert_eq!(count, 4);
 }
 
 #[test]
@@ -505,4 +505,138 @@ fn open_points_duckdb_spill_at_a_per_process_dir_in_the_cache() {
         .join("tmp")
         .join(std::process::id().to_string());
     assert_eq!(temp_dir, expected.to_str().unwrap());
+}
+
+const MATERIALIZE_FIXTURES: &[&str] = &[
+    "simple_session.jsonl",
+    "multi_tool_session.jsonl",
+    "multi_text_block_session.jsonl",
+    "mixed_sidechain_session.jsonl",
+    "mixed_types.jsonl",
+    "prompt_provenance.jsonl",
+    "first_user_message_session.jsonl",
+    "context_session.jsonl",
+    "subagent_other_cwd.jsonl",
+];
+
+fn sync_main(conn: &duckdb::Connection, cache: &TempDir, projects: &TempDir) {
+    cq::indexer::sync_sources(
+        conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
+}
+
+/// Rows in `messages` that the live (JSON-parsing) Claude body doesn't produce,
+/// plus rows it produces that `messages` lacks. Zero means the materialized
+/// table is an exact multiset match for the live view.
+fn messages_diff_vs_live(conn: &duckdb::Connection) -> i64 {
+    let live = cq::views::claude_messages_sql();
+    conn.query_row(
+        &format!(
+            "SELECT
+                (SELECT count(*) FROM (SELECT * FROM messages EXCEPT ALL SELECT * FROM ({live})))
+              + (SELECT count(*) FROM (SELECT * FROM ({live}) EXCEPT ALL SELECT * FROM messages))"
+        ),
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+fn compose_claude(conn: &duckdb::Connection) {
+    let claude = cq::claude_provider::ClaudeProvider::new_with_base(PathBuf::new());
+    cq::views::compose_views(conn, &[&claude]).unwrap();
+}
+
+fn materialized_count(conn: &duckdb::Connection) -> i64 {
+    conn.query_row("SELECT count(*) FROM messages_rows", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn messages_are_materialized_at_index_time() {
+    let cache = cache_dir();
+    let projects = setup_projects(MATERIALIZE_FIXTURES);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+
+    assert!(materialized_count(&conn) > 0);
+    assert_eq!(messages_diff_vs_live(&conn), 0);
+}
+
+#[test]
+fn changed_file_replaces_its_materialized_messages() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+    let before = materialized_count(&conn);
+
+    // Doubling the file's records doubles its live rows; stale rows left behind
+    // by the re-index would show up as a surplus.
+    let file = projects
+        .path()
+        .join("-Users-test-myproject/simple_session.jsonl");
+    let original = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, format!("{original}{original}")).unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+
+    assert!(materialized_count(&conn) > before);
+    assert_eq!(messages_diff_vs_live(&conn), 0);
+}
+
+#[test]
+fn deleted_file_drops_its_materialized_messages() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+
+    std::fs::remove_file(
+        projects
+            .path()
+            .join("-Users-test-myproject/simple_session.jsonl"),
+    )
+    .unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+
+    let leftover: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM messages_rows WHERE source_file LIKE '%simple_session.jsonl'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(leftover, 0);
+    assert_eq!(messages_diff_vs_live(&conn), 0);
+}
+
+/// Files already in a cache keep the `messages_rows` they were indexed with,
+/// so a change to the SQL that produces those rows only reaches existing caches
+/// through a rebuild. This pins the SQL to the schema version: if it fails,
+/// bump `cache::SCHEMA_VERSION`, then update both numbers here.
+#[test]
+fn materialized_messages_sql_change_requires_schema_bump() {
+    let sql = [
+        cq::views::claude_messages_over("_index_staging"),
+        cq::views::codex_messages_over("_index_staging"),
+        cq::views::empty_view_sql(cq::provider::View::Messages).to_string(),
+    ]
+    .join("\n");
+    // FNV-1a: stable across Rust versions, unlike std's DefaultHasher.
+    let fingerprint = sql.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    });
+    assert_eq!(
+        (cq::cache::SCHEMA_VERSION, fingerprint),
+        (8, 13539603445860360591),
+        "the materialized messages SQL changed: bump cache::SCHEMA_VERSION so existing caches rebuild, then update this test"
+    );
 }

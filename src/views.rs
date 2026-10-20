@@ -119,6 +119,16 @@ fn register_raw_view(conn: &Connection, file_list: &str) -> Result<()> {
 /// subqueries: DuckDB runs those even when the column is never selected, which
 /// cost gigabytes per query. `text` is deterministically the first text block.
 pub fn claude_messages_sql() -> String {
+    claude_messages_over("raw_records")
+}
+
+/// [`claude_messages_sql`] over an arbitrary relation with `source_file` and
+/// `json` columns. The indexer runs it over one file's staged records to fill
+/// `messages_rows`, so already-indexed files keep the rows the old SQL produced:
+/// changing it (or [`codex_messages_over`]) needs a `cache::SCHEMA_VERSION` bump
+/// so every cache rebuilds. `materialized_messages_sql_change_requires_schema_bump`
+/// enforces that.
+pub fn claude_messages_over(raw: &str) -> String {
     format!("WITH string_msgs AS (
             SELECT
                 json_extract_string(json, '$.sessionId') AS session_id,
@@ -139,7 +149,7 @@ pub fn claude_messages_sql() -> String {
                 {PROMPT_ORIGIN_EXPR} AS prompt_origin,
                 {PROMPT_SOURCE_EXPR} AS prompt_source,
                 {IS_META_EXPR} AS is_meta
-            FROM raw_records
+            FROM {raw}
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'VARCHAR'
         ),
@@ -170,7 +180,7 @@ pub fn claude_messages_sql() -> String {
                 {PROMPT_ORIGIN_EXPR} AS prompt_origin,
                 {PROMPT_SOURCE_EXPR} AS prompt_source,
                 {IS_META_EXPR} AS is_meta
-            FROM raw_records
+            FROM {raw}
             WHERE json_extract_string(json, '$.type') IN ('user', 'assistant')
             AND json_type(json_extract(json, '$.message.content')) = 'ARRAY'
         )
@@ -436,9 +446,16 @@ pub fn codex_agents_sql() -> Option<String> {
 /// items in one JSONL file. Message content is an array of input/output text
 /// items, so each response item becomes one cq message row.
 pub fn codex_messages_sql() -> String {
+    codex_messages_over(CODEX_RAW_RECORDS)
+}
+
+/// [`codex_messages_sql`] over an arbitrary relation with `source_file` and
+/// `json` columns. The indexer runs it over one Codex file's staged records;
+/// see [`claude_messages_over`] for why changing it needs a schema bump.
+pub fn codex_messages_over(raw: &str) -> String {
     format!("WITH codex_records AS (
         SELECT source_file, json
-        FROM {CODEX_RAW_RECORDS} raw_records
+        FROM {raw} raw_records
         WHERE json_extract_string(json, '$.type') = 'response_item'
     ),
     session_meta AS (
@@ -448,7 +465,7 @@ pub fn codex_messages_sql() -> String {
                    json_extract_string(json, '$.payload.session_id')
                ) AS session_id,
                json_extract_string(json, '$.payload.cwd') AS project
-        FROM {CODEX_RAW_RECORDS} raw_records
+        FROM {raw} raw_records
         WHERE json_extract_string(json, '$.type') = 'session_meta'
     )
     SELECT
@@ -467,7 +484,7 @@ pub fn codex_messages_sql() -> String {
          WHERE json_extract_string(item, '$.type') IN ('input_text', 'output_text', 'text')) AS text,
         CAST(0 AS BIGINT) AS tool_count,
         (SELECT json_extract_string(context.json, '$.payload.model')
-         FROM {CODEX_RAW_RECORDS} context
+         FROM {raw} context
          WHERE context.source_file = record.source_file
            AND json_extract_string(context.json, '$.type') = 'turn_context'
          ORDER BY CAST(json_extract(context.json, '$.ordinal') AS BIGINT) DESC
@@ -647,7 +664,7 @@ pub fn codex_sessions_sql() -> String {
 
 /// The empty-view body (correct schema, zero rows) for one view. Used when no
 /// active provider contributes to that view.
-fn empty_view_sql(view: View) -> &'static str {
+pub fn empty_view_sql(view: View) -> &'static str {
     match view {
         View::Messages => {
             "SELECT
@@ -753,15 +770,53 @@ fn empty_view_sql(view: View) -> &'static str {
     }
 }
 
-/// Compose the four views from the active providers' contributions. Each
+/// The table the indexer fills with `messages` rows, one batch per source file
+/// (see `indexer::index_files`). Cache-backed connections compose `messages`
+/// over it instead of re-parsing `raw_records` JSON on every query.
+pub const MESSAGES_TABLE: &str = "messages_rows";
+
+/// Create the materialized `messages` table: the view's columns plus the
+/// `source_file` each row was indexed from, which re-indexing deletes by.
+pub fn create_messages_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE {MESSAGES_TABLE} AS
+         SELECT NULL::VARCHAR AS source_file, * FROM ({})",
+        empty_view_sql(View::Messages)
+    ))
+    .context("Failed to create materialized messages table")
+}
+
+fn has_messages_table(conn: &Connection) -> Result<bool> {
+    conn.query_row(
+        "SELECT count(*) > 0 FROM duckdb_tables() WHERE table_name = ?",
+        [MESSAGES_TABLE],
+        |r| r.get(0),
+    )
+    .context("Failed to check for materialized messages table")
+}
+
+/// A provider's `messages` contribution read back from [`MESSAGES_TABLE`].
+fn materialized_messages_sql(harness: &str) -> String {
+    format!("SELECT * EXCLUDE (source_file) FROM {MESSAGES_TABLE} WHERE harness = '{harness}'")
+}
+
+/// Compose the views from the active providers' contributions. Each
 /// contribution is wrapped in parens and `UNION ALL`ed. A view with no
 /// contributors falls back to the empty-view schema. Views are created in
 /// `View::ALL` order so `sessions` (which reads `messages`) comes last.
+///
+/// When the connection has [`MESSAGES_TABLE`] (any cache-backed connection),
+/// `messages` reads from it; otherwise every view runs its live body over
+/// `raw_records`.
 pub fn compose_views(conn: &Connection, providers: &[&dyn TranscriptProvider]) -> Result<()> {
+    let materialized = has_messages_table(conn)?;
     for view in View::ALL {
         let parts: Vec<String> = providers
             .iter()
-            .filter_map(|p| p.contribute_view_sql(view))
+            .filter_map(|p| match view {
+                View::Messages if materialized => Some(materialized_messages_sql(p.harness())),
+                _ => p.contribute_view_sql(view),
+            })
             .map(|body| format!("({body})"))
             .collect();
         let body = if parts.is_empty() {

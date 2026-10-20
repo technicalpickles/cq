@@ -186,6 +186,13 @@ fn do_sync(
 
     for path_str in &to_remove {
         conn.execute("DELETE FROM raw_records WHERE source_file = ?", [path_str])?;
+        conn.execute(
+            &format!(
+                "DELETE FROM {} WHERE source_file = ?",
+                crate::views::MESSAGES_TABLE
+            ),
+            [path_str],
+        )?;
         conn.execute("DELETE FROM file_registry WHERE file_path = ?", [path_str])?;
     }
 
@@ -452,7 +459,7 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
 
         conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP TABLE _index_staging AS
-             SELECT CAST(json AS JSON) AS json
+             SELECT '{escaped}' AS source_file, CAST(json AS JSON) AS json
              FROM read_json('{escaped}', format='newline_delimited', records=false, ignore_errors=true)"
         ))
         .with_context(|| format!("Failed to index {path_str}"))?;
@@ -469,25 +476,21 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
                 "Warning: skipped {skipped} unparseable record(s) in {path_str} (DuckDB's JSON reader could not parse them; ignore_errors=true tolerates that as NULL rather than failing the whole file)"
             );
         }
-
-        conn.execute_batch(&format!(
-            "INSERT INTO raw_records (source_file, json)
-             SELECT '{escaped}', json FROM _index_staging WHERE json IS NOT NULL"
-        ))
-        .with_context(|| format!("Failed to index {path_str}"))?;
-
-        conn.execute_batch("DROP TABLE _index_staging")
+        conn.execute_batch("DELETE FROM _index_staging WHERE json IS NULL")
             .with_context(|| format!("Failed to index {path_str}"))?;
+
+        conn.execute_batch(
+            "INSERT INTO raw_records (source_file, json)
+             SELECT source_file, json FROM _index_staging",
+        )
+        .with_context(|| format!("Failed to index {path_str}"))?;
 
         let cwd: Option<String> = conn
             .query_row(
-                &format!(
-                    "SELECT json_extract_string(json, '$.cwd')
-                     FROM raw_records
-                     WHERE source_file = '{escaped}'
-                     AND json_extract_string(json, '$.cwd') IS NOT NULL
-                     LIMIT 1"
-                ),
+                "SELECT json_extract_string(json, '$.cwd')
+                 FROM _index_staging
+                 WHERE json_extract_string(json, '$.cwd') IS NOT NULL
+                 LIMIT 1",
                 [],
                 |r| r.get(0),
             )
@@ -521,6 +524,34 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
                 meta.spawn_depth
             ],
         )?;
+
+        materialize_messages(conn, &escaped, source_name)
+            .with_context(|| format!("Failed to materialize messages for {path_str}"))?;
+
+        conn.execute_batch("DROP TABLE _index_staging")
+            .with_context(|| format!("Failed to index {path_str}"))?;
+    }
+    Ok(())
+}
+
+/// Fill `messages_rows` for the file in `_index_staging`, so queries read
+/// `messages` from a table instead of re-parsing JSON. Runs after the
+/// file_registry insert, which the project/source/agent_type expressions read.
+/// Mirrors what each live body sees: the Claude body reads every file, the
+/// Codex body only files indexed under the `codex` source. Changing which
+/// bodies run here, like changing the bodies themselves, needs a
+/// `cache::SCHEMA_VERSION` bump: rows already indexed are never recomputed.
+fn materialize_messages(conn: &Connection, escaped_path: &str, source_name: &str) -> Result<()> {
+    let table = crate::views::MESSAGES_TABLE;
+    let mut bodies = vec![crate::views::claude_messages_over("_index_staging")];
+    if source_name == "codex" {
+        bodies.push(crate::views::codex_messages_over("_index_staging"));
+    }
+    for body in bodies {
+        conn.execute_batch(&format!(
+            "INSERT INTO {table}
+             SELECT '{escaped_path}', * FROM ({body})"
+        ))?;
     }
     Ok(())
 }

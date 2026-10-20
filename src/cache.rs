@@ -3,7 +3,7 @@ use duckdb::OptionalExt;
 use duckdb::{Config, Connection};
 use std::path::Path;
 
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 8;
 
 /// The `storage_version` tag DuckDB stamps on files this build creates; a
 /// cache with any other tag is recreated on open. Update it when a DuckDB bump
@@ -327,6 +327,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
             json JSON NOT NULL
         );",
     )?;
+
+    crate::views::create_messages_table(conn)?;
 
     conn.execute(
         "INSERT INTO cache_meta (version) VALUES (?)",

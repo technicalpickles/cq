@@ -125,6 +125,10 @@ impl TranscriptProvider for ClaudeProvider {
         "claude-code"
     }
 
+    fn harness(&self) -> &'static str {
+        "claude"
+    }
+
     fn discover_files(&self, scope: &QueryScope) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         for src in &self.sources {

@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 pub trait TranscriptProvider {
     fn name(&self) -> &str;
+
+    /// The `harness` value this provider's view rows carry (`claude`, `codex`).
+    fn harness(&self) -> &'static str;
     fn discover_files(&self, scope: &QueryScope) -> Result<Vec<PathBuf>>;
     fn register_views(&self, conn: &Connection, files: &[PathBuf]) -> Result<()>;
     fn list_projects(&self) -> Result<Vec<ProjectInfo>>;
