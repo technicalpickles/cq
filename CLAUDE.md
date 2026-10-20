@@ -59,7 +59,7 @@ trace/
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
 views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the six views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
-cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb; schema + storage-format versioning, recreate-on-rebuild
+cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb (per-checkout under dev/ for target/ builds); schema + storage-format versioning, recreate-on-rebuild
 full_text.rs      Alternating physical message snapshots + DuckDB FTS index lifecycle, atomic generation swap, staleness reporting
 indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, fs2 file lock; recurses into <session>/subagents/** and captures agentType from meta.json
 sync_scope.rs     SyncScope: narrows which files the indexer touches (derived from --project etc.)
@@ -122,6 +122,8 @@ cargo run -- sessions --project myproject --limit 5    # project filter
 cargo run -- sql "SELECT COUNT(*) FROM messages"       # raw SQL
 cargo run -- schema --examples                         # see available views + queries
 ```
+
+A binary under a checkout's `target/` (so `cargo run` and `./target/release/cq`) defaults to its own cache at `<cache>/cq/dev/<checkout>-<hash>/`, not the shared one the installed cq uses. Otherwise a dev build with a different schema or messages SQL and the installed cq would each rebuild the shared cache (minutes on a real history) every time the other ran. Expect a full sync the first time a checkout's build runs; set `CQ_CACHE_DIR` to point a dev build somewhere specific.
 
 ## Releasing
 

@@ -258,13 +258,48 @@ pub fn storage_version(conn: &Connection) -> Result<Option<String>> {
 }
 
 /// Determine the cache directory path.
-/// Uses CQ_CACHE_DIR env var if set, otherwise ~/.cache/cq.
+/// Uses CQ_CACHE_DIR env var if set, otherwise ~/.cache/cq. A dev build (a
+/// binary under a cargo checkout's `target/`) gets its own subdirectory, see
+/// [`dev_cache_subdir`].
 pub fn cache_dir() -> Result<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("CQ_CACHE_DIR") {
         return Ok(std::path::PathBuf::from(dir));
     }
-    let cache = dirs::cache_dir().context("Could not determine cache directory")?;
-    Ok(cache.join("cq"))
+    let cache = dirs::cache_dir()
+        .context("Could not determine cache directory")?
+        .join("cq");
+    let dev = std::env::current_exe()
+        .ok()
+        .and_then(|exe| dev_cache_subdir(&exe));
+    Ok(match dev {
+        Some(sub) => cache.join(sub),
+        None => cache,
+    })
+}
+
+/// `dev/<checkout>-<hash>` when `exe` is a cargo build inside a checkout
+/// (`<checkout>/target/...` with a `Cargo.toml` beside `target/`), else None.
+///
+/// A build whose schema or messages SQL differs from the installed cq's
+/// rebuilds the cache on open, and the installed cq rebuilds it right back:
+/// about two minutes each way on a real history, with other sessions waiting
+/// on `index.lock`. Giving every checkout its own cache keeps dev builds off
+/// the one everyday cq uses. The hash keeps same-named checkouts apart.
+fn dev_cache_subdir(exe: &Path) -> Option<std::path::PathBuf> {
+    let target = exe
+        .ancestors()
+        .find(|p| p.file_name() == Some("target".as_ref()))?;
+    let checkout = target.parent()?;
+    if !checkout.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let name = checkout.file_name()?.to_string_lossy();
+    let path = checkout.to_string_lossy();
+    // FNV-1a, so the directory name is stable across Rust versions.
+    let hash = path.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100000001b3)
+    });
+    Some(Path::new("dev").join(format!("{name}-{:08x}", hash as u32)))
 }
 
 fn needs_rebuild(conn: &Connection) -> Result<bool> {
@@ -398,6 +433,47 @@ pub fn fts_built_at(conn: &Connection) -> Result<i64> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn dev_build_gets_a_per_checkout_cache_subdir() {
+        let checkout = tempfile::TempDir::new().unwrap();
+        std::fs::write(checkout.path().join("Cargo.toml"), "").unwrap();
+        let exe = checkout.path().join("target/release/cq");
+
+        let sub = dev_cache_subdir(&exe).expect("a cargo target/ binary is a dev build");
+        let name = checkout.path().file_name().unwrap().to_string_lossy();
+        assert!(sub.starts_with("dev"));
+        assert!(sub.to_string_lossy().contains(name.as_ref()));
+        assert_eq!(dev_cache_subdir(&exe), Some(sub), "same checkout, same dir");
+    }
+
+    #[test]
+    fn different_checkouts_get_different_dev_caches() {
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        for d in [&a, &b] {
+            std::fs::write(d.path().join("Cargo.toml"), "").unwrap();
+        }
+        assert_ne!(
+            dev_cache_subdir(&a.path().join("target/debug/cq")),
+            dev_cache_subdir(&b.path().join("target/debug/cq"))
+        );
+    }
+
+    #[test]
+    fn installed_binary_uses_the_shared_cache() {
+        assert_eq!(dev_cache_subdir(Path::new("/Users/me/.cargo/bin/cq")), None);
+        assert_eq!(dev_cache_subdir(Path::new("/opt/homebrew/bin/cq")), None);
+    }
+
+    #[test]
+    fn target_dir_outside_a_cargo_checkout_is_not_a_dev_build() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(
+            dev_cache_subdir(&dir.path().join("target/release/cq")),
+            None
+        );
+    }
     use super::*;
 
     fn limits(threads: Option<&str>, memory: Option<&str>, cores: usize) -> Result<ResourceLimits> {
