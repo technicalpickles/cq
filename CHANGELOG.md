@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.0](https://github.com/technicalpickles/cq/compare/v0.10.2...v0.11.0) (2026-10-20)
+
+
+### Features
+
+* give dev builds their own cache by default ([#82](https://github.com/technicalpickles/cq/issues/82)) ([9c69a76](https://github.com/technicalpickles/cq/commit/9c69a76404300aab88d3af0f51d6f5bd1ff4119d))
+
+
+### Performance Improvements
+
+* compute sessions.first_user_message with arg_min instead of a subquery ([#76](https://github.com/technicalpickles/cq/issues/76)) ([1b16059](https://github.com/technicalpickles/cq/commit/1b16059b299f9953c85d23deeb6e3ca7ec4a6e31))
+* materialize messages at index time ([#81](https://github.com/technicalpickles/cq/issues/81)) ([2bddc41](https://github.com/technicalpickles/cq/commit/2bddc41e4fd9afe233767603c7a39f42ff89196d))
+* narrow Codex view bodies to Codex files before parsing JSON ([#80](https://github.com/technicalpickles/cq/issues/80)) ([78d3ce0](https://github.com/technicalpickles/cq/commit/78d3ce09d07eeab82e887bce6adb781bc89f949c))
+
 ## [0.10.2](https://github.com/technicalpickles/cq/compare/v0.10.1...v0.10.2) (2026-10-16)
 
 

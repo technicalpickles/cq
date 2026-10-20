@@ -1,6 +1,6 @@
 [package]
 name = "cq"
-version = "0.10.2"
+version = "0.11.0"
 edition = "2021"
 description = "Query AI agent session transcripts with SQL"
 license = "MIT"
