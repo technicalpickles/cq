@@ -201,12 +201,12 @@ fn creates_tables_on_first_open() {
     // Verify tables exist
     let count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('cache_meta', 'file_registry', 'raw_records')",
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('cache_meta', 'file_registry', 'raw_records', 'messages_rows')",
             [],
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(count, 3);
+    assert_eq!(count, 4);
 }
 
 #[test]
@@ -395,7 +395,7 @@ fn large_json_records_are_compressed() {
 }
 
 /// Write a cache file in the given storage format whose cache_meta otherwise
-/// passes the schema-version check, plus a marker table that only survives
+/// passes the schema-version and messages-SQL checks, plus a marker table that only survives
 /// if the file is NOT recreated.
 fn write_cache_file(dir: &std::path::Path, storage: &str) {
     let config = duckdb::Config::default()
@@ -403,10 +403,11 @@ fn write_cache_file(dir: &std::path::Path, storage: &str) {
         .unwrap();
     let conn = duckdb::Connection::open_with_flags(dir.join("index.duckdb"), config).unwrap();
     conn.execute_batch(&format!(
-        "CREATE TABLE cache_meta (version INTEGER NOT NULL);
-         INSERT INTO cache_meta VALUES ({});
+        "CREATE TABLE cache_meta (version INTEGER NOT NULL, messages_sql_fingerprint TEXT);
+         INSERT INTO cache_meta VALUES ({}, '{}');
          CREATE TABLE marker (x INTEGER);",
-        cq::cache::SCHEMA_VERSION
+        cq::cache::SCHEMA_VERSION,
+        cq::views::messages_sql_fingerprint()
     ))
     .unwrap();
 }
@@ -505,4 +506,152 @@ fn open_points_duckdb_spill_at_a_per_process_dir_in_the_cache() {
         .join("tmp")
         .join(std::process::id().to_string());
     assert_eq!(temp_dir, expected.to_str().unwrap());
+}
+
+const MATERIALIZE_FIXTURES: &[&str] = &[
+    "simple_session.jsonl",
+    "multi_tool_session.jsonl",
+    "multi_text_block_session.jsonl",
+    "mixed_sidechain_session.jsonl",
+    "mixed_types.jsonl",
+    "prompt_provenance.jsonl",
+    "first_user_message_session.jsonl",
+    "context_session.jsonl",
+    "subagent_other_cwd.jsonl",
+];
+
+fn sync_main(conn: &duckdb::Connection, cache: &TempDir, projects: &TempDir) {
+    cq::indexer::sync_sources(
+        conn,
+        &[("main".to_string(), projects.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
+}
+
+/// Rows in `messages` that the live (JSON-parsing) Claude body doesn't produce,
+/// plus rows it produces that `messages` lacks. Zero means the materialized
+/// table is an exact multiset match for the live view.
+fn messages_diff_vs_live(conn: &duckdb::Connection) -> i64 {
+    let live = cq::views::claude_messages_sql();
+    conn.query_row(
+        &format!(
+            "SELECT
+                (SELECT count(*) FROM (SELECT * FROM messages EXCEPT ALL SELECT * FROM ({live})))
+              + (SELECT count(*) FROM (SELECT * FROM ({live}) EXCEPT ALL SELECT * FROM messages))"
+        ),
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+fn compose_claude(conn: &duckdb::Connection) {
+    let claude = cq::claude_provider::ClaudeProvider::new_with_base(PathBuf::new());
+    cq::views::compose_views(conn, &[&claude]).unwrap();
+}
+
+fn materialized_count(conn: &duckdb::Connection) -> i64 {
+    conn.query_row("SELECT count(*) FROM messages_rows", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn messages_are_materialized_at_index_time() {
+    let cache = cache_dir();
+    let projects = setup_projects(MATERIALIZE_FIXTURES);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+
+    assert!(materialized_count(&conn) > 0);
+    assert_eq!(messages_diff_vs_live(&conn), 0);
+}
+
+#[test]
+fn changed_file_replaces_its_materialized_messages() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+    let before = materialized_count(&conn);
+
+    // Doubling the file's records doubles its live rows; stale rows left behind
+    // by the re-index would show up as a surplus.
+    let file = projects
+        .path()
+        .join("-Users-test-myproject/simple_session.jsonl");
+    let original = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, format!("{original}{original}")).unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+
+    assert!(materialized_count(&conn) > before);
+    assert_eq!(messages_diff_vs_live(&conn), 0);
+}
+
+#[test]
+fn deleted_file_drops_its_materialized_messages() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+
+    std::fs::remove_file(
+        projects
+            .path()
+            .join("-Users-test-myproject/simple_session.jsonl"),
+    )
+    .unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+
+    let leftover: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM messages_rows WHERE source_file LIKE '%simple_session.jsonl'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(leftover, 0);
+    assert_eq!(messages_diff_vs_live(&conn), 0);
+}
+
+#[test]
+fn fresh_cache_records_messages_sql_fingerprint() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    let stored: String = conn
+        .query_row("SELECT messages_sql_fingerprint FROM cache_meta", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(stored, cq::views::messages_sql_fingerprint());
+}
+
+/// Rows already in `messages_rows` were produced by whatever SQL indexed them,
+/// so a binary with different messages SQL must rebuild rather than mix rows.
+#[test]
+fn messages_sql_change_triggers_rebuild() {
+    let dir = cache_dir();
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    conn.execute(
+        "UPDATE cache_meta SET messages_sql_fingerprint = 'from-an-older-build'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO file_registry (file_path, mtime_ns, file_size) VALUES ('ghost.jsonl', 0, 0)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let conn = cq::cache::open(dir.path(), false).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM file_registry", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "a messages SQL change should rebuild the cache");
 }

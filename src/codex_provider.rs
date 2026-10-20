@@ -55,6 +55,10 @@ impl TranscriptProvider for CodexProvider {
         "codex"
     }
 
+    fn harness(&self) -> &'static str {
+        "codex"
+    }
+
     fn discover_files(&self, _scope: &QueryScope) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         collect_jsonl_paths(&self.sessions_dir, &mut files)?;
