@@ -49,6 +49,14 @@ const PROMPT_SOURCE_EXPR: &str = "json_extract_string(json, '$.promptSource')";
 /// when absent, matching IS_SIDECHAIN_EXPR's always-non-null convention.
 const IS_META_EXPR: &str = "COALESCE(CAST(json_extract(json, '$.isMeta') AS BOOLEAN), false)";
 
+/// The Codex slice of `raw_records`, as a derived table. The Codex view bodies
+/// read this instead of `raw_records` so the `file_registry` match on `source`
+/// (set at index time, see the `"codex"` source in `main.rs`) drops every
+/// Claude record before any JSON is parsed. Without it, each Codex body
+/// JSON-parses the whole table to find its few rows.
+const CODEX_RAW_RECORDS: &str = "(SELECT source_file, json FROM raw_records
+        WHERE source_file IN (SELECT file_path FROM file_registry WHERE source = 'codex'))";
+
 /// Register all queryable views against the given JSONL transcript files.
 ///
 /// Creates six views:
@@ -428,9 +436,9 @@ pub fn codex_agents_sql() -> Option<String> {
 /// items in one JSONL file. Message content is an array of input/output text
 /// items, so each response item becomes one cq message row.
 pub fn codex_messages_sql() -> String {
-    "WITH codex_records AS (
+    format!("WITH codex_records AS (
         SELECT source_file, json
-        FROM raw_records
+        FROM {CODEX_RAW_RECORDS} raw_records
         WHERE json_extract_string(json, '$.type') = 'response_item'
     ),
     session_meta AS (
@@ -440,7 +448,7 @@ pub fn codex_messages_sql() -> String {
                    json_extract_string(json, '$.payload.session_id')
                ) AS session_id,
                json_extract_string(json, '$.payload.cwd') AS project
-        FROM raw_records
+        FROM {CODEX_RAW_RECORDS} raw_records
         WHERE json_extract_string(json, '$.type') = 'session_meta'
     )
     SELECT
@@ -459,7 +467,7 @@ pub fn codex_messages_sql() -> String {
          WHERE json_extract_string(item, '$.type') IN ('input_text', 'output_text', 'text')) AS text,
         CAST(0 AS BIGINT) AS tool_count,
         (SELECT json_extract_string(context.json, '$.payload.model')
-         FROM raw_records context
+         FROM {CODEX_RAW_RECORDS} context
          WHERE context.source_file = record.source_file
            AND json_extract_string(context.json, '$.type') = 'turn_context'
          ORDER BY CAST(json_extract(context.json, '$.ordinal') AS BIGINT) DESC
@@ -474,20 +482,21 @@ pub fn codex_messages_sql() -> String {
     FROM codex_records record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.payload.type') = 'message'
-      AND json_extract_string(record.json, '$.payload.role') IN ('user', 'assistant')".to_string()
+      AND json_extract_string(record.json, '$.payload.role') IN ('user', 'assistant')")
 }
 
 /// The Codex `tool_calls` view body. Both built-in function calls and Codex
 /// custom-tool calls have stable call IDs and JSON-string inputs.
 pub fn codex_tool_calls_sql() -> String {
-    "WITH session_meta AS (
+    format!(
+        "WITH session_meta AS (
         SELECT source_file,
                COALESCE(
                    json_extract_string(json, '$.payload.id'),
                    json_extract_string(json, '$.payload.session_id')
                ) AS session_id,
                json_extract_string(json, '$.payload.cwd') AS project
-        FROM raw_records
+        FROM {CODEX_RAW_RECORDS} raw_records
         WHERE json_extract_string(json, '$.type') = 'session_meta'
     )
     SELECT
@@ -504,7 +513,7 @@ pub fn codex_tool_calls_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM raw_records record
+    FROM {CODEX_RAW_RECORDS} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'function_call'
@@ -523,25 +532,26 @@ pub fn codex_tool_calls_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM raw_records record
+    FROM {CODEX_RAW_RECORDS} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'custom_tool_call'"
-        .to_string()
+    )
 }
 
 /// The Codex `tool_results` view body. Codex records outputs separately from
 /// calls but uses the same `call_id` join key. Output may be a string or JSON
 /// array; keeping the latter as JSON text preserves all returned blocks.
 pub fn codex_tool_results_sql() -> String {
-    "WITH session_meta AS (
+    format!(
+        "WITH session_meta AS (
         SELECT source_file,
                COALESCE(
                    json_extract_string(json, '$.payload.id'),
                    json_extract_string(json, '$.payload.session_id')
                ) AS session_id,
                json_extract_string(json, '$.payload.cwd') AS project
-        FROM raw_records
+        FROM {CODEX_RAW_RECORDS} raw_records
         WHERE json_extract_string(json, '$.type') = 'session_meta'
     )
     SELECT
@@ -557,7 +567,7 @@ pub fn codex_tool_results_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM raw_records record
+    FROM {CODEX_RAW_RECORDS} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'function_call_output'
@@ -575,11 +585,11 @@ pub fn codex_tool_results_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM raw_records record
+    FROM {CODEX_RAW_RECORDS} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'custom_tool_call_output'"
-        .to_string()
+    )
 }
 
 /// Codex currently does not record Claude-compatible hook events.
@@ -590,7 +600,8 @@ pub fn codex_hook_events_sql() -> Option<String> {
 /// The Codex `sessions` view body is anchored on `session_meta`, so even a
 /// freshly-created session with no messages remains queryable.
 pub fn codex_sessions_sql() -> String {
-    "WITH session_meta AS (
+    format!(
+        "WITH session_meta AS (
         SELECT source_file,
                COALESCE(
                    json_extract_string(json, '$.payload.id'),
@@ -598,7 +609,7 @@ pub fn codex_sessions_sql() -> String {
                ) AS session_id,
                json_extract_string(json, '$.payload.cwd') AS project,
                json_extract_string(json, '$.timestamp') AS started_at
-        FROM raw_records
+        FROM {CODEX_RAW_RECORDS} raw_records
         WHERE json_extract_string(json, '$.type') = 'session_meta'
     ),
     tool_counts AS (
@@ -631,7 +642,7 @@ pub fn codex_sessions_sql() -> String {
     LEFT JOIN tool_counts
       ON tool_counts.session_id = meta.session_id
     GROUP BY meta.session_id, meta.project, meta.started_at"
-        .to_string()
+    )
 }
 
 /// The empty-view body (correct schema, zero rows) for one view. Used when no

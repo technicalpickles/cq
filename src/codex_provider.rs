@@ -262,4 +262,55 @@ mod tests {
             "is_meta defaults to false, not NULL, for every Codex message row"
         );
     }
+
+    #[test]
+    fn codex_views_only_read_files_indexed_under_the_codex_source() {
+        // The same rollout indexed under a Claude source must not surface as a
+        // Codex session: the Codex bodies narrow to `source = 'codex'` files
+        // before any JSON parsing, rather than scanning every raw record.
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex_session.jsonl");
+        let codex_sessions = TempDir::new().unwrap();
+        let rollout_dir = codex_sessions.path().join("2026/08/26");
+        std::fs::create_dir_all(&rollout_dir).unwrap();
+        std::fs::copy(&fixture, rollout_dir.join("rollout-session.jsonl")).unwrap();
+        let claude_projects = TempDir::new().unwrap();
+        let project_dir = claude_projects.path().join("-Users-test-project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::copy(&fixture, project_dir.join("lookalike.jsonl")).unwrap();
+
+        let cache_dir = TempDir::new().unwrap();
+        let conn = cache::open(cache_dir.path(), true).unwrap();
+        crate::indexer::sync_sources(
+            &conn,
+            &[
+                ("main".to_string(), claude_projects.path().to_path_buf()),
+                ("codex".to_string(), codex_sessions.path().to_path_buf()),
+            ],
+            SyncMode::Force,
+            SyncScope::All,
+            cache_dir.path(),
+        )
+        .unwrap();
+
+        let provider = CodexProvider::with_sessions_dir(codex_sessions.path().to_path_buf());
+        views::compose_views(&conn, &[&provider]).unwrap();
+
+        for (view, expected) in [
+            ("sessions", 1),
+            ("messages", 2),
+            ("tool_calls", 2),
+            ("tool_results", 2),
+        ] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT count(*) FROM {view}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(
+                count, expected,
+                "{view} should only read the codex-source file"
+            );
+        }
+    }
 }
