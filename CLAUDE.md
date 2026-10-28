@@ -2,7 +2,7 @@
 
 CLI tool for querying Claude Code session transcripts with SQL. Rust + DuckDB.
 
-Reads Claude Code's JSONL session files from `~/.claude/projects/`, indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes six SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`, `hook_events`, `agents`. Sync is incremental: files are re-parsed only when their mtime or size changes.
+Reads Claude Code's JSONL session files from `~/.claude/projects/` (and Codex rollout transcripts when present), indexes them into a persistent DuckDB cache at `~/.cache/cq/index.duckdb` (or `$CQ_CACHE_DIR` if set), and exposes six SQL views: `sessions`, `messages`, `tool_calls`, `tool_results`, `hook_events`, `agents`. Sync is incremental: files are re-parsed only when their mtime or size changes.
 
 The input format is not ours and is not a documented contract. Before you write anything that reads or reasons about transcripts, read `docs/session-storage.md`: it covers the on-disk layout, which record types actually show up, and the places the format will surprise you.
 
@@ -55,9 +55,10 @@ trace/
   mod.rs          Span + gap model for one session: the SQL both trace renderers read from
   waterfall.rs    Terminal waterfall renderer (formatting only, no SQL)
   perfetto.rs     Chrome Trace Event JSON emitter (formatting only, no SQL)
+  firefox_profiler.rs  Firefox Profiler processed-profile JSON emitter, for real per-category marker colors (formatting only, no SQL)
   open_browser.rs `cq trace --open`: serves the trace JSON over a local httpd and launches the OS browser at Firefox Profiler or Perfetto
 style.rs          Terminal styling helpers (colors, dim/bold, TTY detection)
-views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the six views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'`)
+views.rs          Per-provider view SQL (Claude bodies over raw_records) + the composer that UNION ALLs active providers' contributions into the six views; every row carries a `source` column (within-Claude root name) and a `harness` column (`'claude'` or `'codex'`)
 db.rs             Orchestrates cache open + indexer sync, registers views, returns DbSetup
 cache.rs          Persistent DuckDB cache at ~/.cache/cq/index.duckdb (per-checkout under dev/ for target/ builds); schema + storage-format versioning, recreate-on-rebuild
 full_text.rs      Alternating physical message snapshots + DuckDB FTS index lifecycle, atomic generation swap, staleness reporting
@@ -65,6 +66,7 @@ indexer.rs        Incremental sync: file_registry + recursive mtime fast-path, f
 sync_scope.rs     SyncScope: narrows which files the indexer touches (derived from --project etc.)
 provider.rs       TranscriptProvider trait
 claude_provider.rs  ClaudeProvider: recursively discovers JSONL files (incl. subagents) from ~/.claude/projects/
+codex_provider.rs   CodexProvider: Codex rollout JSONL under $CODEX_HOME/sessions (default ~/.codex/sessions, override CQ_CODEX_SESSIONS_DIR); active only when that dir exists
 scope.rs          QueryScope: --project, --session, --since parsing
 source.rs         Source: named transcript roots (`main` + discovered cenv envs); backs --source
 ```
@@ -81,7 +83,7 @@ CQ is a query tool, not a monitoring tool. Built-in commands infer current-conte
 - **DuckDB is resource-capped by default.** `cache::connect` sets `threads` (half the cores), `memory_limit` (4GB), and `temp_directory` (`<cache>/tmp/<pid>`, so concurrent processes never share spill files; DuckDB creates the pid dir on first spill, `cache::connect` only creates `<cache>/tmp` and ignores failure) because DuckDB's own defaults are every core and 80% of RAM, and concurrent sessions stack. `CQ_DUCKDB_THREADS` / `CQ_DUCKDB_MEMORY_LIMIT` override them; `auto` opts out. The caps are a per-process safety net, not the performance fix: gigabyte-scale peaks for simple queries are a view bug. After a DuckDB out-of-memory error, `main` prints `cache::out_of_memory_hint`, which names the effective limits.
 - **SyncMode is explicit over smart.** `Auto` (default) does mtime fast-path + try-lock + skip-if-busy. `Force` (`--reindex`) waits for the lock and re-parses everything. `Skip` (`--no-reindex`) bypasses sync entirely. User flags always beat smart behavior.
 - **SyncScope narrows sync work.** A `--project` filter also restricts which files the indexer touches, not just which rows the query returns. Derived in `main.rs` from the CLI flags, passed through `db::setup_connection` into `indexer::sync`.
-- **Provider trait** abstracts a transcript *harness*. Beyond file discovery, a provider has `prepare(conn) -> bool` (is it active?) and `contribute_view_sql(view)` (a SELECT body); `views::compose_views` UNION ALLs the active providers' contributions, tagging rows with a `harness` column. Only `ClaudeProvider` exists today (always active; its bodies read `raw_records`); the seam is built for a second harness to plug in.
+- **Provider trait** abstracts a transcript *harness*. Beyond file discovery, a provider has `prepare(conn) -> bool` (is it active?) and `contribute_view_sql(view)` (a SELECT body); `views::compose_views` UNION ALLs the active providers' contributions, tagging rows with a `harness` column. `ClaudeProvider` is always active and its bodies read `raw_records`; `CodexProvider` is active only when its sessions dir exists.
 - **stderr for progress, stdout for data.** "Scanned N files" and "No results." go to stderr so piped output stays clean.
 - **Project paths come from the registry, not the directory name.** `PROJECT_EXPR` in `views.rs` prefers the `cwd` captured at index time and only falls back to decoding the encoded directory name. The encoding is lossy (it eats dots as well as slashes), so the fallback is wrong for any path containing a dot or a hyphen. See `docs/session-storage.md`.
 - **ILIKE for project filtering.** `--project` does substring match, not exact.

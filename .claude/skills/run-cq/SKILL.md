@@ -32,7 +32,7 @@ No system DuckDB, no other services. The tool reads `~/.claude/projects/` (or
 cargo build --release
 # → target/release/cq  (first build ~4 min: DuckDB compiles from source; later builds are seconds)
 ./target/release/cq --version
-# → cq 0.2.0
+# → cq <version from Cargo.toml>
 ```
 
 ## Run (agent path)
@@ -60,7 +60,7 @@ To poke it by hand (these all ran clean on real session data):
 BIN=./target/release/cq
 $BIN tools --all --limit 10                          # bar-chart summary of tool usage
 $BIN sessions --all --limit 3                        # recent sessions
-$BIN sql "SELECT COUNT(*) AS n FROM messages"        # raw SQL over the four views
+$BIN sql "SELECT COUNT(*) AS n FROM messages"        # raw SQL over the six views
 $BIN schema --examples                               # view schema + example queries (no DB needed)
 $BIN sessions --all --limit 1 --json                 # machine-readable output
 ```
@@ -78,7 +78,7 @@ Same binary, no wrapper: `cargo run -- <subcommand>`, e.g.
 
 ```bash
 cargo test
-# → 5 suites: lib (57), cache (11), integration (95), views (32), + 0 doc-tests. All pass in ~20s.
+# → lib, cache, integration, and views suites; all should pass.
 ```
 
 Fixtures are handcrafted JSONL under `tests/fixtures/`; tests don't need your
