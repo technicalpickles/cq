@@ -454,83 +454,98 @@ fn max_mtime_recursive(dir: &Path) -> i64 {
 /// would be its own kind of surprise.
 fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Result<()> {
     for file in files {
-        let path_str = file.to_string_lossy().to_string();
-        let escaped = path_str.replace('\'', "''");
+        // One transaction per file: if any step fails (staging, a materialized
+        // view body) nothing of this file is kept, so it is not registered as
+        // indexed with rows missing and the next sync retries it.
+        conn.execute_batch("BEGIN TRANSACTION")?;
+        match index_file(conn, file, source_name) {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+    }
+    Ok(())
+}
 
-        conn.execute_batch(&format!(
+fn index_file(conn: &Connection, file: &Path, source_name: &str) -> Result<()> {
+    let path_str = file.to_string_lossy().to_string();
+    let escaped = path_str.replace('\'', "''");
+
+    conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP TABLE _index_staging AS
              SELECT '{escaped}' AS source_file, CAST(json AS JSON) AS json
              FROM read_json('{escaped}', format='newline_delimited', records=false, ignore_errors=true)"
         ))
         .with_context(|| format!("Failed to index {path_str}"))?;
 
-        let skipped: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM _index_staging WHERE json IS NULL",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        if skipped > 0 {
-            eprintln!(
+    let skipped: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM _index_staging WHERE json IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if skipped > 0 {
+        eprintln!(
                 "Warning: skipped {skipped} unparseable record(s) in {path_str} (DuckDB's JSON reader could not parse them; ignore_errors=true tolerates that as NULL rather than failing the whole file)"
             );
-        }
-        conn.execute_batch("DELETE FROM _index_staging WHERE json IS NULL")
-            .with_context(|| format!("Failed to index {path_str}"))?;
-
-        conn.execute_batch(
-            "INSERT INTO raw_records (source_file, json)
-             SELECT source_file, json FROM _index_staging",
-        )
+    }
+    conn.execute_batch("DELETE FROM _index_staging WHERE json IS NULL")
         .with_context(|| format!("Failed to index {path_str}"))?;
 
-        let cwd: Option<String> = conn
-            .query_row(
-                "SELECT json_extract_string(json, '$.cwd')
+    conn.execute_batch(
+        "INSERT INTO raw_records (source_file, json)
+             SELECT source_file, json FROM _index_staging",
+    )
+    .with_context(|| format!("Failed to index {path_str}"))?;
+
+    let cwd: Option<String> = conn
+        .query_row(
+            "SELECT json_extract_string(json, '$.cwd')
                  FROM _index_staging
                  WHERE json_extract_string(json, '$.cwd') IS NOT NULL
                  LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
-            .ok();
+            [],
+            |r| r.get(0),
+        )
+        .ok();
 
-        let meta = read_agent_meta(file).unwrap_or_default();
+    let meta = read_agent_meta(file).unwrap_or_default();
 
-        let metadata = std::fs::metadata(file)?;
-        let mtime_ns = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-        let file_size = metadata.len() as i64;
+    let metadata = std::fs::metadata(file)?;
+    let mtime_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
+    let file_size = metadata.len() as i64;
 
-        conn.execute(
-            "INSERT INTO file_registry
+    conn.execute(
+        "INSERT INTO file_registry
                 (file_path, mtime_ns, file_size, cwd, agent_type, source,
                  agent_description, parent_tool_use_id, spawn_depth)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            duckdb::params![
-                path_str,
-                mtime_ns,
-                file_size,
-                cwd,
-                meta.agent_type,
-                source_name,
-                meta.description,
-                meta.parent_tool_use_id,
-                meta.spawn_depth
-            ],
-        )?;
+        duckdb::params![
+            path_str,
+            mtime_ns,
+            file_size,
+            cwd,
+            meta.agent_type,
+            source_name,
+            meta.description,
+            meta.parent_tool_use_id,
+            meta.spawn_depth
+        ],
+    )?;
 
-        materialize_views(conn, &escaped, source_name)
-            .with_context(|| format!("Failed to materialize views for {path_str}"))?;
+    materialize_views(conn, &escaped, source_name)
+        .with_context(|| format!("Failed to materialize views for {path_str}"))?;
 
-        conn.execute_batch("DROP TABLE _index_staging")
-            .with_context(|| format!("Failed to index {path_str}"))?;
-    }
+    conn.execute_batch("DROP TABLE _index_staging")
+        .with_context(|| format!("Failed to index {path_str}"))?;
     Ok(())
 }
 
