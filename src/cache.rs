@@ -327,9 +327,10 @@ fn needs_rebuild(conn: &Connection) -> Result<bool> {
         return Ok(true);
     }
 
-    // the materialized tables hold whatever the indexing binary's SQL produced, so a
-    // binary with different view SQL rebuilds instead of mixing rows. An
-    // unreadable fingerprint (column missing) counts as a mismatch.
+    // The materialized tables hold whatever the indexing binary's SQL
+    // produced, so a binary with different view SQL rebuilds instead of
+    // mixing rows. An unreadable fingerprint (column missing) counts as a
+    // mismatch.
     let fingerprint: Option<String> = conn
         .query_row(
             "SELECT materialized_sql_fingerprint FROM cache_meta LIMIT 1",

@@ -818,10 +818,6 @@ pub fn materialized_table(view: View) -> Option<&'static str> {
     }
 }
 
-/// The `messages` table, kept as a constant because tests and the delete path
-/// in the indexer refer to it by name.
-pub const MESSAGES_TABLE: &str = "messages_rows";
-
 /// The Claude body for `view` over a staged relation. `None` for views that
 /// are not materialized.
 pub fn claude_view_over(view: View, raw: &str) -> Option<String> {
@@ -866,7 +862,13 @@ pub fn create_materialized_tables(conn: &Connection) -> Result<()> {
 /// would leave old files with old rows. FNV-1a, so it is stable across Rust
 /// versions (std's `DefaultHasher` is not).
 pub fn materialized_sql_fingerprint() -> String {
-    let sql = MATERIALIZED_VIEWS
+    fingerprint(&materialized_sql_text())
+}
+
+/// Every SQL body the indexer runs to fill the materialized tables, joined.
+/// [`materialized_sql_fingerprint`] hashes this.
+pub fn materialized_sql_text() -> String {
+    MATERIALIZED_VIEWS
         .iter()
         .flat_map(|&view| {
             [
@@ -877,7 +879,11 @@ pub fn materialized_sql_fingerprint() -> String {
         })
         .flatten()
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+}
+
+/// FNV-1a hash of `sql` as 16 hex digits.
+pub fn fingerprint(sql: &str) -> String {
     let hash = sql.bytes().fold(0xcbf29ce484222325u64, |h, b| {
         (h ^ b as u64).wrapping_mul(0x100000001b3)
     });

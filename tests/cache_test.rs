@@ -639,7 +639,7 @@ fn fresh_cache_records_materialized_sql_fingerprint() {
 /// Rows already in `messages_rows` were produced by whatever SQL indexed them,
 /// so a binary with different messages SQL must rebuild rather than mix rows.
 #[test]
-fn messages_sql_change_triggers_rebuild() {
+fn stale_materialized_fingerprint_triggers_rebuild() {
     let dir = cache_dir();
     let conn = cq::cache::open(dir.path(), false).unwrap();
     conn.execute(
@@ -798,4 +798,38 @@ fn hook_event_content_size_handles_non_ascii() {
         .query_row("SELECT content_size FROM hook_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(size, 5);
+}
+
+/// The fingerprint is what forces a rebuild when a body changes, so it must
+/// move when any materialized body does.
+#[test]
+fn fingerprint_covers_every_materialized_body() {
+    use cq::provider::View;
+    let text = cq::views::materialized_sql_text();
+    let baseline = cq::views::fingerprint(&text);
+    for view in cq::views::MATERIALIZED_VIEWS {
+        for body in [
+            cq::views::claude_view_over(view, "_index_staging"),
+            cq::views::codex_view_over(view, "_index_staging"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(
+                text.contains(&body),
+                "{} body missing from fingerprint input",
+                view.name()
+            );
+            let changed = text.replacen(&body, &format!("{body} "), 1);
+            assert_ne!(
+                cq::views::fingerprint(&changed),
+                baseline,
+                "{}",
+                view.name()
+            );
+        }
+    }
+    for view in [View::ToolCalls, View::ToolResults, View::HookEvents] {
+        assert!(cq::views::MATERIALIZED_VIEWS.contains(&view));
+    }
 }
