@@ -833,3 +833,31 @@ fn fingerprint_covers_every_materialized_body() {
         assert!(cq::views::MATERIALIZED_VIEWS.contains(&view));
     }
 }
+
+/// A file whose materialization fails must not stay registered as indexed:
+/// the next sync would skip it and its tool rows would be missing for good.
+#[test]
+fn failed_materialization_does_not_register_the_file() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["multi_tool_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    conn.execute_batch("ALTER TABLE tool_results_rows RENAME TO tool_results_rows_away")
+        .unwrap();
+    let sources = [("main".to_string(), projects.path().to_path_buf())];
+    let sync = |mode| {
+        cq::indexer::sync_sources(
+            &conn,
+            &sources,
+            mode,
+            cq::sync_scope::SyncScope::All,
+            cache.path(),
+        )
+    };
+    assert!(sync(cq::db::SyncMode::Auto).is_err());
+
+    conn.execute_batch("ALTER TABLE tool_results_rows_away RENAME TO tool_results_rows")
+        .unwrap();
+    sync(cq::db::SyncMode::Auto).unwrap();
+
+    assert!(view_count(&conn, "tool_results_rows") > 0);
+}
