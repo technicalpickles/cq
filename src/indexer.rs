@@ -186,13 +186,13 @@ fn do_sync(
 
     for path_str in &to_remove {
         conn.execute("DELETE FROM raw_records WHERE source_file = ?", [path_str])?;
-        conn.execute(
-            &format!(
-                "DELETE FROM {} WHERE source_file = ?",
-                crate::views::MESSAGES_TABLE
-            ),
-            [path_str],
-        )?;
+        for view in crate::views::MATERIALIZED_VIEWS {
+            let table = crate::views::materialized_table(view).expect("materialized view");
+            conn.execute(
+                &format!("DELETE FROM {table} WHERE source_file = ?"),
+                [path_str],
+            )?;
+        }
         conn.execute("DELETE FROM file_registry WHERE file_path = ?", [path_str])?;
     }
 
@@ -525,8 +525,8 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
             ],
         )?;
 
-        materialize_messages(conn, &escaped, source_name)
-            .with_context(|| format!("Failed to materialize messages for {path_str}"))?;
+        materialize_views(conn, &escaped, source_name)
+            .with_context(|| format!("Failed to materialize views for {path_str}"))?;
 
         conn.execute_batch("DROP TABLE _index_staging")
             .with_context(|| format!("Failed to index {path_str}"))?;
@@ -534,25 +534,28 @@ fn index_files(conn: &Connection, files: &[PathBuf], source_name: &str) -> Resul
     Ok(())
 }
 
-/// Fill `messages_rows` for the file in `_index_staging`, so queries read
-/// `messages` from a table instead of re-parsing JSON. Runs after the
-/// file_registry insert, which the project/source/agent_type expressions read.
-/// Mirrors what each live body sees: the Claude body reads every file, the
-/// Codex body only files indexed under the `codex` source. Changes to the
-/// bodies rebuild caches automatically (`views::messages_sql_fingerprint`);
-/// changes to which bodies run here do not, so they need a
-/// `cache::SCHEMA_VERSION` bump.
-fn materialize_messages(conn: &Connection, escaped_path: &str, source_name: &str) -> Result<()> {
-    let table = crate::views::MESSAGES_TABLE;
-    let mut bodies = vec![crate::views::claude_messages_over("_index_staging")];
-    if source_name == "codex" {
-        bodies.push(crate::views::codex_messages_over("_index_staging"));
-    }
-    for body in bodies {
-        conn.execute_batch(&format!(
-            "INSERT INTO {table}
-             SELECT '{escaped_path}', * FROM ({body})"
-        ))?;
+/// Fill the materialized tables (`messages_rows`, `tool_calls_rows`, ...) for
+/// the file in `_index_staging`, so queries read those views from tables
+/// instead of re-parsing JSON. Runs after the file_registry insert, which the
+/// project/source/agent_type expressions read. Mirrors what each live body
+/// sees: the Claude bodies read every file, the Codex bodies only files
+/// indexed under the `codex` source. Changes to the bodies rebuild caches
+/// automatically (`views::materialized_sql_fingerprint`); changes to which
+/// bodies run here do not, so they need a `cache::SCHEMA_VERSION` bump.
+fn materialize_views(conn: &Connection, escaped_path: &str, source_name: &str) -> Result<()> {
+    for view in crate::views::MATERIALIZED_VIEWS {
+        let table = crate::views::materialized_table(view).expect("materialized view");
+        let mut bodies = vec![crate::views::claude_view_over(view, "_index_staging")];
+        if source_name == "codex" {
+            bodies.push(crate::views::codex_view_over(view, "_index_staging"));
+        }
+        for body in bodies.into_iter().flatten() {
+            conn.execute_batch(&format!(
+                "INSERT INTO {table}
+                 SELECT '{escaped_path}', * FROM ({body})"
+            ))
+            .with_context(|| format!("Failed to materialize {}", view.name()))?;
+        }
     }
     Ok(())
 }

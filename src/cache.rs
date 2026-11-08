@@ -3,7 +3,7 @@ use duckdb::OptionalExt;
 use duckdb::{Config, Connection};
 use std::path::Path;
 
-pub const SCHEMA_VERSION: i32 = 8;
+pub const SCHEMA_VERSION: i32 = 9;
 
 /// The `storage_version` tag DuckDB stamps on files this build creates; a
 /// cache with any other tag is recreated on open. Update it when a DuckDB bump
@@ -327,17 +327,18 @@ fn needs_rebuild(conn: &Connection) -> Result<bool> {
         return Ok(true);
     }
 
-    // messages_rows holds whatever the indexing binary's SQL produced, so a
-    // binary with different messages SQL rebuilds instead of mixing rows. An
-    // unreadable fingerprint (column missing) counts as a mismatch.
+    // The materialized tables hold whatever the indexing binary's SQL
+    // produced, so a binary with different view SQL rebuilds instead of
+    // mixing rows. An unreadable fingerprint (column missing) counts as a
+    // mismatch.
     let fingerprint: Option<String> = conn
         .query_row(
-            "SELECT messages_sql_fingerprint FROM cache_meta LIMIT 1",
+            "SELECT materialized_sql_fingerprint FROM cache_meta LIMIT 1",
             [],
             |r| r.get(0),
         )
         .unwrap_or(None);
-    Ok(fingerprint.as_deref() != Some(crate::views::messages_sql_fingerprint().as_str()))
+    Ok(fingerprint.as_deref() != Some(crate::views::materialized_sql_fingerprint().as_str()))
 }
 
 fn create_schema(conn: &Connection) -> Result<()> {
@@ -353,7 +354,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             fts_sync_at BIGINT NOT NULL DEFAULT -1,
             fts_built_at BIGINT NOT NULL DEFAULT 0,
             fts_slot INTEGER NOT NULL DEFAULT 0,
-            messages_sql_fingerprint TEXT
+            materialized_sql_fingerprint TEXT
         );
 
         CREATE TABLE file_registry (
@@ -375,11 +376,11 @@ fn create_schema(conn: &Connection) -> Result<()> {
         );",
     )?;
 
-    crate::views::create_messages_table(conn)?;
+    crate::views::create_materialized_tables(conn)?;
 
     conn.execute(
-        "INSERT INTO cache_meta (version, messages_sql_fingerprint) VALUES (?, ?)",
-        duckdb::params![SCHEMA_VERSION, crate::views::messages_sql_fingerprint()],
+        "INSERT INTO cache_meta (version, materialized_sql_fingerprint) VALUES (?, ?)",
+        duckdb::params![SCHEMA_VERSION, crate::views::materialized_sql_fingerprint()],
     )?;
 
     Ok(())

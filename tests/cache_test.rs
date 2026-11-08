@@ -403,11 +403,11 @@ fn write_cache_file(dir: &std::path::Path, storage: &str) {
         .unwrap();
     let conn = duckdb::Connection::open_with_flags(dir.join("index.duckdb"), config).unwrap();
     conn.execute_batch(&format!(
-        "CREATE TABLE cache_meta (version INTEGER NOT NULL, messages_sql_fingerprint TEXT);
+        "CREATE TABLE cache_meta (version INTEGER NOT NULL, materialized_sql_fingerprint TEXT);
          INSERT INTO cache_meta VALUES ({}, '{}');
          CREATE TABLE marker (x INTEGER);",
         cq::cache::SCHEMA_VERSION,
-        cq::views::messages_sql_fingerprint()
+        cq::views::materialized_sql_fingerprint()
     ))
     .unwrap();
 }
@@ -518,6 +518,9 @@ const MATERIALIZE_FIXTURES: &[&str] = &[
     "first_user_message_session.jsonl",
     "context_session.jsonl",
     "subagent_other_cwd.jsonl",
+    "advisor_session.jsonl",
+    "hook_events_session.jsonl",
+    "error_session.jsonl",
 ];
 
 fn sync_main(conn: &duckdb::Connection, cache: &TempDir, projects: &TempDir) {
@@ -620,25 +623,27 @@ fn deleted_file_drops_its_materialized_messages() {
 }
 
 #[test]
-fn fresh_cache_records_messages_sql_fingerprint() {
+fn fresh_cache_records_materialized_sql_fingerprint() {
     let dir = cache_dir();
     let conn = cq::cache::open(dir.path(), false).unwrap();
     let stored: String = conn
-        .query_row("SELECT messages_sql_fingerprint FROM cache_meta", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT materialized_sql_fingerprint FROM cache_meta",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert_eq!(stored, cq::views::messages_sql_fingerprint());
+    assert_eq!(stored, cq::views::materialized_sql_fingerprint());
 }
 
 /// Rows already in `messages_rows` were produced by whatever SQL indexed them,
 /// so a binary with different messages SQL must rebuild rather than mix rows.
 #[test]
-fn messages_sql_change_triggers_rebuild() {
+fn stale_materialized_fingerprint_triggers_rebuild() {
     let dir = cache_dir();
     let conn = cq::cache::open(dir.path(), false).unwrap();
     conn.execute(
-        "UPDATE cache_meta SET messages_sql_fingerprint = 'from-an-older-build'",
+        "UPDATE cache_meta SET materialized_sql_fingerprint = 'from-an-older-build'",
         [],
     )
     .unwrap();
@@ -654,4 +659,177 @@ fn messages_sql_change_triggers_rebuild() {
         .query_row("SELECT COUNT(*) FROM file_registry", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 0, "a messages SQL change should rebuild the cache");
+}
+
+/// Rows in `view` that the live (JSON-parsing) body doesn't produce, plus rows
+/// it produces that `view` lacks, restricted to one harness.
+fn view_diff_vs_live(conn: &duckdb::Connection, view: &str, harness: &str, live: &str) -> i64 {
+    conn.query_row(
+        &format!(
+            "SELECT
+                (SELECT count(*) FROM (SELECT * FROM {view} WHERE harness = '{harness}' EXCEPT ALL SELECT * FROM ({live})))
+              + (SELECT count(*) FROM (SELECT * FROM ({live}) EXCEPT ALL SELECT * FROM {view} WHERE harness = '{harness}'))"
+        ),
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+fn view_count(conn: &duckdb::Connection, view: &str) -> i64 {
+    conn.query_row(&format!("SELECT count(*) FROM {view}"), [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn tool_and_hook_views_are_materialized_and_match_live_bodies() {
+    let cache = cache_dir();
+    let projects = setup_projects(MATERIALIZE_FIXTURES);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+
+    for (view, table, live) in [
+        (
+            "tool_calls",
+            "tool_calls_rows",
+            cq::views::claude_tool_calls_sql(),
+        ),
+        (
+            "tool_results",
+            "tool_results_rows",
+            cq::views::claude_tool_results_sql(),
+        ),
+        (
+            "hook_events",
+            "hook_events_rows",
+            cq::views::claude_hook_events_sql(),
+        ),
+    ] {
+        let stored: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert!(stored > 0, "{table} should have rows from the fixtures");
+        assert_eq!(view_diff_vs_live(&conn, view, "claude", &live), 0, "{view}");
+    }
+}
+
+#[test]
+fn codex_tool_views_are_materialized_and_match_live_bodies() {
+    let cache = cache_dir();
+    let sessions = TempDir::new().unwrap();
+    let rollout_dir = sessions.path().join("2026/08/26");
+    std::fs::create_dir_all(&rollout_dir).unwrap();
+    std::fs::copy(
+        fixture_path("codex_session.jsonl"),
+        rollout_dir.join("rollout-session.jsonl"),
+    )
+    .unwrap();
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    cq::indexer::sync_sources(
+        &conn,
+        &[("codex".to_string(), sessions.path().to_path_buf())],
+        cq::db::SyncMode::Force,
+        cq::sync_scope::SyncScope::All,
+        cache.path(),
+    )
+    .unwrap();
+    let codex = cq::codex_provider::CodexProvider::with_sessions_dir(sessions.path().to_path_buf());
+    cq::views::compose_views(&conn, &[&codex]).unwrap();
+
+    assert!(view_count(&conn, "tool_calls") > 0);
+    assert!(view_count(&conn, "tool_results") > 0);
+    assert_eq!(
+        view_diff_vs_live(
+            &conn,
+            "tool_calls",
+            "codex",
+            &cq::views::codex_tool_calls_sql()
+        ),
+        0
+    );
+    assert_eq!(
+        view_diff_vs_live(
+            &conn,
+            "tool_results",
+            "codex",
+            &cq::views::codex_tool_results_sql()
+        ),
+        0
+    );
+}
+
+#[test]
+fn deleted_file_drops_its_materialized_tool_rows() {
+    let cache = cache_dir();
+    let projects = setup_projects(&["simple_session.jsonl", "multi_tool_session.jsonl"]);
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+    for file in ["simple_session.jsonl", "multi_tool_session.jsonl"] {
+        std::fs::remove_file(projects.path().join("-Users-test-myproject").join(file)).unwrap();
+    }
+    sync_main(&conn, &cache, &projects);
+    for table in ["tool_calls_rows", "tool_results_rows", "hook_events_rows"] {
+        let n: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "{table}");
+    }
+}
+
+/// `content_size` is a byte count, and non-ASCII content must not break
+/// computing it (a BLOB cast rejects it).
+#[test]
+fn hook_event_content_size_handles_non_ascii() {
+    let cache = cache_dir();
+    let projects = TempDir::new().unwrap();
+    let dir = projects.path().join("-Users-test-myproject");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("s.jsonl"),
+        r#"{"type":"attachment","sessionId":"s1","timestamp":"2026-01-01T00:00:00Z","attachment":{"type":"hook_success","hookEvent":"SessionStart","hookName":"x","content":"caf\u00e9"}}
+"#,
+    )
+    .unwrap();
+    let conn = cq::cache::open(cache.path(), false).unwrap();
+    sync_main(&conn, &cache, &projects);
+    compose_claude(&conn);
+    let size: i64 = conn
+        .query_row("SELECT content_size FROM hook_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(size, 5);
+}
+
+/// The fingerprint is what forces a rebuild when a body changes, so it must
+/// move when any materialized body does.
+#[test]
+fn fingerprint_covers_every_materialized_body() {
+    use cq::provider::View;
+    let text = cq::views::materialized_sql_text();
+    let baseline = cq::views::fingerprint(&text);
+    for view in cq::views::MATERIALIZED_VIEWS {
+        for body in [
+            cq::views::claude_view_over(view, "_index_staging"),
+            cq::views::codex_view_over(view, "_index_staging"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(
+                text.contains(&body),
+                "{} body missing from fingerprint input",
+                view.name()
+            );
+            let changed = text.replacen(&body, &format!("{body} "), 1);
+            assert_ne!(
+                cq::views::fingerprint(&changed),
+                baseline,
+                "{}",
+                view.name()
+            );
+        }
+    }
+    for view in [View::ToolCalls, View::ToolResults, View::HookEvents] {
+        assert!(cq::views::MATERIALIZED_VIEWS.contains(&view));
+    }
 }

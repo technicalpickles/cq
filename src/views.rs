@@ -126,7 +126,7 @@ pub fn claude_messages_sql() -> String {
 /// `json` columns. The indexer runs it over one file's staged records to fill
 /// `messages_rows`. Already-indexed rows are never recomputed, so changing it
 /// (or [`codex_messages_over`]) rebuilds every cache: see
-/// [`messages_sql_fingerprint`].
+/// [`materialized_sql_fingerprint`].
 pub fn claude_messages_over(raw: &str) -> String {
     format!("WITH string_msgs AS (
             SELECT
@@ -194,6 +194,12 @@ pub fn claude_messages_over(raw: &str) -> String {
 /// (server-side tools like `advisor()`) -- both carry the same `id`/`name`/`input`
 /// shape inside an assistant-type record.
 pub fn claude_tool_calls_sql() -> String {
+    claude_tool_calls_over("raw_records")
+}
+
+/// [`claude_tool_calls_sql`] over a relation with `source_file` and `json`
+/// columns, the way the indexer runs it over one file's staged records.
+pub fn claude_tool_calls_over(raw: &str) -> String {
     format!(
         "SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
@@ -209,7 +215,7 @@ pub fn claude_tool_calls_sql() -> String {
             {IS_SIDECHAIN_EXPR} AS is_sidechain,
             {AGENT_TYPE_EXPR} AS agent_type,
             {WORKFLOW_ID_EXPR} AS workflow_id
-        FROM raw_records,
+        FROM {raw},
         LATERAL (
             SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
         )
@@ -226,6 +232,11 @@ pub fn claude_tool_calls_sql() -> String {
 /// results land back in the same assistant turn as the `server_tool_use` call --
 /// with `content` nested as `{type, text}` rather than a plain string).
 pub fn claude_tool_results_sql() -> String {
+    claude_tool_results_over("raw_records")
+}
+
+/// [`claude_tool_results_sql`] over a relation with `source_file` and `json`.
+pub fn claude_tool_results_over(raw: &str) -> String {
     format!(
         "SELECT
             json_extract_string(json, '$.sessionId') AS session_id,
@@ -243,7 +254,7 @@ pub fn claude_tool_results_sql() -> String {
             {IS_SIDECHAIN_EXPR} AS is_sidechain,
             {AGENT_TYPE_EXPR} AS agent_type,
             {WORKFLOW_ID_EXPR} AS workflow_id
-        FROM raw_records,
+        FROM {raw},
         LATERAL (
             SELECT UNNEST(CAST(json_extract(json, '$.message.content') AS JSON[])) AS item
         )
@@ -278,6 +289,11 @@ pub fn claude_tool_results_sql() -> String {
 /// `claude_tool_results_sql` use for `message.content` arrays, just over
 /// `VARCHAR[]` instead of `JSON[]`.
 pub fn claude_hook_events_sql() -> String {
+    claude_hook_events_over("raw_records")
+}
+
+/// [`claude_hook_events_sql`] over a relation with `source_file` and `json`.
+pub fn claude_hook_events_over(raw: &str) -> String {
     format!(
         "WITH hook_success_rows AS (
             SELECT
@@ -297,7 +313,7 @@ pub fn claude_hook_events_sql() -> String {
                     ),
                     NULLIF(json_extract_string(json, '$.attachment.stdout'), '')
                 ) AS content
-            FROM raw_records
+            FROM {raw}
             WHERE json_extract_string(json, '$.type') = 'attachment'
             AND json_extract_string(json, '$.attachment.type') = 'hook_success'
         ),
@@ -312,14 +328,14 @@ pub fn claude_hook_events_sql() -> String {
                 json_extract_string(json, '$.attachment.hookName') AS hook_name,
                 json_extract_string(json, '$.attachment.type') AS attachment_type,
                 item AS content
-            FROM raw_records,
+            FROM {raw},
             LATERAL (
                 SELECT UNNEST(CAST(json_extract(json, '$.attachment.content') AS VARCHAR[])) AS item
             )
             WHERE json_extract_string(json, '$.type') = 'attachment'
             AND json_extract_string(json, '$.attachment.type') = 'hook_additional_context'
         )
-        SELECT *, OCTET_LENGTH(CAST(content AS BLOB)) AS content_size FROM (
+        SELECT *, strlen(content) AS content_size FROM (
             SELECT * FROM hook_success_rows
             UNION ALL
             SELECT * FROM hook_additional_context_rows
@@ -450,7 +466,7 @@ pub fn codex_messages_sql() -> String {
 
 /// [`codex_messages_sql`] over an arbitrary relation with `source_file` and
 /// `json` columns. The indexer runs it over one Codex file's staged records;
-/// changing it rebuilds every cache, see [`messages_sql_fingerprint`].
+/// changing it rebuilds every cache, see [`materialized_sql_fingerprint`].
 pub fn codex_messages_over(raw: &str) -> String {
     format!("WITH codex_records AS (
         SELECT source_file, json
@@ -504,6 +520,11 @@ pub fn codex_messages_over(raw: &str) -> String {
 /// The Codex `tool_calls` view body. Both built-in function calls and Codex
 /// custom-tool calls have stable call IDs and JSON-string inputs.
 pub fn codex_tool_calls_sql() -> String {
+    codex_tool_calls_over(CODEX_RAW_RECORDS)
+}
+
+/// [`codex_tool_calls_sql`] over a relation with `source_file` and `json`.
+pub fn codex_tool_calls_over(raw: &str) -> String {
     format!(
         "WITH session_meta AS (
         SELECT source_file,
@@ -512,7 +533,7 @@ pub fn codex_tool_calls_sql() -> String {
                    json_extract_string(json, '$.payload.session_id')
                ) AS session_id,
                json_extract_string(json, '$.payload.cwd') AS project
-        FROM {CODEX_RAW_RECORDS} raw_records
+        FROM {raw} raw_records
         WHERE json_extract_string(json, '$.type') = 'session_meta'
     )
     SELECT
@@ -529,7 +550,7 @@ pub fn codex_tool_calls_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM {CODEX_RAW_RECORDS} record
+    FROM {raw} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'function_call'
@@ -548,7 +569,7 @@ pub fn codex_tool_calls_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM {CODEX_RAW_RECORDS} record
+    FROM {raw} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'custom_tool_call'"
@@ -559,6 +580,11 @@ pub fn codex_tool_calls_sql() -> String {
 /// calls but uses the same `call_id` join key. Output may be a string or JSON
 /// array; keeping the latter as JSON text preserves all returned blocks.
 pub fn codex_tool_results_sql() -> String {
+    codex_tool_results_over(CODEX_RAW_RECORDS)
+}
+
+/// [`codex_tool_results_sql`] over a relation with `source_file` and `json`.
+pub fn codex_tool_results_over(raw: &str) -> String {
     format!(
         "WITH session_meta AS (
         SELECT source_file,
@@ -567,7 +593,7 @@ pub fn codex_tool_results_sql() -> String {
                    json_extract_string(json, '$.payload.session_id')
                ) AS session_id,
                json_extract_string(json, '$.payload.cwd') AS project
-        FROM {CODEX_RAW_RECORDS} raw_records
+        FROM {raw} raw_records
         WHERE json_extract_string(json, '$.type') = 'session_meta'
     )
     SELECT
@@ -583,7 +609,7 @@ pub fn codex_tool_results_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM {CODEX_RAW_RECORDS} record
+    FROM {raw} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'function_call_output'
@@ -601,7 +627,7 @@ pub fn codex_tool_results_sql() -> String {
         false AS is_sidechain,
         NULL::VARCHAR AS agent_type,
         NULL::VARCHAR AS workflow_id
-    FROM {CODEX_RAW_RECORDS} record
+    FROM {raw} record
     JOIN session_meta meta USING (source_file)
     WHERE json_extract_string(record.json, '$.type') = 'response_item'
       AND json_extract_string(record.json, '$.payload.type') = 'custom_tool_call_output'"
@@ -769,70 +795,136 @@ pub fn empty_view_sql(view: View) -> &'static str {
     }
 }
 
-/// The table the indexer fills with `messages` rows, one batch per source file
-/// (see `indexer::index_files`). Cache-backed connections compose `messages`
-/// over it instead of re-parsing `raw_records` JSON on every query.
-pub const MESSAGES_TABLE: &str = "messages_rows";
+/// The views the indexer materializes at index time, in the order it fills
+/// them. Each has a table (see [`materialized_table`]) kept per source file.
+pub const MATERIALIZED_VIEWS: [View; 4] = [
+    View::Messages,
+    View::ToolCalls,
+    View::ToolResults,
+    View::HookEvents,
+];
 
-/// Create the materialized `messages` table: the view's columns plus the
-/// `source_file` each row was indexed from, which re-indexing deletes by.
-pub fn create_messages_table(conn: &Connection) -> Result<()> {
-    conn.execute_batch(&format!(
-        "CREATE TABLE {MESSAGES_TABLE} AS
-         SELECT NULL::VARCHAR AS source_file, * FROM ({})",
-        empty_view_sql(View::Messages)
-    ))
-    .context("Failed to create materialized messages table")
+/// The table the indexer fills with `view`'s rows, one batch per source file
+/// (see `indexer::index_files`). Cache-backed connections compose the view over
+/// it instead of re-parsing `raw_records` JSON on every query. `None` for views
+/// that stay live (`agents`, `sessions`).
+pub fn materialized_table(view: View) -> Option<&'static str> {
+    match view {
+        View::Messages => Some("messages_rows"),
+        View::ToolCalls => Some("tool_calls_rows"),
+        View::ToolResults => Some("tool_results_rows"),
+        View::HookEvents => Some("hook_events_rows"),
+        View::Agents | View::Sessions => None,
+    }
 }
 
-/// Fingerprint of the SQL that fills [`MESSAGES_TABLE`]. The cache stores it
-/// at creation and rebuilds when it differs from this binary's, because rows
-/// already indexed are never recomputed: without the check, a changed messages
-/// body would leave old files with old rows. FNV-1a, so it is stable across
-/// Rust versions (std's `DefaultHasher` is not).
-pub fn messages_sql_fingerprint() -> String {
-    let sql = [
-        claude_messages_over("_index_staging"),
-        codex_messages_over("_index_staging"),
-        empty_view_sql(View::Messages).to_string(),
-    ]
-    .join("\n");
+/// The Claude body for `view` over a staged relation. `None` for views that
+/// are not materialized.
+pub fn claude_view_over(view: View, raw: &str) -> Option<String> {
+    match view {
+        View::Messages => Some(claude_messages_over(raw)),
+        View::ToolCalls => Some(claude_tool_calls_over(raw)),
+        View::ToolResults => Some(claude_tool_results_over(raw)),
+        View::HookEvents => Some(claude_hook_events_over(raw)),
+        View::Agents | View::Sessions => None,
+    }
+}
+
+/// The Codex body for `view` over a staged relation. `None` when Codex
+/// contributes nothing to that view or the view is not materialized.
+pub fn codex_view_over(view: View, raw: &str) -> Option<String> {
+    match view {
+        View::Messages => Some(codex_messages_over(raw)),
+        View::ToolCalls => Some(codex_tool_calls_over(raw)),
+        View::ToolResults => Some(codex_tool_results_over(raw)),
+        View::HookEvents | View::Agents | View::Sessions => None,
+    }
+}
+
+/// Create the materialized tables: each view's columns plus the `source_file`
+/// each row was indexed from, which re-indexing deletes by.
+pub fn create_materialized_tables(conn: &Connection) -> Result<()> {
+    for view in MATERIALIZED_VIEWS {
+        let table = materialized_table(view).expect("materialized view has a table");
+        conn.execute_batch(&format!(
+            "CREATE TABLE {table} AS
+             SELECT NULL::VARCHAR AS source_file, * FROM ({})",
+            empty_view_sql(view)
+        ))
+        .with_context(|| format!("Failed to create materialized {} table", view.name()))?;
+    }
+    Ok(())
+}
+
+/// Fingerprint of the SQL that fills the materialized tables. The cache stores
+/// it at creation and rebuilds when it differs from this binary's, because rows
+/// already indexed are never recomputed: without the check, a changed body
+/// would leave old files with old rows. FNV-1a, so it is stable across Rust
+/// versions (std's `DefaultHasher` is not).
+pub fn materialized_sql_fingerprint() -> String {
+    fingerprint(&materialized_sql_text())
+}
+
+/// Every SQL body the indexer runs to fill the materialized tables, joined.
+/// [`materialized_sql_fingerprint`] hashes this.
+pub fn materialized_sql_text() -> String {
+    MATERIALIZED_VIEWS
+        .iter()
+        .flat_map(|&view| {
+            [
+                claude_view_over(view, "_index_staging"),
+                codex_view_over(view, "_index_staging"),
+                Some(empty_view_sql(view).to_string()),
+            ]
+        })
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// FNV-1a hash of `sql` as 16 hex digits.
+pub fn fingerprint(sql: &str) -> String {
     let hash = sql.bytes().fold(0xcbf29ce484222325u64, |h, b| {
         (h ^ b as u64).wrapping_mul(0x100000001b3)
     });
     format!("{hash:016x}")
 }
 
-fn has_messages_table(conn: &Connection) -> Result<bool> {
+fn has_table(conn: &Connection, table: &str) -> Result<bool> {
     conn.query_row(
         "SELECT count(*) > 0 FROM duckdb_tables() WHERE table_name = ?",
-        [MESSAGES_TABLE],
+        [table],
         |r| r.get(0),
     )
-    .context("Failed to check for materialized messages table")
+    .with_context(|| format!("Failed to check for materialized table {table}"))
 }
 
-/// A provider's `messages` contribution read back from [`MESSAGES_TABLE`].
-fn materialized_messages_sql(harness: &str) -> String {
-    format!("SELECT * EXCLUDE (source_file) FROM {MESSAGES_TABLE} WHERE harness = '{harness}'")
+/// A provider's contribution to `view` read back from its materialized table.
+fn materialized_sql(table: &str, harness: &str) -> String {
+    format!("SELECT * EXCLUDE (source_file) FROM {table} WHERE harness = '{harness}'")
 }
 
 /// Compose the views from the active providers' contributions. Each
 /// contribution is wrapped in parens and `UNION ALL`ed. A view with no
 /// contributors falls back to the empty-view schema. Views are created in
-/// `View::ALL` order so `sessions` (which reads `messages`) comes last.
+/// `View::ALL` order so `sessions` (which reads `messages` and `tool_calls`)
+/// comes last.
 ///
-/// When the connection has [`MESSAGES_TABLE`] (any cache-backed connection),
-/// `messages` reads from it; otherwise every view runs its live body over
+/// When the connection has a view's materialized table (any cache-backed
+/// connection), the view reads from it; otherwise it runs its live body over
 /// `raw_records`.
 pub fn compose_views(conn: &Connection, providers: &[&dyn TranscriptProvider]) -> Result<()> {
-    let materialized = has_messages_table(conn)?;
     for view in View::ALL {
+        let table = match materialized_table(view) {
+            Some(t) if has_table(conn, t)? => Some(t),
+            _ => None,
+        };
         let parts: Vec<String> = providers
             .iter()
-            .filter_map(|p| match view {
-                View::Messages if materialized => Some(materialized_messages_sql(p.harness())),
-                _ => p.contribute_view_sql(view),
+            .filter_map(|p| match table {
+                Some(t) => (view != View::HookEvents || p.harness() == "claude")
+                    .then(|| materialized_sql(t, p.harness())),
+                None => p.contribute_view_sql(view),
             })
             .map(|body| format!("({body})"))
             .collect();
