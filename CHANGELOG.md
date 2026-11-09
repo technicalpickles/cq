@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.1](https://github.com/technicalpickles/cq/compare/v0.11.0...v0.11.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* index each file in one transaction ([#86](https://github.com/technicalpickles/cq/issues/86)) ([9f59436](https://github.com/technicalpickles/cq/commit/9f59436533ff4fc440fc3fe38d8350fd2e0b6944))
+
+
+### Performance Improvements
+
+* materialize tool_calls, tool_results and hook_events at index time ([#85](https://github.com/technicalpickles/cq/issues/85)) ([938bd7b](https://github.com/technicalpickles/cq/commit/938bd7b5cc64f15ee7ded526244d69151a075699))
+
 ## [0.11.0](https://github.com/technicalpickles/cq/compare/v0.10.2...v0.11.0) (2026-10-20)
 
 
