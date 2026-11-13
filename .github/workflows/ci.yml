@@ -13,6 +13,14 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0 # incremental builds don't help CI and bloat the cache
+  # libduckdb-sys compiles ~290 C++ files through the cc crate, which is the
+  # ~10m cost on a rust-cache miss. rust-cache restores only by prefix once
+  # Cargo.lock changes, and that partial restore did not save the rebuild.
+  # sccache keys each C++ file by content, so it hits regardless. Only the
+  # test and clippy jobs install sccache; fmt never compiles C++.
+  SCCACHE_GHA_ENABLED: "true"
+  CC: sccache cc
+  CXX: sccache c++
 
 jobs:
   test:
@@ -32,7 +40,10 @@ jobs:
           # scratch (test ate a 10m libduckdb-sys recompile against a clippy
           # cache). Separate keys keep a complete cache per build kind.
           shared-key: test
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - run: cargo test --locked
+      - run: sccache --show-stats
+        if: always()
 
   clippy:
     name: clippy
@@ -45,7 +56,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: sccache --show-stats
+        if: always()
 
   fmt:
     name: fmt
