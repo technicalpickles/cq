@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/technicalpickles/cq/compare/v0.11.1...v0.11.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate zip to v9 [security] ([#88](https://github.com/technicalpickles/cq/issues/88)) ([468b1ff](https://github.com/technicalpickles/cq/commit/468b1ffea4611526cc4a19551539c73263aa8697))
+
 ## [0.11.1](https://github.com/technicalpickles/cq/compare/v0.11.0...v0.11.1) (2026-11-08)
 
 
