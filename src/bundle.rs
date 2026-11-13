@@ -340,7 +340,7 @@ mod tests {
         let zip_file = std::fs::File::open(&out_path).unwrap();
         let mut archive = zip::ZipArchive::new(zip_file).unwrap();
         let names: Vec<String> = (0..archive.len())
-            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
             .collect();
         assert!(names.contains(&"main.jsonl".to_string()), "{names:?}");
         assert!(

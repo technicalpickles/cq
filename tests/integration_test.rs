@@ -3572,7 +3572,7 @@ fn bundle_writes_expected_zip_contents() {
     let zip_file = std::fs::File::open(&out_path).unwrap();
     let mut archive = zip::ZipArchive::new(zip_file).unwrap();
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .collect();
 
     assert!(names.contains(&"main.jsonl".to_string()), "{names:?}");
@@ -3640,7 +3640,7 @@ fn bundle_excludes_other_sessions_in_the_same_project() {
     let zip_file = std::fs::File::open(&out_path).unwrap();
     let mut archive = zip::ZipArchive::new(zip_file).unwrap();
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .collect();
     assert_eq!(
         names
@@ -3726,7 +3726,7 @@ fn bundle_includes_available_sidecar_and_warns_on_missing() {
     let zip_file = std::fs::File::open(&out_path).unwrap();
     let mut archive = zip::ZipArchive::new(zip_file).unwrap();
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .collect();
     assert!(
         names.iter().any(|n| n == "sidecars/present-output.txt"),
@@ -3798,7 +3798,7 @@ fn bundle_keeps_duplicate_sidecar_basenames_distinct() {
     let zip_file = std::fs::File::open(&out_path).unwrap();
     let mut archive = zip::ZipArchive::new(zip_file).unwrap();
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .collect();
     let included_sidecars = names
         .iter()
