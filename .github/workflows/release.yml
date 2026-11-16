@@ -53,7 +53,7 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
@@ -65,7 +65,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ${{ matrix.target }}
 
@@ -101,11 +101,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
-      - uses: facebook/dotslash-publish-release@v1
+      - uses: facebook/dotslash-publish-release@2539c4d8ae00a42773306c8731d2dd3724d979d2 # v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
