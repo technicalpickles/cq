@@ -24,7 +24,7 @@ jobs:
       # RELEASE_PLEASE_TOKEN secret so the cut release triggers release.yml.
       # Without the secret the action still opens release PRs using GITHUB_TOKEN,
       # but merging them won't build/attach binaries.
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
